@@ -1,0 +1,78 @@
+{
+  "name": "neutron-agent",
+  "version": "0.1.0",
+  "description": "NEUTRON — Autonomous Software Maintenance Intelligence. Give it a maintenance request; a team of specialised AI agents analyses impact, plans, implements, tests, security-reviews and code-reviews the change behind human approval gates.",
+  "type": "module",
+  "bin": {
+    "neutron": "dist/cli-entry.js",
+    "sunny": "dist/cli-entry.js"
+  },
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "examples",
+    "design.md.template",
+    "install.sh",
+    "install.ps1"
+  ],
+  "scripts": {
+    "build": "tsup && node scripts/copy-web.mjs",
+    "dev": "tsup --watch",
+    "start": "node dist/cli-entry.js",
+    "chat": "node dist/cli-entry.js chat",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sunny-ai/sunny-agent.git"
+  },
+  "homepage": "https://github.com/sunny-ai/sunny-agent#readme",
+  "bugs": {
+    "url": "https://github.com/sunny-ai/sunny-agent/issues"
+  },
+  "author": "NEUTRON contributors",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "orchestration",
+    "llm",
+    "multi-agent",
+    "software-maintenance",
+    "impact-analysis"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "optionalDependencies": {
+    "ink": "^5.2.1",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.63.4",
+    "@types/node": "^24.13.4",
+    "@types/react": "^18.3.3",
+    "esbuild": "^0.25.12",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^5.0.0"
+  }
+}
