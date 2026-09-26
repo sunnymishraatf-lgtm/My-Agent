@@ -1,0 +1,18 @@
+{
+  "id": "858c3473-d1c6-472a-b659-22e6e67a7603",
+  "title": "hie",
+  "createdAt": "2026-09-26T07:03:12.076Z",
+  "updatedAt": "2026-09-26T07:03:42.257Z",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hie"
+    },
+    {
+      "role": "assistant",
+      "content": "Hello! How can I assist you today?"
+    }
+  ],
+  "provider": "custom",
+  "model": "nvidia/nemotron-3-super-120b-a12b"
+}
