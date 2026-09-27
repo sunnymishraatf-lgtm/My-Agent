@@ -387,6 +387,12 @@ export class DemoManager {
     if (!request || !request.trim()) throw new DemoError("A maintenance request is required.", 400);
     if (request.trim().length > 2000) throw new DemoError("Maintenance request is too long (max 2000 chars).", 400);
     const repo = resolveRepoDir(this.workspace, repoInput);
+    if (repo.isDemo) {
+      // Serverless /tmp is per-instance: a prepare on another instance may not
+      // be visible here. The scaffold is idempotent (reuses if present), so
+      // ensure it exists before analyzing — never analyze an empty dir.
+      prepareDemoRepo(this.workspace);
+    }
     // The real NEUTRON pipeline: static analysis -> impact graph -> plan.
     const analysis = analyzeRepository(repo.dir);
     const maintRequest: MaintenanceRequest = {

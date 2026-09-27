@@ -9944,6 +9944,9 @@ var DemoManager = class {
     if (!request || !request.trim()) throw new DemoError("A maintenance request is required.", 400);
     if (request.trim().length > 2e3) throw new DemoError("Maintenance request is too long (max 2000 chars).", 400);
     const repo = resolveRepoDir(this.workspace, repoInput);
+    if (repo.isDemo) {
+      prepareDemoRepo(this.workspace);
+    }
     const analysis = analyzeRepository(repo.dir);
     const maintRequest = {
       request: request.trim(),

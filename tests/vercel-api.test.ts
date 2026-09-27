@@ -115,6 +115,32 @@ describe("vercel api: prepare -> analyze (real pipeline)", () => {
     noCanary(res.payload);
   });
 
+  it("analyze auto-scaffolds the demo repo in a fresh workspace (serverless /tmp)", async () => {
+    // Regression: on serverless, /tmp is per-instance, so a prepare on one
+    // instance is invisible to analyze on another. Analyze must never return
+    // empty data for the demo repo — it scaffolds on demand.
+    const prev = process.env.NEUTRON_DEMO_WORKSPACE;
+    process.env.NEUTRON_DEMO_WORKSPACE = mkdtempSync(join(tmpdir(), "vercel-api-fresh-"));
+    try {
+      const res = mockRes();
+      await analyze(
+        req("POST", {
+          repo: "demo",
+          request: "Add rate limiting to the login endpoint",
+          riskTolerance: "balanced",
+        }),
+        res,
+      );
+      expect(res.statusCode).toBe(200);
+      expect(res.payload.ok).toBe(true);
+      expect(res.payload.analysis.filesAnalyzed).toBeGreaterThan(0);
+      expect(res.payload.plan.tasks.length).toBeGreaterThan(0);
+      noCanary(res.payload);
+    } finally {
+      process.env.NEUTRON_DEMO_WORKSPACE = prev;
+    }
+  });
+
   it("analyze rejects empty request", async () => {
     const res = mockRes();
     await analyze(req("POST", { repo: "demo", request: "   " }), res);
