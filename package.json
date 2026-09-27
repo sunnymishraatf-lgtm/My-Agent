@@ -22,7 +22,8 @@
   ],
   "scripts": {
     "build": "tsup && node scripts/copy-web.mjs",
-    "build:vercel": "npm run build && node scripts/copy-web-vercel.mjs && node scripts/bundle-api-vercel.mjs",
+    "build:vercel": "npm run build && node scripts/copy-web-vercel.mjs && node scripts/bundle-api.mjs",
+    "bundle:api": "node scripts/bundle-api.mjs",
     "dev": "tsup --watch",
     "start": "node dist/cli-entry.js",
     "chat": "node dist/cli-entry.js chat",

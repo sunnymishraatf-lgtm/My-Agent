@@ -17,18 +17,18 @@ process.env.NEUTRON_DEMO_WORKSPACE = mkdtempSync(join(tmpdir(), "vercel-api-"));
 process.env.SERVER_SECRET = "test-server-secret-for-vercel-api-tests";
 process.env.AGENTROUTER_API_KEY = CANARY;
 
-import health from "../api/health";
-import status from "../api/demo/status";
-import prepare from "../api/demo/prepare";
-import analyze from "../api/demo/analyze";
-import approve from "../api/demo/approve";
-import rejectRoute from "../api/demo/reject";
-import execute from "../api/demo/execute";
-import clone from "../api/demo/clone";
-import jobRoute from "../api/demo/jobs/[id]";
-import resultRoute from "../api/demo/jobs/[id]/result";
-import { verifyApprovalToken } from "../api/_lib";
-import type { VercelRequest, VercelResponse } from "../api/_lib";
+import health from "../api-src/health";
+import status from "../api-src/demo/status";
+import prepare from "../api-src/demo/prepare";
+import analyze from "../api-src/demo/analyze";
+import approve from "../api-src/demo/approve";
+import rejectRoute from "../api-src/demo/reject";
+import execute from "../api-src/demo/execute";
+import clone from "../api-src/demo/clone";
+import jobRoute from "../api-src/demo/jobs/[id]";
+import resultRoute from "../api-src/demo/jobs/[id]/result";
+import { verifyApprovalToken } from "../api-src/_lib";
+import type { VercelRequest, VercelResponse } from "../api-src/_lib";
 
 interface MockRes extends VercelResponse {
   statusCode: number;
