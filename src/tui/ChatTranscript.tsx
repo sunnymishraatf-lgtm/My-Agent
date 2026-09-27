@@ -98,7 +98,7 @@ export function ChatTranscript({ items, streamingText, streaming, fileChanges, a
         node: (
           <Box key={item.id} flexDirection="column" marginBottom={1}>
             <Text color="cyan" bold>
-              {`SUNNY / ${agentLabel.toUpperCase()}`}
+              {`NEUTRON / ${agentLabel.toUpperCase()}`}
             </Text>
             <Text>{text}</Text>
           </Box>
@@ -162,7 +162,7 @@ export function ChatTranscript({ items, streamingText, streaming, fileChanges, a
       node: (
         <Box key="streaming" flexDirection="column" marginBottom={1}>
           <Text color="cyan" bold>
-            {`SUNNY / ${agentLabel.toUpperCase()}`}
+            {`NEUTRON / ${agentLabel.toUpperCase()}`}
           </Text>
           <Text>{text || (streaming ? `${glyphs.bullet} thinking...` : "")}</Text>
         </Box>
@@ -213,7 +213,7 @@ export function ChatTranscript({ items, streamingText, streaming, fileChanges, a
     <Box flexDirection="column" width={width}>
       {start > 0 || end < nodes.length ? (
         <Text dimColor>
-          {glyphs.arrow} {end < nodes.length ? `${scrollBack} rows above` : "more above"} Â· page up / page down to scroll
+          {glyphs.arrow} {end < nodes.length ? `${scrollBack} rows above` : "more above"} · page up / page down to scroll
         </Text>
       ) : null}
       {nodes.slice(start, end).map((entry, i) => (

@@ -2,6 +2,7 @@ import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 import type { TuiProvider } from "./types";
 import { borderStyle } from "./utils";
+import { backspaceAt, classifyRaw, deleteAt, editKind, insertAt, parseToken, sanitizePaste, splitRawKeys, useRawKeys, wordLeft, wordRight, type EditKind } from "./keys";
 
 export interface ProviderConfigValues {
   baseUrl: string;
@@ -49,7 +50,23 @@ export function ProviderConfigPanel({ provider, width, onSave, onCancel }: Provi
     setCursor(values[target].length);
   };
 
-  useInput((input, key) => {
+  const rawKeys = useRawKeys();
+
+  const handleKey = (
+    input: string,
+    key: {
+      upArrow?: boolean;
+      downArrow?: boolean;
+      leftArrow?: boolean;
+      rightArrow?: boolean;
+      return?: boolean;
+      escape?: boolean;
+      tab?: boolean;
+      ctrl?: boolean;
+      meta?: boolean;
+    },
+    kind: EditKind,
+  ): void => {
     if (key.escape) {
       onCancel();
       return;
@@ -67,20 +84,129 @@ export function ProviderConfigPanel({ provider, width, onSave, onCancel }: Provi
     }
     if (key.tab || key.downArrow) return focus(fieldIndex + 1);
     if (key.upArrow) return focus(fieldIndex - 1);
+    if (kind === "home") return setCursor(0);
+    if (kind === "end") return setCursor(value.length);
+    if (kind === "wordLeft") return setCursor(wordLeft(value, cursor));
+    if (kind === "wordRight") return setCursor(wordRight(value, cursor));
     if (key.leftArrow) return setCursor((c) => Math.max(0, c - 1));
     if (key.rightArrow) return setCursor((c) => Math.min(value.length, c + 1));
-    if (key.backspace || key.delete) {
-      if (cursor <= 0) return;
-      const next = value.slice(0, cursor - 1) + value.slice(cursor);
-      setters[field](next);
-      setCursor(cursor - 1);
+    if (kind === "backspace" || kind === "delete") {
+      const r = kind === "backspace" ? backspaceAt(value, cursor) : deleteAt(value, cursor);
+      setters[field](r.text);
+      setCursor(r.cursor);
       return;
     }
     if (input && !key.ctrl && !key.meta) {
-      const next = value.slice(0, cursor) + input + value.slice(cursor);
-      setters[field](next);
-      setCursor(cursor + input.length);
+      // Single-line fields: pasted newlines are dropped rather than submitted.
+      const text = sanitizePaste(input).replace(/\n/g, "");
+      if (!text) return;
+      const r = insertAt(value, cursor, text);
+      setters[field](r.text);
+      setCursor(r.cursor);
     }
+  };
+
+  /**
+   * Handle several keystrokes that arrived in one stdin chunk (key repeat,
+   * fast typing, mobile keyboard). React state updates are async, so the
+   * field text and cursor are threaded through locals for the duration of
+   * the chunk; otherwise rapid keystrokes would each read the same stale
+   * value and clobber each other.
+   */
+  const handleKeyChunk = (tokens: string[]): void => {
+    const vals: Record<Field, string> = { baseUrl, apiKey, models };
+    let cur = cursor;
+    let fIdx = fieldIndex;
+    let detached = false;
+    const commit = () => {
+      if (detached) return;
+      setBaseUrl(vals.baseUrl);
+      setApiKey(vals.apiKey);
+      setModels(vals.models);
+      setCursor(cur);
+      setFieldIndex(fIdx);
+    };
+    for (const token of tokens) {
+      const parsed = parseToken(token);
+      const kind = classifyRaw(token);
+      const activeField = FIELD_ORDER[fIdx] ?? "baseUrl";
+      if (!detached) {
+        if (kind === "backspace") {
+          const r = backspaceAt(vals[activeField], cur);
+          vals[activeField] = r.text;
+          cur = r.cursor;
+          continue;
+        }
+        if (kind === "delete") {
+          const r = deleteAt(vals[activeField], cur);
+          vals[activeField] = r.text;
+          cur = r.cursor;
+          continue;
+        }
+        if (kind === "home") {
+          cur = 0;
+          continue;
+        }
+        if (kind === "end") {
+          cur = vals[activeField].length;
+          continue;
+        }
+        if (kind === "wordLeft") {
+          cur = wordLeft(vals[activeField], cur);
+          continue;
+        }
+        if (kind === "wordRight") {
+          cur = wordRight(vals[activeField], cur);
+          continue;
+        }
+        if (parsed.key.leftArrow) {
+          cur = Math.max(0, cur - 1);
+          continue;
+        }
+        if (parsed.key.rightArrow) {
+          cur = Math.min(vals[activeField].length, cur + 1);
+          continue;
+        }
+        if (parsed.key.return && !parsed.key.shift) {
+          commit();
+          detached = true;
+          onSave({
+            baseUrl: vals.baseUrl.trim(),
+            ...(vals.apiKey.trim() ? { apiKey: vals.apiKey.trim() } : {}),
+            models: vals.models
+              .split(",")
+              .map((m) => m.trim())
+              .filter(Boolean),
+          });
+          continue;
+        }
+        if (parsed.input && !parsed.key.ctrl && !parsed.key.meta) {
+          // Single-line fields: pasted newlines are dropped rather than submitted.
+          const clean = sanitizePaste(parsed.input).replace(/\n/g, "");
+          if (clean) {
+            const r = insertAt(vals[activeField], cur, clean);
+            vals[activeField] = r.text;
+            cur = r.cursor;
+          }
+          continue;
+        }
+      }
+      // Control key: commit the draft and delegate.
+      commit();
+      detached = true;
+      handleKey(parsed.input, parsed.key, kind);
+    }
+    commit();
+  };
+
+  useInput((input, key) => {
+    const raw = rawKeys.current;
+    const tokens = splitRawKeys(raw);
+    if (tokens.length > 1) {
+      handleKeyChunk(tokens);
+      return;
+    }
+    handleKey(input, key, editKind(key, raw));
   });
 
   const panelWidth = Math.max(40, Math.min(width - 4, 66));

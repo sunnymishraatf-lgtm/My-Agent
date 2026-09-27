@@ -1,4 +1,5 @@
 import { readRawConfig, writeGlobalConfig } from "../config";
+import { envVar } from "../compat";
 
 export interface Theme {
   name: string;
@@ -84,7 +85,7 @@ export function resolveTheme(name: string | undefined): Theme {
 }
 
 export function loadTheme(): Theme {
-  const envName = process.env.SUNNY_THEME;
+  const envName = envVar("THEME");
   if (envName) return resolveTheme(envName);
   const raw = readRawConfig();
   return resolveTheme(typeof raw.theme === "string" ? raw.theme : undefined);

@@ -11,7 +11,7 @@ let registry: ToolRegistry;
 let ctx: ToolContext;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-tools-"));
+  root = mkdtempSync(join(tmpdir(), "neutron-tools-"));
   registry = new ToolRegistry(createDefaultTools());
   ctx = {
     root,

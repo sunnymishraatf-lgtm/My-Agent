@@ -21,6 +21,19 @@ export interface ChatSessionMeta {
   messageCount: number;
 }
 
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/** Session ids become file names; reject anything that could traverse directories. */
+export function assertValidSessionId(id: string): void {
+  if (!isValidSessionId(id)) {
+    throw new Error(`Invalid session id: ${String(id).slice(0, 64)}`);
+  }
+}
+
+export function isValidSessionId(id: unknown): id is string {
+  return typeof id === "string" && SESSION_ID_PATTERN.test(id);
+}
+
 export class SessionStore {
   private dir: string;
 
@@ -33,6 +46,7 @@ export class SessionStore {
   }
 
   private path(id: string): string {
+    assertValidSessionId(id);
     return join(this.dir, `${id}.json`);
   }
 
@@ -71,7 +85,9 @@ export class SessionStore {
     const out: ChatSessionMeta[] = [];
     for (const file of readdirSync(this.dir)) {
       if (!file.endsWith(".json")) continue;
-      const session = this.load(file.slice(0, -5));
+      const id = file.slice(0, -5);
+      if (!isValidSessionId(id)) continue; // ignore foreign/malicious files
+      const session = this.load(id);
       if (!session) continue;
       out.push({
         id: session.id,

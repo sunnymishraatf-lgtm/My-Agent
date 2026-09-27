@@ -8,7 +8,7 @@ export async function initCommand(cwd: string, opts?: { template?: boolean; forc
   if (!existsSync(storeDir)) {
     mkdirSync(storeDir, { recursive: true });
   }
-  console.log("Initialized sunny project in", cwd);
+  console.log("Initialized neutron project in", cwd);
 
   const designPath = join(cwd, "design.md");
   if (opts?.template) {
@@ -21,7 +21,7 @@ export async function initCommand(cwd: string, opts?: { template?: boolean; forc
   } else if (existsSync(designPath)) {
     console.log("Found existing design.md.");
   } else {
-    console.log("No design.md found. Run `sunny design` to create one.");
+    console.log("No design.md found. Run `neutron design` to create one.");
   }
 }
 

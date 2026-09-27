@@ -18,6 +18,7 @@ import type {
   View,
 } from "./types";
 import { COMMANDS, PALETTE_ACTIONS, filterCommands, type TuiCommand } from "./commands";
+import { backspaceAt, classifyRaw, deleteAt, editKind, insertAt, parseToken, sanitizePaste, splitRawKeys, useRawKeys, wordLeft, wordRight, type EditKind } from "./keys";
 import { ChatTranscript } from "./ChatTranscript";
 import { CommandMenu } from "./CommandMenu";
 import { HomeScreen } from "./HomeScreen";
@@ -176,9 +177,15 @@ function reducer(state: AppState, action: Action): AppState {
     case "setHistoryIndex":
       return { ...state, historyIndex: action.index };
     case "setError":
-      return { ...state, error: action.error };
+      // An error ends any in-flight streaming state so the thinking spinner stops.
+      return { ...state, error: action.error, streaming: false, streamingText: "" };
     case "setInput":
-      return { ...state, input: action.text, cursor: action.text.length };
+      // Never yank the cursor to the end while the user is editing: keep it (clamped) unless the caller supplies one.
+      return {
+        ...state,
+        input: action.text,
+        cursor: Math.max(0, Math.min(action.text.length, action.cursor ?? state.cursor)),
+      };
     case "setCursor":
       return { ...state, cursor: action.cursor };
     case "setAgent":
@@ -497,33 +504,34 @@ export function App({ runtime, startOpts }: AppProps) {
     apply({ type: "setView", view: "commands" });
   };
 
-  const submit = (raw?: string) => {
+  const submit = (raw?: string): boolean => {
     const value = (raw ?? state.input).trim();
-    if (!value) return;
-    if (state.busy && !value.startsWith("/")) return;
+    if (!value) return false;
+    if (state.busy && !value.startsWith("/")) return false;
     apply({ type: "setInput", text: "" });
     apply({ type: "setCursor", cursor: 0 });
     apply({ type: "setCmdDismissed", dismissed: false });
     apply({ type: "setPickIndex", index: 0 });
     if (value.startsWith("/")) {
       void handleSlash(value);
-      return;
+      return true;
     }
     if (value.startsWith("!")) {
       apply({ type: "setView", view: "chat" });
       void run(async () => {
         await runtime.send(value);
       });
-      return;
+      return true;
     }
     apply({ type: "sendMessage", text: value });
     apply({ type: "setView", view: "chat" });
     void run(async () => {
       await runtime.send(value);
     });
+    return true;
   };
 
-  // `sunny chat "prompt"` launches the TUI and kicks off the first turn.
+  // `neutron chat "prompt"` launches the TUI and kicks off the first turn.
   useEffect(() => {
     const initialMessage = startOpts.message;
     if (!initialMessage) return;
@@ -534,7 +542,7 @@ export function App({ runtime, startOpts }: AppProps) {
 
   const handleSlash = async (value: string): Promise<void> => {
     const [name, ...rest] = value.slice(1).split(/\s+/);
-    const command = COMMANDS.find((c) => c.name === name);
+    const command = COMMANDS.find((c) => c.name === name || c.aliases?.includes(name ?? ""));
     if (command) {
       await runCommand(command.name, rest);
       return;
@@ -572,7 +580,7 @@ export function App({ runtime, startOpts }: AppProps) {
       case "settings":
       case "themes":
         apply({ type: "setView", view: "chat" });
-        apply({ type: "systemMessage", text: "Settings and themes live in the global config. Run `sunny config` to edit them." });
+        apply({ type: "systemMessage", text: "Settings and themes live in the global config. Run `neutron config` to edit them." });
         return;
       case "test":
         apply({ type: "setView", view: "chat" });
@@ -611,7 +619,7 @@ export function App({ runtime, startOpts }: AppProps) {
       case "editor":
         await run(async () => {
           const edited = await runtime.openEditor?.(state.input);
-          if (typeof edited === "string") apply({ type: "setInput", text: edited });
+          if (typeof edited === "string") apply({ type: "setInput", text: edited, cursor: edited.length });
         });
         return;
       case "exit":
@@ -679,7 +687,7 @@ export function App({ runtime, startOpts }: AppProps) {
         });
         return;
       case "plugins":
-        apply({ type: "systemMessage", text: "Plugin list is available via `sunny plugin list`." });
+        apply({ type: "systemMessage", text: "Plugin list is available via `neutron plugin list`." });
         return;
       case "skills": {
         const skills = runtime.listSkills?.() ?? [];
@@ -696,7 +704,7 @@ export function App({ runtime, startOpts }: AppProps) {
     switch (id) {
       case "search":
         apply({ type: "setView", view: "chat" });
-        apply({ type: "setInput", text: "/" });
+        apply({ type: "setInput", text: "/", cursor: 1 });
         apply({ type: "setCmdDismissed", dismissed: false });
         return;
       case "agent":
@@ -744,11 +752,11 @@ export function App({ runtime, startOpts }: AppProps) {
         return;
       case "settings":
         apply({ type: "setView", view: "chat" });
-        apply({ type: "systemMessage", text: "Settings live in the global config. Run `sunny config` to edit them." });
+        apply({ type: "systemMessage", text: "Settings live in the global config. Run `neutron config` to edit them." });
         return;
       case "themes":
         apply({ type: "setView", view: "chat" });
-        apply({ type: "systemMessage", text: "Themes live in the global config. Run `sunny config` to change them." });
+        apply({ type: "systemMessage", text: "Themes live in the global config. Run `neutron config` to change them." });
         return;
       case "review":
         void runCommand("review", []);
@@ -855,32 +863,31 @@ export function App({ runtime, startOpts }: AppProps) {
     return { start, end };
   };
 
-  const insertText = (text: string) => {
-    const next = state.input.slice(0, state.cursor) + text + state.input.slice(state.cursor);
-    apply({ type: "setInput", text: next });
-    apply({ type: "setCursor", cursor: state.cursor + text.length });
+  const setText = (text: string, cursor: number) => apply({ type: "setInput", text, cursor });
+
+  const insertText = (raw: string) => {
+    const text = sanitizePaste(raw);
+    if (!text) return;
+    const r = insertAt(state.input, state.cursor, text);
+    setText(r.text, r.cursor);
   };
 
+  /** Backspace: remove the character BEFORE the cursor. */
   const deleteBack = () => {
-    if (state.cursor <= 0) return;
-    const next = state.input.slice(0, state.cursor - 1) + state.input.slice(state.cursor);
-    apply({ type: "setInput", text: next });
-    apply({ type: "setCursor", cursor: state.cursor - 1 });
+    const r = backspaceAt(state.input, state.cursor);
+    if (r.text !== state.input) setText(r.text, r.cursor);
   };
 
+  /** Delete: remove the character AT the cursor (cursor does not move). */
   const deleteForward = () => {
-    if (state.cursor >= state.input.length) return;
-    const next = state.input.slice(0, state.cursor) + state.input.slice(state.cursor + 1);
-    apply({ type: "setInput", text: next });
-    apply({ type: "setCursor", cursor: state.cursor });
+    const r = deleteAt(state.input, state.cursor);
+    if (r.text !== state.input) setText(r.text, r.cursor);
   };
 
   const deleteToLineStart = () => {
     const { start } = lineBounds(state.input, state.cursor);
     if (state.cursor === start) return;
-    const next = state.input.slice(0, start) + state.input.slice(state.cursor);
-    apply({ type: "setInput", text: next });
-    apply({ type: "setCursor", cursor: start });
+    setText(state.input.slice(0, start) + state.input.slice(state.cursor), start);
   };
 
   const deleteWord = () => {
@@ -888,9 +895,36 @@ export function App({ runtime, startOpts }: AppProps) {
     let i = state.cursor;
     while (i > start && state.input[i - 1] === " ") i--;
     while (i > start && state.input[i - 1] !== " ") i--;
-    const next = state.input.slice(0, i) + state.input.slice(state.cursor);
-    apply({ type: "setInput", text: next });
-    apply({ type: "setCursor", cursor: i });
+    setText(state.input.slice(0, i) + state.input.slice(state.cursor), i);
+  };
+
+  /** Shared cursor movement for Left/Right/Home/End/Ctrl+arrows. Returns true if handled. */
+  const moveCursorKey = (kind: EditKind, key: { leftArrow?: boolean; rightArrow?: boolean }): boolean => {
+    if (kind === "home") {
+      apply({ type: "setCursor", cursor: lineBounds(state.input, state.cursor).start });
+      return true;
+    }
+    if (kind === "end") {
+      apply({ type: "setCursor", cursor: lineBounds(state.input, state.cursor).end });
+      return true;
+    }
+    if (kind === "wordLeft") {
+      apply({ type: "setCursor", cursor: wordLeft(state.input, state.cursor) });
+      return true;
+    }
+    if (kind === "wordRight") {
+      apply({ type: "setCursor", cursor: wordRight(state.input, state.cursor) });
+      return true;
+    }
+    if (key.leftArrow) {
+      apply({ type: "setCursor", cursor: Math.max(0, state.cursor - 1) });
+      return true;
+    }
+    if (key.rightArrow) {
+      apply({ type: "setCursor", cursor: Math.min(state.input.length, state.cursor + 1) });
+      return true;
+    }
+    return false;
   };
 
   const moveUp = () => {
@@ -957,10 +991,32 @@ export function App({ runtime, startOpts }: AppProps) {
       )
     : state.models;
 
-  useInput((input, key) => {
-    if (state.view === "providerConfig") return;
-    const anyKey = key as typeof key & { home?: boolean; end?: boolean };
+  const rawKeys = useRawKeys();
 
+  /**
+   * Handle one keypress. `input`/`key` mirror Ink's `useInput` arguments and
+   * `kind` is the raw-byte edit classification (may be null for plain text).
+   */
+  const handleKey = (
+    input: string,
+    key: {
+      upArrow?: boolean;
+      downArrow?: boolean;
+      leftArrow?: boolean;
+      rightArrow?: boolean;
+      pageUp?: boolean;
+      pageDown?: boolean;
+      return?: boolean;
+      escape?: boolean;
+      tab?: boolean;
+      ctrl?: boolean;
+      meta?: boolean;
+      shift?: boolean;
+      backspace?: boolean;
+      delete?: boolean;
+    },
+    kind: EditKind,
+  ): void => {
     // Rename prompt for sessions.
     if (state.renameTarget !== undefined) {
       if (key.escape) {
@@ -975,9 +1031,9 @@ export function App({ runtime, startOpts }: AppProps) {
         apply({ type: "setSessions", sessions: runtime.listSessions() });
         return;
       }
-      if (key.backspace || key.delete) return deleteBack();
-      if (key.leftArrow) return apply({ type: "setCursor", cursor: Math.max(0, state.cursor - 1) });
-      if (key.rightArrow) return apply({ type: "setCursor", cursor: Math.min(state.input.length, state.cursor + 1) });
+      if (kind === "backspace") return deleteBack();
+      if (kind === "delete") return deleteForward();
+      if (moveCursorKey(kind, key)) return;
       if (input && !key.ctrl && !key.meta) return insertText(input);
       return;
     }
@@ -1007,7 +1063,7 @@ export function App({ runtime, startOpts }: AppProps) {
         apply({ type: "setPickIndex", index: Math.min(Math.max(0, overlayLength() - 1), state.pickIndex + 1) });
         return;
       }
-      if (state.view === "providers") {
+      if (state.view === "providers" && state.search === "") {
         if (input === "r" || input === "R") {
           refreshSelectedProvider();
           return;
@@ -1035,7 +1091,7 @@ export function App({ runtime, startOpts }: AppProps) {
         return;
       }
       if (state.view === "providers" || state.view === "models") {
-        if (key.backspace || key.delete) {
+        if (kind === "backspace" || kind === "delete") {
           apply({ type: "setSearch", text: state.search.slice(0, -1) });
           apply({ type: "setPickIndex", index: 0 });
           return;
@@ -1069,7 +1125,7 @@ export function App({ runtime, startOpts }: AppProps) {
           const target = state.sessions[state.pickIndex];
           if (target) {
             apply({ type: "setRename", target: target.id });
-            apply({ type: "setInput", text: target.title });
+            apply({ type: "setInput", text: target.title, cursor: target.title.length });
           }
           return;
         }
@@ -1122,7 +1178,9 @@ export function App({ runtime, startOpts }: AppProps) {
 
     if (key.tab) {
       if (menuCommands.length > 0) {
-        const cmd = menuCommands[state.cmdIndex % menuCommands.length];
+        // Clamp: after filtering, a stale cmdIndex must not wrap around to a
+        // different command via `%`.
+        const cmd = menuCommands[Math.min(state.cmdIndex, menuCommands.length - 1)];
         if (cmd) {
           apply({ type: "setCmdDismissed", dismissed: true });
           void submit(`/${cmd.name}`);
@@ -1142,27 +1200,20 @@ export function App({ runtime, startOpts }: AppProps) {
     if (key.return && key.shift) return insertText("\n");
     if (key.return) {
       if (menuCommands.length > 0) {
-        const cmd = menuCommands[state.cmdIndex % menuCommands.length];
+        // Clamp a stale cmdIndex after filtering instead of wrapping with `%`.
+        const cmd = menuCommands[Math.min(state.cmdIndex, menuCommands.length - 1)];
         if (cmd) {
           apply({ type: "setCmdDismissed", dismissed: true });
           void submit(`/${cmd.name}`);
           return;
         }
       }
-      return submit();
+      submit();
+      return;
     }
-    if (key.backspace) return deleteBack();
-    if (key.delete) return deleteForward();
-    if (key.leftArrow) return apply({ type: "setCursor", cursor: Math.max(0, state.cursor - 1) });
-    if (key.rightArrow) return apply({ type: "setCursor", cursor: Math.min(state.input.length, state.cursor + 1) });
-    if (anyKey.home || input === "\x1b[H" || input === "\x1bOH" || input === "\x1b[1~") {
-      const { start } = lineBounds(state.input, state.cursor);
-      return apply({ type: "setCursor", cursor: start });
-    }
-    if (anyKey.end || input === "\x1b[F" || input === "\x1bOF" || input === "\x1b[4~") {
-      const { end } = lineBounds(state.input, state.cursor);
-      return apply({ type: "setCursor", cursor: end });
-    }
+    if (kind === "backspace") return deleteBack();
+    if (kind === "delete") return deleteForward();
+    if (moveCursorKey(kind, key)) return;
     if (key.upArrow) {
       if (menuCommands.length > 0) {
         apply({ type: "setCmdIndex", index: Math.max(0, state.cmdIndex - 1) });
@@ -1181,7 +1232,120 @@ export function App({ runtime, startOpts }: AppProps) {
       if (menuCommands.length > 0) apply({ type: "setCmdIndex", index: 0 });
       return insertText(input);
     }
+  };
+
+  /**
+   * Handle several keystrokes that arrived in one stdin chunk (key repeat,
+   * fast typing, laggy link, mobile keyboard). Ink parses the whole chunk as
+   * a single keypress and silently drops every key after the first, so each
+   * token is handled in order here.
+   *
+   * State updates are async, so the input box is threaded through a local
+   * draft for the duration of the chunk; without that, rapid keystrokes
+   * would each read the same stale text and clobber each other. Control keys
+   * are delegated to `handleKey` after committing the draft.
+   */
+  const handleKeyChunk = (tokens: string[]): void => {
+    // Fast path only applies to the main editing views; overlays, the rename
+    // prompt and the approval view keep per-key handling.
+    const editingView =
+      state.renameTarget === undefined && (state.view === "home" || state.view === "chat");
+    if (!editingView) {
+      for (const token of tokens) {
+        const parsed = parseToken(token);
+        handleKey(parsed.input, parsed.key, classifyRaw(token));
+      }
+      return;
+    }
+    const draft = { text: state.input, cursor: state.cursor };
+    let detached = false; // draft no longer tracks the input box
+    const commit = () => {
+      if (!detached && (draft.text !== state.input || draft.cursor !== state.cursor)) {
+        apply({ type: "setInput", text: draft.text, cursor: draft.cursor });
+      }
+    };
+    for (const token of tokens) {
+      const parsed = parseToken(token);
+      const kind = classifyRaw(token);
+      if (!detached) {
+        if (kind === "backspace") {
+          const r = backspaceAt(draft.text, draft.cursor);
+          draft.text = r.text;
+          draft.cursor = r.cursor;
+          continue;
+        }
+        if (kind === "delete") {
+          const r = deleteAt(draft.text, draft.cursor);
+          draft.text = r.text;
+          draft.cursor = r.cursor;
+          continue;
+        }
+        if (kind === "home") {
+          draft.cursor = lineBounds(draft.text, draft.cursor).start;
+          continue;
+        }
+        if (kind === "end") {
+          draft.cursor = lineBounds(draft.text, draft.cursor).end;
+          continue;
+        }
+        if (kind === "wordLeft") {
+          draft.cursor = wordLeft(draft.text, draft.cursor);
+          continue;
+        }
+        if (kind === "wordRight") {
+          draft.cursor = wordRight(draft.text, draft.cursor);
+          continue;
+        }
+        if (parsed.key.leftArrow) {
+          draft.cursor = Math.max(0, draft.cursor - 1);
+          continue;
+        }
+        if (parsed.key.rightArrow) {
+          draft.cursor = Math.min(draft.text.length, draft.cursor + 1);
+          continue;
+        }
+        if (parsed.key.return && !parsed.key.shift) {
+          // Commit the composed text, then submit it. The draft is reset only
+          // when submit actually consumed the text, so keystrokes after an
+          // ignored Enter keep threading correctly.
+          commit();
+          if (submit(draft.text)) {
+            draft.text = "";
+            draft.cursor = 0;
+          }
+          continue;
+        }
+        if (parsed.input && !parsed.key.ctrl && !parsed.key.meta) {
+          const clean = sanitizePaste(parsed.input);
+          if (clean) {
+            const r = insertAt(draft.text, draft.cursor, clean);
+            draft.text = r.text;
+            draft.cursor = r.cursor;
+          }
+          continue;
+        }
+      }
+      // Control key (tab, ctrl combos, history navigation, escape): commit
+      // the draft so state is current, then delegate. Later tokens can no
+      // longer trust the draft, so they are delegated too.
+      commit();
+      detached = true;
+      handleKey(parsed.input, parsed.key, kind);
+    }
+    commit();
+  };
+
+  useInput((input, key) => {
+    if (state.view === "providerConfig") return;
+    const raw = rawKeys.current;
+    const tokens = splitRawKeys(raw);
+    if (tokens.length > 1) {
+      handleKeyChunk(tokens);
+      return;
+    }
+    handleKey(input, key, editKind(key, raw));
   });
+
 
   const bottomBar = <BottomBar cwd={state.cwd} branch={state.branch} isRepo={state.isRepo} version={state.version} />;
 

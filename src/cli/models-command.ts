@@ -1,5 +1,7 @@
-import { loadConfig, registerSecrets } from "../config";
-import { OpenAICompatibleProvider } from "../providers/openai";
+import { loadConfig, registerSecrets, redact } from "../config";
+import { createRegistryProvider } from "../providers/registry";
+import { summarizeError } from "../providers/errors";
+import { loadDotEnvFiles } from "../env";
 
 export interface ModelsCommandOptions {
   provider?: string;
@@ -7,6 +9,7 @@ export interface ModelsCommandOptions {
 }
 
 export async function modelsCommand(opts: ModelsCommandOptions): Promise<void> {
+  loadDotEnvFiles();
   const config = loadConfig();
   registerSecrets(config.providers.map((p) => p.apiKey).filter((k): k is string => !!k));
 
@@ -21,28 +24,28 @@ export async function modelsCommand(opts: ModelsCommandOptions): Promise<void> {
   }
 
   if (providers.length === 0) {
-    console.log("No LLM provider configured. Run `sunny config` to add one.");
+    console.log("No LLM provider configured.");
+    console.log("Set e.g. AGENTROUTER_API_KEY in your environment or a .env file, then run `neutron doctor`.");
     process.exitCode = 1;
     return;
   }
 
   const result: Record<string, { models: string[]; error?: string }> = {};
   for (const p of providers) {
+    // Prefer explicitly configured models: they are the ones the user can
+    // actually use, and they avoid a network round-trip.
     if (p.models.length > 0) {
       result[p.id] = { models: [...p.models] };
       continue;
     }
-    const provider = new OpenAICompatibleProvider({
-      id: p.id,
-      baseUrl: p.baseUrl,
-      apiKey: p.apiKey,
-      timeoutMs: 15_000,
-    });
+    // Use the adapter matching the provider's API flavor (anthropic/google
+    // need their own auth + endpoints, not the OpenAI shape).
+    const provider = createRegistryProvider(p);
     try {
       const models = await provider.models();
       result[p.id] = { models: models.map((m) => m.id) };
     } catch (err) {
-      result[p.id] = { models: [], error: err instanceof Error ? err.message : String(err) };
+      result[p.id] = { models: [], error: redact(summarizeError(err)) };
     }
   }
 

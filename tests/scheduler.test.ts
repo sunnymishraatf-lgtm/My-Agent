@@ -52,4 +52,35 @@ describe("TaskScheduler", () => {
     sch.markFailed(a, "nope");
     expect(sch.next()?.id).toBe("B");
   });
+
+  it("schedules highest priority first", () => {
+    const low = make("LOW", [], "low");
+    const crit = make("CRIT", [], "critical");
+    const med = make("MED", [], "medium");
+    const sch = new TaskScheduler({ maxConcurrent: 2 });
+    sch.setTasks([low, crit, med]);
+    expect(sch.next()?.id).toBe("CRIT");
+    sch.claim("CRIT");
+    expect(sch.next()?.id).toBe("MED");
+  });
+
+  it("does not deadlock on missing dependencies", () => {
+    const b = make("B", ["GHOST"]);
+    const sch = new TaskScheduler({ maxConcurrent: 1 });
+    sch.setTasks([b]);
+    // A dependency that was never registered must not block the task forever.
+    expect(sch.next()?.id).toBe("B");
+  });
+
+  it("releases dependents after skipped/cancelled/blocked states", () => {
+    for (const terminal of ["skipped", "cancelled", "blocked"] as const) {
+      const a = make("A", []);
+      const b = make("B", ["A"]);
+      const sch = new TaskScheduler({ maxConcurrent: 1 });
+      sch.setTasks([a, b]);
+      a.status = terminal;
+      sch.release(a);
+      expect(sch.next()?.id, terminal).toBe("B");
+    }
+  });
 });

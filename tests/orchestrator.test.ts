@@ -11,7 +11,7 @@ import type { Agent, AgentContext, AgentResult, ReviewResult } from "../src/agen
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "sunny-test-"));
+  dir = mkdtempSync(join(tmpdir(), "neutron-test-"));
 });
 
 describe("StateStore", () => {

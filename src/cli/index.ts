@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { initCommand, designCommand } from "./init-design-commands";
@@ -14,7 +14,7 @@ import { sessionsCommand } from "./sessions-command";
 import { authLogin, authList, authLogout, ensureProviderInteractive } from "./auth-command";
 import { StateStore } from "../store";
 import { SessionStore, type ChatSession } from "../chat/session";
-import { SnapshotStore, restoreTurn } from "../chat/snapshots";
+import { SnapshotStore, captureCurrent, restoreTurn } from "../chat/snapshots";
 import { diffTurn, formatDiff } from "../chat/diff";
 import {
   deleteAgentFile,
@@ -27,6 +27,7 @@ import {
 import { shareSession } from "../chat/share";
 import { startServer } from "../server/server";
 import { AcpServer } from "../acp/server";
+import { registerNeutronCommand } from "./neutron-command";
 import { installGitHubWorkflow, readEventFromEnv, runGitHubAction } from "../github/actions";
 import { readLspConfig } from "../lsp/client";
 import { listThemes, loadTheme, paint, setTheme } from "./theme";
@@ -59,24 +60,37 @@ import { loadPlugins } from "../plugins/plugins";
 import { Orchestrator } from "../orchestrator/orchestrator";
 import { parseDesignSystem } from "../design/parser";
 import { getVersion } from "../version";
+import { envVar } from "../compat";
+import { loadDotEnvFiles } from "../env";
 
 export function main(): void {
+  // Load `.env` (cwd, then home) before anything reads process.env, so
+  // provider keys configured in a `.env` file actually take effect.
+  // Real environment variables always win over file values.
+  loadDotEnvFiles();
+
   const program = new Command();
 
+  // `sunny` is kept as a deprecated alias of `neutron` (same entry point).
+  const invokedAs = basename(process.argv[1] ?? "").replace(/\.(c|m)?js$/, "");
+  if (invokedAs === "sunny") {
+    console.error("Note: the `sunny` command is deprecated and now called `neutron`. Please switch to `neutron`.");
+  }
+
   program
-    .name("sunny")
-    .description("Multi-agent AI software engineering platform.")
+    .name("neutron")
+    .description("NEUTRON — Autonomous Software Maintenance Intelligence. Impact-aware, multi-agent maintenance with human approval gates.")
     .version(getVersion());
 
-  program.addHelpText("before", `${paint(loadTheme(), "banner", "SUNNY")} — multi-agent AI software engineering platform\n`);
+  program.addHelpText("before", `${paint(loadTheme(), "banner", "NEUTRON")} — Autonomous Software Maintenance Intelligence\n`);
   program.addHelpText(
     "after",
-    "\nCommon: `sunny chat` to code, `sunny run` to build from design.md, `sunny doctor` to check setup.\n",
+    "\nCommon: `neutron chat` to code, `neutron run` to build from design.md, `neutron doctor` to check setup.\n",
   );
 
   program
     .command("init")
-    .description("Initialize a sunny project.")
+    .description("Initialize a NEUTRON project.")
     .option("-t, --template", "Also create design.md from template")
     .option("-f, --force", "Overwrite an existing design.md when using --template")
     .action((opts: { template?: boolean; force?: boolean }) => {
@@ -112,7 +126,7 @@ export function main(): void {
     .action(async () => {
       const cwd = process.cwd();
       if (!existsSync(join(cwd, "design.md"))) {
-        console.log("design.md not found. Run `sunny design --template` first.");
+        console.log("design.md not found. Run `neutron design --template` first.");
         process.exitCode = 1;
         return;
       }
@@ -146,7 +160,7 @@ export function main(): void {
       }
       store.setTasks(plan.tasks);
       store.setMeta({ name: plan.design?.project ?? "", status: "planned" });
-      console.log("\nPlan saved. Run `sunny run` to execute, or `sunny status` to inspect.");
+      console.log("\nPlan saved. Run `neutron run` to execute, or `neutron status` to inspect.");
     });
 
   program
@@ -190,8 +204,8 @@ export function main(): void {
     .command("test")
     .description("Run the project's tests and build.")
     .option("-w, --watch", "Watch mode")
-    .action(async () => {
-      await testCommand(process.cwd());
+    .action(async (opts) => {
+      await testCommand(process.cwd(), { watch: opts.watch });
     });
 
   program
@@ -212,7 +226,7 @@ export function main(): void {
         t.retries++;
       }
       store.setTasks(tasks);
-      console.log(`Queued ${failed.length} task(s) for retry. Run \`sunny run --resume\`.`);
+      console.log(`Queued ${failed.length} task(s) for retry. Run \`neutron run --resume\`.`);
     });
 
   program
@@ -246,7 +260,7 @@ export function main(): void {
 
   const auth = program
     .command("auth")
-    .description("Manage provider credentials (alias for `sunny config`).")
+    .description("Manage provider credentials (alias for `neutron config`).")
     .action(() => {
       authList();
     });
@@ -285,11 +299,11 @@ export function main(): void {
     .option("-y, --yes", "Auto-approve tool commands")
     .option("--json", "Machine-readable output (one-shot mode)")
     .option("--no-stream", "Disable streaming responses")
-    .option("-a, --agent <name>", "Agent to use (see `sunny agent list`)")
+    .option("-a, --agent <name>", "Agent to use (see `neutron agent list`)")
     .option("--mode <mode>", "Agent mode: plan or build")
     .option("--allow <list>", "Comma-separated tools to allow (overrides the agent)")
     .option("--deny <list>", "Comma-separated tools to deny (overrides the agent)")
-    .option("--plugin <files...>", "Load plugin files (in addition to .sunny/plugin/)")
+    .option("--plugin <files...>", "Load plugin files (in addition to .neutron/plugin/)")
     .option("--max-tool-output <n>", "Cap tool output kept in context (characters)", (v) => Number(v))
     .option("--no-tui", "Use the plain REPL instead of the full-screen TUI")
     .option("--stream-json", "Emit NDJSON events for scripting")
@@ -398,7 +412,10 @@ export function main(): void {
         console.log("Nothing to undo.");
         return;
       }
+      // Capture the current on-disk state BEFORE restoring so redo can re-apply it.
+      const before = captureCurrent(cwd, Object.keys(turn.files));
       const files = restoreTurn(cwd, turn);
+      snapshots.pushRedo(id, before);
       console.log(files.length > 0 ? `Restored ${files.length} file(s): ${files.join(", ")}` : "Nothing to undo.");
     });
 
@@ -503,7 +520,7 @@ export function main(): void {
         lines.push("---", "");
         lines.push(opts.prompt ?? `You are the ${opts.name} agent. ${opts.description}`);
         lines.push("");
-        const dir = opts.global ? join(configDir(), "agent") : join(process.cwd(), ".sunny", "agent");
+        const dir = opts.global ? join(configDir(), "agent") : join(process.cwd(), ".neutron", "agent");
         mkdirSync(dir, { recursive: true });
         const file = join(dir, `${opts.name}.md`);
         writeFileSync(file, lines.join("\n"), "utf8");
@@ -518,7 +535,7 @@ export function main(): void {
       const agents = loadAgents(process.cwd());
       const agent = findAgent(agents, name);
       if (!agent) {
-        console.error(`Unknown agent: ${name}. Run \`sunny agent list\`.`);
+        console.error(`Unknown agent: ${name}. Run \`neutron agent list\`.`);
         process.exitCode = 1;
         return;
       }
@@ -561,7 +578,7 @@ export function main(): void {
         return;
       }
       if (runner.plugins.length === 0) {
-        console.log("No plugins loaded. Add files under .sunny/plugin/ or `sunny plugin add <file>`.");
+        console.log("No plugins loaded. Add files under .neutron/plugin/ or `neutron plugin add <file>`.");
         return;
       }
       for (const plugin of runner.plugins) console.log(`  ${plugin.name}  [${Object.keys(plugin.hooks).join(", ")}]`);
@@ -601,7 +618,7 @@ export function main(): void {
       const configs = readMcpConfig(cwd);
       const names = Object.keys(configs);
       if (names.length === 0) {
-        console.log("No MCP servers configured. Add one with `sunny mcp add`.");
+        console.log("No MCP servers configured. Add one with `neutron mcp add`.");
         return;
       }
       const connection = await connectMcpServers(cwd);
@@ -638,7 +655,7 @@ export function main(): void {
     .requiredOption("--command <command>", "Executable to launch (e.g. npx)")
     .option("--args <args>", "Comma-separated arguments")
     .option("--env <pairs>", "Comma-separated KEY=VALUE environment variables")
-    .option("--project", "Write to .sunny/mcp.json instead of the global config")
+    .option("--project", "Write to .neutron/mcp.json instead of the global config")
     .action((opts: { name: string; command: string; args?: string; env?: string; project?: boolean }) => {
       const config: { command: string; args?: string[]; env?: Record<string, string> } = { command: opts.command };
       if (opts.args) config.args = opts.args.split(",").map((s) => s.trim()).filter(Boolean);
@@ -650,7 +667,7 @@ export function main(): void {
         }
       }
       if (opts.project) {
-        const dir = join(process.cwd(), ".sunny");
+        const dir = join(process.cwd(), ".neutron");
         mkdirSync(dir, { recursive: true });
         const file = join(dir, "mcp.json");
         const existing = existsSync(file)
@@ -707,7 +724,7 @@ export function main(): void {
       const sessions = new SessionStore(cwd);
       const session = sessionId ? sessions.load(sessionId) : sessions.latest();
       if (!session) {
-        console.log("Session not found. Run `sunny sessions` to list them.");
+        console.log("Session not found. Run `neutron sessions` to list them.");
         process.exitCode = 1;
         return;
       }
@@ -729,7 +746,7 @@ export function main(): void {
       const sessions = new SessionStore(cwd);
       const session = sessionId ? sessions.load(sessionId) : sessions.latest();
       if (!session) {
-        console.log("Session not found. Run `sunny sessions` to list them.");
+        console.log("Session not found. Run `neutron sessions` to list them.");
         process.exitCode = 1;
         return;
       }
@@ -750,14 +767,14 @@ export function main(): void {
       }
       const names = Object.keys(aliases);
       if (names.length === 0) {
-        console.log("No aliases. Add one with `sunny alias set <name> <command>`.");
+        console.log("No aliases. Add one with `neutron alias set <name> <command>`.");
         return;
       }
       for (const name of names) console.log(`  ${name} -> ${aliases[name]}`);
     });
   aliasCmd
     .command("set <name> <command...>")
-    .description("Create a shortcut, e.g. `sunny alias set s chat`.")
+    .description("Create a shortcut, e.g. `neutron alias set s chat`.")
     .action((name: string, command: string[]) => {
       const saved = setAlias(name, command.join(" "));
       console.log(saved ? `Alias ${name} -> ${command.join(" ")}` : "Failed to write config.");
@@ -862,16 +879,16 @@ export function main(): void {
     .option("-p, --port <port>", "Port to listen on", (v) => Number.parseInt(v, 10), 4096)
     .option("--hostname <host>", "Hostname to listen on", "127.0.0.1")
     .action(async (opts: { port: number; hostname: string }) => {
-      const password = process.env.SUNNY_SERVER_PASSWORD;
+      const password = envVar("SERVER_PASSWORD");
       const running = await startServer({
         root: process.cwd(),
         port: opts.port,
         host: opts.hostname,
         ...(password ? { password } : {}),
       });
-      console.log(`sunny server listening on http://${opts.hostname}:${running.port}`);
+      console.log(`NEUTRON server listening on http://${opts.hostname}:${running.port}`);
       console.log("Endpoints: GET /health, GET /v1/agents, GET /v1/sessions, POST /v1/chat");
-      if (password) console.log("Basic auth enabled (username defaults to 'sunny').");
+      if (password) console.log("Basic auth enabled (username defaults to 'neutron').");
     });
 
   const themeCmd = program.command("theme").description("Manage the CLI color theme.");
@@ -890,7 +907,7 @@ export function main(): void {
     .description("Set the active theme.")
     .action((name: string) => {
       if (!setTheme(name)) {
-        console.error(`Unknown theme: ${name}. Run \`sunny theme list\` to see options.`);
+        console.error(`Unknown theme: ${name}. Run \`neutron theme list\` to see options.`);
         process.exitCode = 1;
         return;
       }
@@ -906,7 +923,7 @@ export function main(): void {
       const configs = readLspConfig(process.cwd());
       const names = Object.keys(configs);
       if (names.length === 0) {
-        console.log('No LSP servers configured. Add one under "lsp" in the global config or .sunny/lsp.json.');
+        console.log('No LSP servers configured. Add one under "lsp" in the global config or .neutron/lsp.json.');
         return;
       }
       if (opts.json) {
@@ -984,12 +1001,12 @@ export function main(): void {
 
   program
     .command("web")
-    .description("Start the server with a browser UI.")
-    .option("-p, --port <port>", "Port to listen on", (v) => Number.parseInt(v, 10), 4096)
+    .description("Start the server with a browser UI (dashboard at /, NEUTRON demo at /demo).")
+    .option("-p, --port <port>", "Port to listen on", (v) => Number.parseInt(v, 10), Number(process.env.PORT) || 4096)
     .option("--hostname <host>", "Hostname to listen on", "127.0.0.1")
     .option("--no-open", "Do not open a browser")
     .action(async (opts: { port: number; hostname: string; open?: boolean }) => {
-      const password = process.env.SUNNY_SERVER_PASSWORD;
+      const password = envVar("SERVER_PASSWORD");
       const running = await startServer({
         root: process.cwd(),
         port: opts.port,
@@ -998,7 +1015,8 @@ export function main(): void {
         ...(password ? { password } : {}),
       });
       const url = `http://${opts.hostname}:${running.port}`;
-      console.log(`sunny web UI at ${url}`);
+      console.log(`NEUTRON web UI at ${url}`);
+      console.log(`NEUTRON web demo at ${url}/demo`);
       if (opts.open !== false) openBrowser(url);
     });
 
@@ -1035,15 +1053,15 @@ export function main(): void {
 
   program
     .command("upgrade")
-    .description("Update sunny to the latest published version.")
+    .description("Update neutron to the latest published version.")
     .action(() => {
-      console.log("Updating sunny-agent to the latest version...");
-      const result = spawnSync("npm", ["install", "-g", "sunny-agent@latest"], {
+      console.log("Updating neutron-agent to the latest version...");
+      const result = spawnSync("npm", ["install", "-g", "neutron-agent@latest"], {
         stdio: "inherit",
         shell: true,
       });
       if (result.status !== 0) {
-        console.error("Upgrade failed. Try manually: npm install -g sunny-agent@latest");
+        console.error("Upgrade failed. Try manually: npm install -g neutron-agent@latest");
         process.exitCode = 1;
       }
     });
@@ -1075,11 +1093,13 @@ export function main(): void {
       await runCommand({ root: process.cwd(), resume: true });
     });
 
+  registerNeutronCommand(program);
+
   if (process.argv.length <= 2) {
     const interactive =
       process.stdin.isTTY === true &&
       process.stdout.isTTY === true &&
-      process.env.SUNNY_NO_TUI !== "1";
+      envVar("NO_TUI") !== "1";
     const hasProvider = readGlobalProviders().some((p) => p.enabled && p.baseUrl);
     if (interactive && hasProvider) {
       void chatCommand({ root: process.cwd(), tui: true }).catch((e) => {
@@ -1091,9 +1111,9 @@ export function main(): void {
     printBanner();
     const store = new StateStore(process.cwd());
     stateCommand(store);
-    console.log("\nRun `sunny --help` to see all commands.");
-    console.log("Chat with the coding agent: sunny chat");
-    console.log("Quickstart: sunny init --template && sunny run\n");
+    console.log("\nRun `neutron --help` to see all commands.");
+    console.log("Chat with the coding agent: neutron chat");
+    console.log("Quickstart: neutron init --template && neutron run\n");
     if (!hasProvider) {
       void ensureProviderInteractive();
     }
@@ -1124,8 +1144,8 @@ function openBrowser(url: string): void {
 function printBanner(): void {
   console.log(`
 +------------------------------------------------------+
-|                       SUNNY                          |
-|               AI SOFTWARE TEAM                       |
+|                       NEUTRON                         |
+|   Autonomous Software Maintenance Intelligence       |
 +------------------------------------------------------+
 `);
 }

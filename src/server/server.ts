@@ -5,6 +5,47 @@ import { ChatAgent } from "../chat/agent";
 import { SessionStore, type ChatSession } from "../chat/session";
 import { findAgent, loadAgents } from "../chat/agent-config";
 import { getVersion } from "../version";
+import { createNeutronWorkflow, runFullWorkflow, type NeutronWorkflowOptions, type NeutronResult } from "../neutron/workflow";
+import { NeutronStore } from "../neutron/store";
+import { analyzeRepository } from "../neutron/analyzer";
+import { analyzeImpact } from "../neutron/impact";
+import { buildPlan } from "../neutron/planner";
+import { formatImpactGraph } from "../neutron/impact";
+import type { RepoAnalysis, ImpactGraph, NeutronPlan, MaintenanceRequest } from "../neutron/model";
+import { existsSync, readFileSync, createReadStream } from "node:fs";
+import { dirname, extname, join, normalize, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  getDemoManager,
+  prepareDemoRepo,
+  getDemoStatus,
+  serializeAnalysis,
+  serializeJob,
+  cloneRepo,
+  DemoError,
+  type DemoManager,
+} from "./demo";
+
+/** Locate the dashboard assets shipped with NEUTRON itself (never the user's target repo). */
+function resolveWebDir(): string | undefined {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [join(here, "web"), join(here, "..", "web"), join(here, "..", "src", "web"), join(here, "..", "..", "src", "web")];
+  return candidates.find((d) => existsSync(join(d, "index.html")));
+}
+
+const WEB_MIME: Record<string, string> = {
+  ".js": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+};
+
+
+function makeMaintenanceRequest(request: string, repository: string, branch: string, riskTolerance: "safe" | "balanced" | "aggressive", execution: "plan-only" | "implement-and-test"): MaintenanceRequest {
+  return { request, repository, branch, riskTolerance, execution };
+}
 
 export interface ServeOptions {
   root: string;
@@ -13,14 +54,17 @@ export interface ServeOptions {
   password?: string;
   username?: string;
   web?: boolean;
+  /** Directory that contains the demo workspace (NEUTRON web demo repositories). */
+  demoWorkspace?: string;
 }
 
-const WEB_HTML = `<!doctype html>
+/** Fallback dashboard page (used when no shipped web assets are found). Exported for tests. */
+export const WEB_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>sunny</title>
+<title>NEUTRON — Autonomous Software Maintenance Intelligence</title>
 <style>
   :root { color-scheme: dark; --bg:#0b0d10; --panel:#111419; --line:#23262d; --fg:#e6e6e6; --muted:#8b93a1; --accent:#6ea8fe; }
   * { box-sizing: border-box; }
@@ -51,7 +95,7 @@ const WEB_HTML = `<!doctype html>
 </head>
 <body>
 <aside>
-  <h1>sunny<span>.</span></h1>
+  <h1>NEUTRON<span>.</span></h1>
   <div class="toolbar">
     <select id="agent" title="Agent"></select>
     <input id="model" placeholder="model (optional)" />
@@ -62,7 +106,7 @@ const WEB_HTML = `<!doctype html>
 <main>
   <header><span id="title">New chat</span><span id="status">ready</span></header>
   <div id="log"></div>
-  <form id="f"><input id="m" placeholder="Ask sunny..." autocomplete="off" autofocus /><button id="send">Send</button></form>
+  <form id="f"><input id="m" placeholder="Ask NEUTRON..." autocomplete="off" autofocus /><button id="send">Send</button></form>
 </main>
 <script>
   const log = document.getElementById("log");
@@ -211,24 +255,84 @@ export interface RunningServer {
 
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
-function readBody(req: IncomingMessage): Promise<unknown> {
+/** Thrown for malformed request bodies or invalid enum values; the request handler maps it to HTTP 400. */
+export class BadRequestError extends Error {}
+
+const MAX_JSON_BODY = 5_000_000;
+
+/**
+ * Read and parse a JSON request body. Throws BadRequestError (→ HTTP 400) when the
+ * body is not valid JSON or exceeds the size limit, instead of surfacing a 500.
+ */
+export function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let data = "";
+    let rejected = false;
     req.on("data", (chunk: Buffer) => {
+      if (rejected) return;
       data += chunk.toString();
-      if (data.length > 5_000_000) reject(new Error("Request body too large"));
+      if (data.length > MAX_JSON_BODY) {
+        rejected = true;
+        // Drain — never destroy — the socket: destroying it ECONNRESETs the
+        // client before the 400 response can be written. Resuming discards the
+        // rest of the body while keeping the connection usable for the reply.
+        req.resume();
+        reject(new BadRequestError("Request body too large"));
+      }
     });
     req.on("end", () => {
+      if (rejected) return;
       if (!data) return resolve({});
       try {
         resolve(JSON.parse(data));
       } catch {
-        reject(new Error("Invalid JSON body"));
+        reject(new BadRequestError("Invalid JSON body"));
       }
     });
     req.on("error", reject);
   });
 }
+
+const RISK_TOLERANCES = new Set(["safe", "balanced", "aggressive"]);
+const EXECUTION_MODES = new Set(["plan-only", "implement-and-test"]);
+
+/** Validate the riskTolerance enum; unknown values are a 400, not a silent cast. */
+function parseRiskTolerance(value: unknown): "safe" | "balanced" | "aggressive" {
+  if (value === undefined) return "balanced";
+  if (typeof value === "string" && RISK_TOLERANCES.has(value)) {
+    return value as "safe" | "balanced" | "aggressive";
+  }
+  throw new BadRequestError(
+    `Invalid riskTolerance ${JSON.stringify(value) ?? "null"}; expected one of: safe, balanced, aggressive.`
+  );
+}
+
+/** Validate the execution enum; unknown values are a 400, not a silent cast. */
+function parseExecution(value: unknown, fallback: "plan-only" | "implement-and-test"): "plan-only" | "implement-and-test" {
+  if (value === undefined) return fallback;
+  if (typeof value === "string" && EXECUTION_MODES.has(value)) {
+    return value as "plan-only" | "implement-and-test";
+  }
+  throw new BadRequestError(
+    `Invalid execution ${JSON.stringify(value) ?? "null"}; expected one of: plan-only, implement-and-test.`
+  );
+}
+
+/** Session/snapshot ids are `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`; anything else is a 400, never a filesystem path. */
+const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function parseSessionId(value: unknown): string {
+  if (typeof value === "string" && SESSION_ID_RE.test(value)) return value;
+  throw new BadRequestError("Invalid session id");
+}
+
+/**
+ * Server-side plan approvals, keyed by workspace root. An approval is recorded only via
+ * POST /api/neutron/approve, is single-use (consumed before execution), and is never taken
+ * from client request flags. Approvals live only in memory: a server restart invalidates
+ * pending approvals (fail-closed).
+ */
+const planApprovals = new Map<string, { request: string; approvedAt: string }>();
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -240,21 +344,150 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
+/* ------------------------------------------------------------------ */
+/* NEUTRON web demo API (/api/demo/*)                                   */
+/* ------------------------------------------------------------------ */
+
+/** Simple per-IP rate limiter for the demo API (bounded, in-memory). */
+const demoRateBuckets = new Map<string, { count: number; reset: number }>();
+function demoRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = demoRateBuckets.get(ip);
+  if (!entry || now > entry.reset) {
+    demoRateBuckets.set(ip, { count: 1, reset: now + 60_000 });
+    if (demoRateBuckets.size > 10_000) demoRateBuckets.clear();
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > 120;
+}
+
+function parseAnalysisId(value: unknown): string {
+  if (typeof value === "string" && SESSION_ID_RE.test(value)) return value;
+  throw new BadRequestError("Invalid analysis id");
+}
+
+async function handleDemoApi(manager: DemoManager, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const ip = req.socket.remoteAddress ?? "unknown";
+  if (demoRateLimited(ip)) {
+    sendJson(res, 429, { ok: false, error: "Rate limit exceeded. Please slow down." });
+    return;
+  }
+  const path = url.pathname;
+  try {
+    if (req.method === "GET" && path === "/api/demo/status") {
+      sendJson(res, 200, getDemoStatus(manager));
+      return;
+    }
+    if (req.method === "POST" && path === "/api/demo/prepare") {
+      sendJson(res, 200, { ok: true, ...prepareDemoRepo(manager.workspace) });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/demo/analyze") {
+      const body = (await readJsonBody(req)) as { repo?: string; request?: string; riskTolerance?: unknown };
+      const record = manager.analyze(
+        typeof body.repo === "string" ? body.repo : "demo",
+        typeof body.request === "string" ? body.request : "",
+        parseRiskTolerance(body.riskTolerance),
+      );
+      sendJson(res, 200, { ok: true, ...serializeAnalysis(record) });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/demo/approve") {
+      const body = (await readJsonBody(req)) as { analysisId?: unknown };
+      sendJson(res, 200, { ok: true, ...manager.approve(parseAnalysisId(body.analysisId)) });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/demo/reject") {
+      const body = (await readJsonBody(req)) as { analysisId?: unknown };
+      sendJson(res, 200, { ok: true, ...manager.reject(parseAnalysisId(body.analysisId)) });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/demo/execute") {
+      const body = (await readJsonBody(req)) as { analysisId?: unknown };
+      const job = manager.execute(parseAnalysisId(body.analysisId));
+      sendJson(res, 202, { ok: true, ...serializeJob(job) });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/demo/clone") {
+      const body = (await readJsonBody(req)) as { url?: unknown };
+      if (typeof body.url !== "string" || !body.url.trim()) throw new BadRequestError("url is required");
+      const repo = await cloneRepo(manager.workspace, body.url);
+      sendJson(res, 200, { ok: true, repository: repo.name, isDemo: repo.isDemo });
+      return;
+    }
+    if (req.method === "GET" && path.startsWith("/api/demo/jobs/")) {
+      const rest = path.slice("/api/demo/jobs/".length);
+      const slash = rest.indexOf("/");
+      const rawId = slash === -1 ? rest : rest.slice(0, slash);
+      const sub = slash === -1 ? "" : rest.slice(slash + 1);
+      let id: string;
+      try {
+        id = decodeURIComponent(rawId);
+      } catch {
+        throw new BadRequestError("Invalid job id");
+      }
+      if (!SESSION_ID_RE.test(id)) throw new BadRequestError("Invalid job id");
+      const job = manager.getJob(id);
+      if (sub === "result") {
+        if (job.status !== "completed" && job.status !== "failed" && job.status !== "denied") {
+          sendJson(res, 409, { ok: false, error: "Job is still running.", status: job.status });
+          return;
+        }
+        sendJson(res, 200, { ok: true, job: serializeJob(job), result: job.result ?? null });
+        return;
+      }
+      if (sub !== "") {
+        sendJson(res, 404, { ok: false, error: "Not found" });
+        return;
+      }
+      sendJson(res, 200, { ok: true, job: serializeJob(job) });
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: `Not found: ${req.method} ${path}` });
+  } catch (e) {
+    if (e instanceof DemoError) {
+      sendJson(res, e.status, {
+        ok: false,
+        error: e.message,
+        ...(e.status === 409 ? { requiresApproval: true } : {}),
+      });
+      return;
+    }
+    throw e;
+  }
+}
+
 export function createRequestHandler(opts: ServeOptions): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     void handle(opts, req, res).catch((err) => {
+      if (err instanceof BadRequestError) {
+        sendJson(res, 400, { ok: false, error: err.message });
+        return;
+      }
       sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : String(err) });
     });
   };
 }
 
 async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // Reject percent-encoded path traversal in the RAW request target.
+  // `new URL()` normalizes %2e/%2f away before routing, so without this check
+  // an encoded traversal probe would silently land on an unrelated route
+  // (usually a 404) instead of being explicitly rejected with a 400.
+  // Only the path portion is inspected; query strings are unaffected.
+  const rawTarget = req.url ?? "/";
+  const rawPath = rawTarget.includes("?") ? rawTarget.slice(0, rawTarget.indexOf("?")) : rawTarget;
+  if (/%(?:2e|2f|5c)/i.test(rawPath)) {
+    sendJson(res, 400, { ok: false, error: "Invalid request path" });
+    return;
+  }
   if (opts.password) {
     const header = req.headers.authorization ?? "";
     const expected =
-      "Basic " + Buffer.from(`${opts.username ?? "sunny"}:${opts.password}`).toString("base64");
+      "Basic " + Buffer.from(`${opts.username ?? "neutron"}:${opts.password}`).toString("base64");
     if (header !== expected) {
-      res.writeHead(401, { "www-authenticate": 'Basic realm="sunny"' });
+      res.writeHead(401, { "www-authenticate": 'Basic realm="neutron"' });
       res.end("Unauthorized");
       return;
     }
@@ -273,12 +506,17 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     return;
   }
 
-  if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/ui") && opts.web) {
+  if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
+    const webDir = resolveWebDir();
+    if (webDir) {
+      sendHtml(res, readFileSync(join(webDir, "index.html"), "utf8"));
+      return;
+    }
     sendHtml(res, WEB_HTML);
     return;
   }
 
-  if (req.method === "GET" && url.pathname === "/health") {
+  if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/health")) {
     sendJson(res, 200, { ok: true, version: getVersion(), agents: loadAgents(opts.root).map((a) => a.name) });
     return;
   }
@@ -294,7 +532,18 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/v1/sessions/")) {
-    const id = decodeURIComponent(url.pathname.slice("/v1/sessions/".length));
+    let id: string;
+    try {
+      id = decodeURIComponent(url.pathname.slice("/v1/sessions/".length));
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid session id" });
+      return;
+    }
+    // Containment: only well-formed ids may become filesystem paths (blocks ../ traversal).
+    if (!SESSION_ID_RE.test(id)) {
+      sendJson(res, 400, { ok: false, error: "Invalid session id" });
+      return;
+    }
     const session = sessions.load(id);
     if (!session) {
       sendJson(res, 404, { ok: false, error: "Session not found" });
@@ -304,8 +553,264 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     return;
   }
 
+  // NEUTRON endpoints
+  if (req.method === "GET" && url.pathname === "/api/neutron/analyze") {
+    try {
+      const analysis = analyzeRepository(opts.root);
+      const request = makeMaintenanceRequest("", "local", "main", "balanced", "plan-only");
+      const graph = analyzeImpact(analysis, request);
+      sendJson(res, 200, { analysis, graph });
+      return;
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/neutron/analyze") {
+    try {
+      const rawBody = (await readJsonBody(req)) as {
+        request?: string;
+        repository?: string;
+        branch?: string;
+        riskTolerance?: unknown;
+        execution?: unknown;
+      };
+      const request = rawBody.request;
+      if (!request) { sendJson(res, 400, { ok: false, error: "request is required" }); return; }
+      const riskTolerance = parseRiskTolerance(rawBody.riskTolerance);
+      const execution = parseExecution(rawBody.execution, "plan-only");
+      const analysis = analyzeRepository(opts.root);
+      const maintRequest = makeMaintenanceRequest(
+        request,
+        rawBody.repository ?? "local",
+        rawBody.branch ?? "main",
+        riskTolerance,
+        execution
+      );
+      const graph = analyzeImpact(analysis, maintRequest);
+      sendJson(res, 200, { analysis, graph });
+      return;
+    } catch (e) {
+      if (e instanceof BadRequestError) throw e;
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/neutron/plan") {
+    try {
+      const body = (await readJsonBody(req)) as { request?: string; riskTolerance?: unknown };
+      const { request } = body;
+      if (!request) { sendJson(res, 400, { ok: false, error: "request is required" }); return; }
+      const riskTolerance = parseRiskTolerance(body.riskTolerance);
+      const analysis = analyzeRepository(opts.root);
+      const maintRequest: MaintenanceRequest = { request, repository: "local", branch: "main", riskTolerance, execution: "plan-only" };
+      const graph = analyzeImpact(analysis, maintRequest);
+      const plan = buildPlan(graph);
+      // Persist request/graph/plan; a fresh plan invalidates any stale approval.
+      const store = new NeutronStore(opts.root);
+      store.ensure();
+      const prev = store.load();
+      store.save({ ...prev, request, repository: "local", branch: "main", riskTolerance, execution: "plan-only", analysis, graph, plan });
+      planApprovals.delete(opts.root);
+      sendJson(res, 200, { analysis, graph, plan });
+      return;
+    } catch (e) {
+      if (e instanceof BadRequestError) throw e;
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/neutron/approve") {
+    try {
+      const body = (await readJsonBody(req)) as { request?: string };
+      if (!body.request) { sendJson(res, 400, { ok: false, error: "request is required" }); return; }
+      const store = new NeutronStore(opts.root);
+      const saved = store.load();
+      if (saved.request !== body.request || !saved.plan) {
+        sendJson(res, 409, {
+          ok: false,
+          error: "No plan found for this request. Generate a plan first, review it, then approve it.",
+        });
+        return;
+      }
+      planApprovals.set(opts.root, { request: body.request, approvedAt: new Date().toISOString() });
+      sendJson(res, 200, { ok: true, approved: true, request: body.request });
+      return;
+    } catch (e) {
+      if (e instanceof BadRequestError) throw e;
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/neutron/execute") {
+    try {
+      const body = (await readJsonBody(req)) as {
+        request?: string;
+        repository?: string;
+        branch?: string;
+        riskTolerance?: unknown;
+        execution?: unknown;
+      };
+      // NOTE: the HTTP API never accepts approval flags from the client. Approval is tracked
+      // server-side via POST /api/neutron/approve and nowhere else.
+      const { request, repository, branch } = body;
+      if (!request) { sendJson(res, 400, { ok: false, error: "request is required" }); return; }
+      const riskTolerance = parseRiskTolerance(body.riskTolerance);
+      const execution = parseExecution(body.execution, "implement-and-test");
+
+      const store = new NeutronStore(opts.root);
+      store.ensure();
+      const saved = store.load();
+
+      // Human approval gate: code-changing runs need a server-side plan approval for THIS
+      // request, and the plan must already exist from a prior plan run.
+      if (execution !== "plan-only") {
+        const approval = planApprovals.get(opts.root);
+        if (!approval || approval.request !== request || saved.request !== request || !saved.plan) {
+          sendJson(res, 409, {
+            ok: false,
+            requiresApproval: true,
+            error: "Plan approval required. Generate a plan first (plan-only), review it, then approve it before implementation.",
+          });
+          return;
+        }
+        // Single-use: consume the approval BEFORE running so it cannot authorize a later run.
+        planApprovals.delete(opts.root);
+      }
+
+      const maintenanceRequest: MaintenanceRequest = {
+        request,
+        repository: repository ?? saved.repository ?? "local",
+        branch: branch ?? "main",
+        riskTolerance,
+        execution,
+      };
+
+      // Capture the approval decision now: the workflow re-plans and persists state mid-run,
+      // so the callbacks below must use this captured value instead of re-reading mutable state.
+      const approvedForRun = true;
+      const config = loadConfig();
+      const api = new ApiSystem({ config, logger: silentLogger });
+      // Only the plan gate can be approved over HTTP. Command approvals and anything else stay denied
+      // (they need the interactive CLI/TUI), and nothing is ever deployed.
+      const result = await runFullWorkflow({
+        root: opts.root,
+        request: maintenanceRequest,
+        api,
+        autoApprove: false,
+        invokeApproval: async ({ metadata }) =>
+          metadata?.kind === "plan-approval" && approvedForRun
+            ? { approved: true, reason: "plan approved by user in web UI" }
+            : { approved: false, reason: "requires interactive approval in the CLI" },
+      });
+
+      sendJson(res, 200, { runId: result.runId, status: "completed", result });
+      return;
+    } catch (e) {
+      if (e instanceof BadRequestError) throw e;
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/neutron/memory") {
+    try {
+      const wf = createNeutronWorkflow({ root: opts.root });
+      const memory = wf.memory();
+      sendJson(res, 200, { memory });
+      return;
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/neutron/what-breaks") {
+    try {
+      const store = new NeutronStore(opts.root);
+      const state = store.load();
+      if (!state.graph) { sendJson(res, 404, { ok: false, error: "No impact graph available. Run analysis first." }); return; }
+      sendJson(res, 200, { graph: state.graph, explanation: formatImpactGraph(state.graph) });
+      return;
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/neutron/repositories") {
+    try {
+      const store = new NeutronStore(opts.root);
+      const state = store.load();
+      const repos = state.repositories || [opts.root.split(/[\\/]/).pop() || 'local'];
+      sendJson(res, 200, { repositories: repos });
+      return;
+    } catch (e) {
+      sendJson(res, 200, { repositories: ['local'] });
+      return;
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/neutron/bob/activity") {
+    try {
+      const { collectBobActivity } = await import("../neutron/bob");
+      const activity = collectBobActivity(opts.root);
+      sendJson(res, 200, { ...activity, recent: activity.sessions?.slice(-5) || [] });
+      return;
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: `Unable to read Bob activity: ${e instanceof Error ? e.message : String(e)}` });
+      return;
+    }
+  }
+
+  // NEUTRON web demo (hackathon): guided maintenance workflow UI at /demo.
+  // Served alongside the existing dashboard at / — nothing existing moves.
+  if (req.method === "GET" && url.pathname === "/demo") {
+    const webDir = resolveWebDir();
+    const demoIndex = webDir ? join(webDir, "demo", "index.html") : "";
+    if (demoIndex && existsSync(demoIndex)) {
+      sendHtml(res, readFileSync(demoIndex, "utf8"));
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: "Demo UI not found. Rebuild with `npm run build`." });
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/demo/")) {
+    await handleDemoApi(getDemoManager(opts.demoWorkspace), req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/src/web/")) {
+    const webDir = resolveWebDir();
+    let rel = "";
+    try {
+      rel = decodeURIComponent(url.pathname.slice("/src/web/".length));
+    } catch {
+      /* malformed escape -> 404 below */
+    }
+    const filePath = webDir && rel ? normalize(join(webDir, rel)) : "";
+    // Containment: never serve anything outside the dashboard directory.
+    if (webDir && filePath.startsWith(webDir + sep) && existsSync(filePath)) {
+      res.writeHead(200, { "content-type": WEB_MIME[extname(filePath)] ?? "text/plain; charset=utf-8" });
+      const stream = createReadStream(filePath);
+      stream.on("error", (err) => {
+        if (!res.headersSent) sendJson(res, 500, { ok: false, error: `Failed to read file: ${err.message}` });
+        else res.destroy();
+      });
+      stream.pipe(res);
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: "Not found" });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/v1/chat/stream") {
-    const body = (await readBody(req)) as {
+    const body = (await readJsonBody(req)) as {
       message?: string;
       sessionId?: string;
       model?: string;
@@ -316,6 +821,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
       sendJson(res, 400, { ok: false, error: "Missing required field: message" });
       return;
     }
+    if (body.sessionId !== undefined) parseSessionId(body.sessionId);
     res.writeHead(200, {
       "content-type": "application/x-ndjson; charset=utf-8",
       "cache-control": "no-cache",
@@ -356,7 +862,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
   }
 
   if (req.method === "POST" && url.pathname === "/v1/chat") {
-    const body = (await readBody(req)) as {
+    const body = (await readJsonBody(req)) as {
       message?: string;
       sessionId?: string;
       model?: string;
@@ -367,6 +873,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
       sendJson(res, 400, { ok: false, error: "Missing required field: message" });
       return;
     }
+    if (body.sessionId !== undefined) parseSessionId(body.sessionId);
     const config = loadConfig();
     const api = new ApiSystem({ config, logger: silentLogger });
     const agents = loadAgents(opts.root);
@@ -391,7 +898,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
   }
 
   if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-    const body = (await readBody(req)) as {
+    const body = (await readJsonBody(req)) as {
       messages?: { role?: string; content?: string }[];
       model?: string;
     };
@@ -419,7 +926,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
         id: `chatcmpl-${session.id}`,
         object: "chat.completion",
         created: Math.floor(Date.now() / 1000),
-        model: body.model ?? "sunny",
+        model: body.model ?? "neutron",
         choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
       });

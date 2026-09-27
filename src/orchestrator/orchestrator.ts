@@ -21,6 +21,8 @@ export interface OrchestratorOptions {
     maxIterations: number;
     autoApprove?: boolean;
     noGit?: boolean;
+    /** Per-task execution timeout in ms. Defaults to 10 minutes (NEUTRON_TASK_TIMEOUT_MS). */
+    taskTimeoutMs?: number;
   };
   run?: (cmd: string, opts?: { timeoutMs?: number }) => Promise<{ status: "ok" | "error"; stdout: string; stderr: string; exitCode: number }>;
   log?: (msg: string) => void;
@@ -41,6 +43,60 @@ export interface RunSummary {
   iterations: number;
   tasksCompleted: number;
   issues: Issue[];
+}
+
+/** Default per-task execution timeout: 10 minutes. */
+export const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Resolve the per-task timeout: explicit option first, then the
+ * NEUTRON_TASK_TIMEOUT_MS env var, then the default. Invalid values fall back
+ * to the default; the resolved timeout is always a positive integer.
+ */
+export function resolveTaskTimeoutMs(explicit?: number): number {
+  const envRaw = process.env.NEUTRON_TASK_TIMEOUT_MS;
+  // Strict numeric parse: a fractional or non-numeric value is a misconfiguration
+  // and must fall back to the default rather than being silently truncated.
+  const envVal = envRaw !== undefined && envRaw.trim() !== "" ? Number(envRaw) : NaN;
+  const candidate = explicit ?? (Number.isInteger(envVal) && envVal > 0 ? envVal : NaN);
+  if (Number.isInteger(candidate) && candidate > 0) return candidate as number;
+  return DEFAULT_TASK_TIMEOUT_MS;
+}
+
+export function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem === 0 ? `${m}m` : `${m}m ${rem}s`;
+}
+
+export class TaskTimeoutError extends Error {
+  readonly taskId: string;
+  readonly timeoutMs: number;
+  constructor(taskId: string, timeoutMs: number) {
+    super(`Task ${taskId} timed out after ${formatDurationMs(timeoutMs)}`);
+    this.name = "TaskTimeoutError";
+    this.taskId = taskId;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Race a promise against a timeout. The underlying work is not cancellable, so
+ * on timeout the task is marked failed while the attempt may still settle in
+ * the background — its late result is ignored.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, taskId: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new TaskTimeoutError(taskId, ms)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 export class Orchestrator {
@@ -106,7 +162,7 @@ export class Orchestrator {
   async execute(taskList?: Task[], opts?: { resume?: boolean }): Promise<RunSummary> {
     const tasks = taskList ?? (opts?.resume ? this.store.getTasks() : []);
     if (tasks.length === 0) {
-      throw new Error("No tasks to run. Run `sunny plan` first or ensure design.md exists.");
+      throw new Error("No tasks to run. Run `neutron plan` first or ensure design.md exists.");
     }
 
     for (const t of tasks) {
@@ -179,7 +235,7 @@ export class Orchestrator {
     this.store.setMeta({ status: this.terminate ? "paused" : ok ? "completed" : "failed" });
     if (!ok && failedTasks.length + blockedTasks.length > 0) {
       this.log(
-        `${failedTasks.length} failed and ${blockedTasks.length} blocked task(s); run \`sunny fix\` then \`sunny run --resume\` to retry them.`,
+        `${failedTasks.length} failed and ${blockedTasks.length} blocked task(s); run \`neutron fix\` then \`neutron run --resume\` to retry them.`,
       );
     }
 
@@ -226,37 +282,58 @@ export class Orchestrator {
       task.updatedAt = new Date().toISOString();
       this.options.onTaskStatus?.(task, agent);
       this.store.setTasks(tasks);
+      const timeoutMs = resolveTaskTimeoutMs(this.options.config.taskTimeoutMs);
 
       try {
-        const result = await agent.execute(task, this.buildContextFor(agent));
+        const result = await withTimeout(agent.execute(task, this.buildContextFor(agent)), timeoutMs, task.id);
         task.result = result;
         task.status = result.status === "success" ? "completed" : result.status === "blocked" ? "blocked" : "failed";
         if (result.status === "success") {
-          completed++;
           try {
-            const review = await agent.review(result, this.buildContextFor(agent));
+            const review = await withTimeout(agent.review(result, this.buildContextFor(agent)), timeoutMs, task.id);
             if (!review.passed) {
               task.status = "failed";
+              task.result = {
+                ...result,
+                status: "failed",
+                issues: [...result.issues, ...review.issues],
+                summary: review.notes.length > 0 ? `${result.summary}\nReview rejected: ${review.notes.join("; ")}` : result.summary,
+              };
               issues.push(...review.issues);
               this.log(`review rejected ${task.id}: ${review.notes.join("; ")}`);
+            } else {
+              completed++;
             }
-          } catch {
-            /* review failure must not fail the task */
+          } catch (reviewErr) {
+            // Review failure must not fail the task.
+            if (reviewErr instanceof TaskTimeoutError) {
+              this.log(`review of ${task.id} timed out after ${formatDurationMs(timeoutMs)}; treating as passed`);
+            }
+            completed++;
           }
         } else {
           issues.push(...result.issues);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        const timedOut = err instanceof TaskTimeoutError;
         task.status = "failed";
-        const issue: Issue = {
-          severity: "high",
-          category: "agent",
-          title: `Agent ${agent.label} crashed: ${message}`,
-        };
+        const issue: Issue = timedOut
+          ? {
+              severity: "high",
+              category: "timeout",
+              title: `Task ${task.id} timed out after ${formatDurationMs(timeoutMs)} — marked failed (not blocked)`,
+              detail: `The agent did not finish within the per-task timeout (${formatDurationMs(timeoutMs)}). Increase it with the NEUTRON_TASK_TIMEOUT_MS env var or the taskTimeoutMs config option, then retry with \`neutron run --resume\`.`,
+              fixRecommendation: "neutron fix && neutron run --resume",
+            }
+          : {
+              severity: "high",
+              category: "agent",
+              title: `Agent ${agent.label} crashed: ${message}`,
+            };
         task.result = {
           status: "failed",
-          summary: message,
+          summary: timedOut ? issue.title : message,
           filesChanged: [],
           commandsRun: [],
           testsRun: [],

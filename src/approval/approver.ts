@@ -7,6 +7,13 @@ export interface ApproverOptions {
   print?: (msg: string) => void;
 }
 
+export type ApprovalSource = "interactive" | "-y" | "non-tty";
+
+export interface ApprovalDecision {
+  approved: boolean;
+  source: ApprovalSource;
+}
+
 export class Approver {
   private autoApprove: boolean;
   private onPrint?: (msg: string) => void;
@@ -22,15 +29,25 @@ export class Approver {
   }
 
   async ask(req: ApprovalRequest): Promise<boolean> {
+    const { approved } = await this.askWithSource(req);
+    return approved;
+  }
+
+  /**
+   * Same fail-closed semantics as ask(), but also reports where the decision
+   * came from: "-y" (auto-approve), "interactive" (TTY prompt), or "non-tty"
+   * (non-interactive auto-deny).
+   */
+  async askWithSource(req: ApprovalRequest): Promise<ApprovalDecision> {
     if (this.autoApprove) {
       this.print(`[auto-approved] ${req.reason}: ${req.command ?? req.message}`);
       await req.onApprove();
-      return true;
+      return { approved: true, source: "-y" };
     }
     if (!process.stdin.isTTY) {
       this.print(`[non-interactive] ${req.reason}: auto-denying ${req.command ?? req.message}`);
       await req.onDeny();
-      return false;
+      return { approved: false, source: "non-tty" };
     }
 
     this.print(`\n⚠ APPROVAL REQUIRED\n`);
@@ -45,10 +62,10 @@ export class Approver {
 
     if (answer.trim().toLowerCase() === "y" || answer.trim().toLowerCase() === "yes") {
       await req.onApprove();
-      return true;
+      return { approved: true, source: "interactive" };
     }
     await req.onDeny();
-    return false;
+    return { approved: false, source: "interactive" };
   }
 }
 

@@ -13,7 +13,7 @@ export function stateCommand(store: StateStore): void {
     byAgent.set(t.agent, (byAgent.get(t.agent) ?? 0) + 1);
   }
   if (byAgent.size === 0) {
-    console.log("  No tasks yet. Run `sunny plan`.");
+    console.log("  No tasks yet. Run `neutron plan`.");
     return;
   }
   for (const [agent, count] of byAgent) {
@@ -25,7 +25,7 @@ export function stateCommand(store: StateStore): void {
 export function printReview(store: StateStore): void {
   const review = store.getReview();
   if (!review) {
-    console.log("No review yet. Run `sunny review`.");
+    console.log("No review yet. Run `neutron review`.");
     return;
   }
   console.log(review);

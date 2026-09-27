@@ -49,7 +49,9 @@ export class ConcurrencyLimit {
     const delta = clamped - this.max;
     this.max = clamped;
     if (delta > 0) {
-      while (delta > 0 && this.queue.length > 0) {
+      // Wake only the newly-enabled number of waiters, in FIFO order.
+      const wake = Math.min(delta, this.queue.length);
+      for (let i = 0; i < wake; i++) {
         this.active++;
         this.queue.shift()!();
       }

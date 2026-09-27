@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
-import { basename, extname, isAbsolute, join } from "node:path";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { configDir, readRawConfig } from "../config";
 
@@ -92,18 +92,54 @@ function normalizeHooks(raw: unknown): PluginHooks {
     const value = record[key];
     if (typeof value === "function") target[key] = value;
   }
+  // Named hook aliases (e.g. `export function toolBefore() {}`).
+  const aliases: Record<string, (typeof HOOK_KEYS)[number]> = {
+    chatMessage: "chat.message",
+    toolBefore: "tool.before",
+    toolAfter: "tool.after",
+  };
+  for (const [alias, key] of Object.entries(aliases)) {
+    if (target[key] === undefined && typeof record[alias] === "function") target[key] = record[alias];
+  }
   return hooks;
 }
 
+/**
+ * Collect hooks from every supported plugin module shape:
+ * - `export const hooks = {...}` (named hooks export)
+ * - `export default { hooks: {...} }` (default object carrying hooks)
+ * - `export default {...}` (default export IS the hooks object)
+ * - hook keys / hook functions exported directly on the module namespace
+ */
+function extractHooks(module: Record<string, unknown>): PluginHooks {
+  const merged: PluginHooks = {};
+  const target = merged as Record<string, unknown>;
+  const def = module.default;
+  const candidates: unknown[] = [
+    module.hooks,
+    def && typeof def === "object" ? (def as Record<string, unknown>).hooks : undefined,
+    def,
+    module,
+  ];
+  for (const candidate of candidates) {
+    const hooks = normalizeHooks(candidate);
+    for (const key of HOOK_KEYS) {
+      if (target[key] === undefined && (hooks as Record<string, unknown>)[key] !== undefined) {
+        target[key] = (hooks as Record<string, unknown>)[key];
+      }
+    }
+  }
+  return merged;
+}
+
 export function pluginDirs(root: string): string[] {
-  return [join(root, ".sunny", "plugin"), join(root, ".opencode", "plugin"), join(configDir(), "plugin")];
+  return [join(root, ".sunny", "plugin"), join(root, ".neutron", "plugin"), join(root, ".opencode", "plugin"), join(configDir(), "plugin")];
 }
 
 export async function loadPluginFile(path: string): Promise<Plugin | undefined> {
   try {
     const module = (await import(pathToFileURL(path).href)) as Record<string, unknown>;
-    const exported = module.hooks ?? (module.default as Record<string, unknown> | undefined) ?? module;
-    const hooks = normalizeHooks(exported);
+    const hooks = extractHooks(module);
     if (Object.keys(hooks).length === 0) return undefined;
     const name = basename(path, extname(path));
     return { name, hooks };
@@ -134,7 +170,13 @@ export async function loadPlugins(root: string, extraFiles: string[] = []): Prom
   }
 
   const plugins: Plugin[] = [];
+  // The same plugin file can be reachable from several dirs (plugin dirs,
+  // --plugin flags, config entries). Dedupe by resolved path.
+  const seen = new Set<string>();
   for (const file of files) {
+    const resolved = resolve(file);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
     const plugin = await loadPluginFile(file);
     if (plugin) plugins.push(plugin);
   }

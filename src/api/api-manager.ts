@@ -2,6 +2,7 @@ import type { ApiConfig, ProviderResolved, ResolvedConfig } from "../config";
 import type { ChatMessage, ChatRequest, ChatResponse, ProviderStats, TaskKind } from "../types";
 import type { LLMProvider } from "../providers/provider";
 import { ProviderRegistry } from "../providers/registry";
+import { formatFailoverError, isRetryable } from "../providers/errors";
 import { ConcurrencyLimit } from "./pool";
 import type { Logger } from "../logger";
 
@@ -41,11 +42,12 @@ export class ApiSystem {
     this.routing = cfg.routing;
     this.pool = new ConcurrencyLimit(this.config.maxConcurrentRequests);
     this.registry = opts.registry ?? new ProviderRegistry();
-    this.registry.configure(cfg.providers);
+    this.registry.configure(cfg.providers, { timeoutMs: this.config.timeoutMs });
     this.logger = opts.logger;
   }
 
   configure(providers: ProviderResolved[]): void {
+    // Reuses the registry's remembered timeout (set from config.api.timeoutMs).
     this.registry.configure(providers);
   }
 
@@ -113,7 +115,7 @@ export class ApiSystem {
     }
     if (this.registry.ids().length === 0) {
       throw new Error(
-        "No LLM provider configured. Run `sunny config` to set one, or set LLM_BASE_URL/LLM_API_KEY (or OPENAI_BASE_URL/OPENAI_API_KEY) environment variables.",
+        "No LLM provider configured. Run `neutron config` to set one, or set LLM_BASE_URL/LLM_API_KEY (or OPENAI_BASE_URL/OPENAI_API_KEY) environment variables.",
       );
     }
     const req: ChatRequest = {
@@ -133,12 +135,12 @@ export class ApiSystem {
   ): AsyncGenerator<StreamChunk> {
     if (this.stopFlag) throw new Error("API system is stopped");
     if (this.registry.ids().length === 0) {
-      throw new Error("No LLM provider configured. Run `sunny config` to set one.");
+      throw new Error("No LLM provider configured. Run `neutron config` to set one.");
     }
 
     const tried = new Set<string>();
     let current = this.pickNext(kind, opts?.model, tried, opts?.provider);
-    let lastError = "";
+    const failures: Array<{ id: string; error: unknown }> = [];
 
     while (current) {
       tried.add(current.id);
@@ -164,23 +166,22 @@ export class ApiSystem {
         return;
       } catch (err) {
         this.totalFailures++;
-        lastError = err instanceof Error ? err.message : String(err);
-        this.log(`provider ${current.id} stream failed: ${lastError}`);
+        const message = err instanceof Error ? err.message : String(err);
+        failures.push({ id: current.id, error: err });
+        this.log(`provider ${current.id} stream failed: ${message}`);
         if (emitted) throw err;
         this.totalFailovers++;
       }
       current = this.pickNext(kind, opts?.model, tried, undefined);
     }
 
-    throw new Error(
-      `All LLM providers failed${lastError ? ` (last error: ${lastError})` : ""}. Check your provider configuration with \`sunny doctor\`.`,
-    );
+    throw formatFailoverError(failures);
   }
 
   private async runWithFailover(kind: TaskKind, req: ChatRequest, forcedProvider?: string): Promise<ChatResponse> {
     const tried = new Set<string>();
     let current = this.pickNext(kind, req.model, tried, forcedProvider);
-    let lastError = "";
+    const failures: Array<{ id: string; error: unknown }> = [];
 
     while (current) {
       if (this.stopFlag) throw new Error("API system is stopped");
@@ -203,14 +204,13 @@ export class ApiSystem {
         if (e.cooldown) this.setCooldown(current.id, this.config.providerCooldownMs);
         this.totalFailures++;
         this.totalFailovers++;
-        lastError = err instanceof Error ? err.message : String(err);
-        this.log(`provider ${current.id} failed: ${lastError}; failing over`);
+        failures.push({ id: current.id, error: err });
+        const message = err instanceof Error ? err.message : String(err);
+        this.log(`provider ${current.id} failed: ${message}; failing over`);
       }
       current = this.pickNext(kind, req.model, tried, undefined);
     }
-    throw new Error(
-      `All LLM providers failed after retries and failover${lastError ? ` (last error: ${lastError})` : ""}. Check your provider configuration with \`sunny doctor\`.`,
-    );
+    throw formatFailoverError(failures);
   }
 
   private preferFree(ids: string[]): string[] {
@@ -282,7 +282,9 @@ export class ApiSystem {
         lastErr = err;
         const e = err as { status?: number; retryable?: boolean; cooldown?: boolean };
         if (e.cooldown) this.setCooldown(id, this.config.providerCooldownMs);
-        if (!e.retryable && e.status !== undefined && e.status !== 429) break;
+        // Config/auth errors (401, 403, 404, …) are never retried; only
+        // transient failures (network, timeout, 408/429/5xx) are.
+        if (!isRetryable(err)) break;
         if (attempt < this.config.maxRetries) {
           const wait = Math.min(this.config.backoffBaseMs * 2 ** attempt, 30_000) + (this.config.requestCooldownMs ?? 0);
           this.log(`retrying ${id} attempt ${attempt + 2} in ${wait}ms`);

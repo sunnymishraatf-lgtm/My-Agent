@@ -12,9 +12,15 @@ export class TodoStore {
   private counter = 0;
 
   write(todos: unknown): TodoItem[] {
-    if (!Array.isArray(todos)) return this.items;
-    this.items = todos.map((raw) => {
-      const t = (raw ?? {}) as Record<string, unknown>;
+    if (!Array.isArray(todos)) throw new Error("todos must be an array of {content, status?, priority?} objects");
+    this.items = todos.map((raw, i) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new Error(`todos[${i}] must be an object with a content string`);
+      }
+      const t = raw as Record<string, unknown>;
+      if (typeof t.content !== "string" || t.content.trim() === "") {
+        throw new Error(`todos[${i}].content must be a non-empty string`);
+      }
       const status = t.status;
       const priority = t.priority;
       return {

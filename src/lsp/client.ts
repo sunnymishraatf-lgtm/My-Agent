@@ -53,6 +53,16 @@ const SEVERITY: Record<number, Diagnostic["severity"]> = {
   4: "hint",
 };
 
+/** JSON-RPC method-not-found error code. */
+export const METHOD_NOT_FOUND = -32601;
+
+/**
+ * Factory used to spawn the server child process. Defaults to `spawn` from
+ * `node:child_process`; injectable so tests can supply a fake child process
+ * instead of a real subprocess.
+ */
+export type SpawnFn = typeof spawn;
+
 function parseDiagnostics(file: string, params: unknown): Diagnostic[] {
   const raw = (params ?? {}) as { diagnostics?: Record<string, unknown>[] };
   return (raw.diagnostics ?? []).map((d) => {
@@ -71,27 +81,47 @@ function parseDiagnostics(file: string, params: unknown): Diagnostic[] {
 export class LspClient {
   readonly name: string;
   private config: LspServerConfig;
+  private spawnFn: SpawnFn;
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private diagnostics = new Map<string, Diagnostic[]>();
   private buffer = Buffer.alloc(0);
   private shutdownRequested = false;
+  private startPromise?: Promise<void>;
 
-  constructor(name: string, config: LspServerConfig) {
+  constructor(name: string, config: LspServerConfig, spawnFn: SpawnFn = spawn) {
     this.name = name;
     this.config = config;
+    this.spawnFn = spawnFn;
   }
 
+  /** Idempotent: concurrent or repeated calls share a single child process. */
   async start(root: string): Promise<void> {
-    this.child = spawn(this.config.command, this.config.args ?? [], {
+    if (!this.startPromise) {
+      this.startPromise = this.doStart(root).catch((err) => {
+        // Allow a retry after a failed start.
+        this.startPromise = undefined;
+        throw err;
+      });
+    }
+    return this.startPromise;
+  }
+
+  private async doStart(root: string): Promise<void> {
+    this.child = this.spawnFn(this.config.command, this.config.args ?? [], {
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
     });
     this.child.stdout.on("data", (d: Buffer) => this.onData(d));
     this.child.on("exit", () => {
-      for (const { reject } of this.pending.values()) reject(new Error(`LSP server ${this.name} exited`));
-      this.pending.clear();
+      this.failPending(new Error(`LSP server ${this.name} exited`));
+    });
+    // A spawn failure surfaces as an "error" event on the child. Handle it so
+    // it rejects pending requests instead of crashing the Node process with
+    // an unhandled "error" event.
+    this.child.on("error", (err: Error) => {
+      this.failPending(new Error(`LSP server ${this.name} failed: ${err.message}`));
     });
     await this.request("initialize", {
       processId: process.pid,
@@ -102,6 +132,11 @@ export class LspClient {
       initializationOptions: this.config.initializationOptions ?? {},
     });
     this.notify("initialized", {});
+  }
+
+  private failPending(err: Error): void {
+    for (const { reject } of this.pending.values()) reject(err);
+    this.pending.clear();
   }
 
   private onData(chunk: Buffer): void {
@@ -144,7 +179,32 @@ export class LspClient {
       this.pending.delete(message.id);
       if (message.error) entry.reject(new Error(message.error.message));
       else entry.resolve(message.result);
+      return;
     }
+    // Server-initiated request or notification. Notifications (no id) are
+    // dropped; requests always get a response so the server never hangs.
+    if (message.method !== undefined && typeof message.id === "number") {
+      if (message.method === "workspace/configuration") {
+        this.answerConfiguration(message);
+      } else {
+        this.send({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: METHOD_NOT_FOUND, message: `Method not found: ${message.method}` },
+        });
+      }
+    }
+  }
+
+  /**
+   * Answer a `workspace/configuration` request with the client's configured
+   * settings (one result per requested item, per the LSP spec).
+   */
+  private answerConfiguration(message: LspMessage): void {
+    const params = (message.params ?? {}) as { items?: unknown[] };
+    const settings = this.config.initializationOptions ?? {};
+    const items = Array.isArray(params.items) ? params.items : [];
+    this.send({ jsonrpc: "2.0", id: message.id, result: items.map(() => settings) });
   }
 
   private send(message: LspMessage): void {
@@ -211,7 +271,7 @@ export class LspClient {
 
 export function readLspConfig(root: string): Record<string, LspServerConfig> {
   const servers: Record<string, LspServerConfig> = {};
-  for (const path of [globalConfigPath(), join(root, ".sunny", "lsp.json")]) {
+  for (const path of [globalConfigPath(), join(root, ".sunny", "lsp.json"), join(root, ".neutron", "lsp.json")]) {
     if (!existsSync(path)) continue;
     try {
       const raw = JSON.parse(readFileSync(path, "utf8")) as { lsp?: Record<string, LspServerConfig> };
@@ -241,7 +301,7 @@ export async function diagnoseFile(root: string, relPath: string): Promise<{ dia
   const found = findServerFor(configs, relPath);
   if (!found) {
     throw new Error(
-      `No LSP server configured for ${relPath}. Add one under "lsp" in the global config or .sunny/lsp.json.`,
+      `No LSP server configured for ${relPath}. Add one under "lsp" in the global config or .neutron/lsp.json.`,
     );
   }
   const client = new LspClient(found.name, found.config);

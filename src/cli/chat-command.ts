@@ -23,10 +23,12 @@ import { connectMcpServers } from "../mcp/client";
 import { Terminal } from "../terminal/terminal";
 import { confirm } from "../approval/approver";
 import { redact } from "../config";
+import { formatCliError } from "../providers/errors";
 import { ensureProviderInteractive } from "./auth-command";
 import { loadTheme, paint, type Theme } from "./theme";
 import { loadPlugins } from "../plugins/plugins";
 import type { PluginRunner } from "../plugins/plugins";
+import { envVar } from "../compat";
 
 export interface ChatCommandOptions {
   root: string;
@@ -68,13 +70,13 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
     !opts.streamJson &&
     process.stdout.isTTY === true &&
     process.stdin.isTTY === true &&
-    process.env.SUNNY_NO_TUI !== "1";
+    envVar("NO_TUI") !== "1";
 
   if (config.providers.filter((p) => p.enabled).length === 0 && !canTui) {
     const configured = await ensureProviderInteractive();
     if (!configured) {
       console.log("No LLM provider configured.");
-      console.log("Run `sunny config` to add one, or set OPENAI_BASE_URL / OPENAI_API_KEY (or LLM_*).");
+      console.log("Run `neutron config` to add one, or set OPENAI_BASE_URL / OPENAI_API_KEY (or LLM_*).");
       process.exitCode = 1;
       return;
     }
@@ -91,7 +93,7 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
   if (opts.sessionId) {
     session = store.load(opts.sessionId);
     if (!session) {
-      console.log(`Session not found: ${opts.sessionId}. Run \`sunny sessions\` to list them.`);
+      console.log(`Session not found: ${opts.sessionId}. Run \`neutron sessions\` to list them.`);
       process.exitCode = 1;
       return;
     }
@@ -198,11 +200,11 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
       store.save(session!);
       return true;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redact(formatCliError(err, opts.provider, opts.model));
       if (opts.json) {
         console.log(JSON.stringify({ ok: false, error: message }));
       } else {
-        console.error(`\nError: ${redact(message)}`);
+        console.error(`\n${message}`);
       }
       process.exitCode = 1;
       return false;
@@ -217,7 +219,7 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
     !opts.streamJson &&
     process.stdout.isTTY === true &&
     process.stdin.isTTY === true &&
-    process.env.SUNNY_NO_TUI !== "1";
+    envVar("NO_TUI") !== "1";
 
   let initialMessage: string | undefined;
   if (opts.message) {
@@ -237,7 +239,7 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
           }),
         );
       } else if (ok && !opts.streamJson) {
-        console.log(`\nSession: ${session.id} (resume with \`sunny chat --session ${session.id}\`)`);
+        console.log(`\nSession: ${session.id} (resume with \`neutron chat --session ${session.id}\`)`);
       }
       return;
     }
@@ -246,7 +248,7 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
 
   if (!process.stdin.isTTY) {
     console.log("No message provided and stdin is not interactive.");
-    console.log('Use `sunny chat "your question"` or run in a terminal.');
+    console.log('Use `neutron chat "your question"` or run in a terminal.');
     process.exitCode = 1;
     return;
   }
@@ -433,7 +435,7 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
         return;
       }
       if (input === "/plugins") {
-        if (plugins.plugins.length === 0) console.log("No plugins loaded. Add .sunny/plugin/*.mjs files.");
+        if (plugins.plugins.length === 0) console.log("No plugins loaded. Add .neutron/plugin/*.mjs files.");
         else for (const p of plugins.plugins) console.log(`  ${p.name}  [${Object.keys(p.hooks).join(", ")}]`);
         prompt();
         rl.prompt();
@@ -441,7 +443,7 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
       }
       if (input === "/skills") {
         const skills = loadSkills(opts.root);
-        if (skills.length === 0) console.log("No skills. Add SKILL.md files under .sunny/skills/.");
+        if (skills.length === 0) console.log("No skills. Add SKILL.md files under .neutron/skills/.");
         else for (const s of skills) console.log(`  ${s.name}  ${s.description}`);
         prompt();
         rl.prompt();
@@ -518,7 +520,7 @@ export async function chatCommand(opts: ChatCommandOptions): Promise<void> {
       }
       if (input === "/commands") {
         if (commands.length === 0) {
-          console.log("No custom commands. Add markdown files under .sunny/commands/.");
+          console.log("No custom commands. Add markdown files under .neutron/commands/.");
         } else {
           for (const c of commands) console.log(`  /${c.name}  ${c.description}`);
         }
@@ -587,7 +589,7 @@ function createSpinner(enabled: boolean): Spinner {
 }
 
 function printBanner(sessionId: string, agentName: string, theme: Theme): void {
-  console.log(paint(theme, "banner", "SUNNY CHAT"));
+  console.log(paint(theme, "banner", "NEUTRON CHAT"));
   console.log(`Session: ${sessionId}  Agent: ${agentName}`);
   console.log("Type your request. `/help` for commands, `/exit` to quit.\n");
 }
@@ -610,13 +612,13 @@ function printHelp(): void {
   console.log("  /provider <id>  switch provider");
   console.log("  /rename <t>  rename the current session");
   console.log("  /search <q>  search past sessions");
-  console.log("  /skills      list skills (.sunny/skills/*/SKILL.md)");
-  console.log("  /plugins     list loaded plugins (.sunny/plugin/*.mjs)");
+  console.log("  /skills      list skills (.neutron/skills/*/SKILL.md)");
+  console.log("  /plugins     list loaded plugins (.neutron/plugin/*.mjs)");
   console.log("  /init        create AGENTS.md for this project");
   console.log("  /diff        show changes from the last turn as a unified diff");
   console.log("  /compact     summarize older messages to shrink context");
   console.log("  /share       write this session to .agent/shares/");
-  console.log("  /commands    list custom commands (.sunny/commands/*.md)");
+  console.log("  /commands    list custom commands (.neutron/commands/*.md)");
   console.log("  /exit        quit (or /quit)");
   console.log("");
   console.log("Input helpers:");

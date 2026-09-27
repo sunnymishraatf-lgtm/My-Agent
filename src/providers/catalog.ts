@@ -10,7 +10,7 @@ export type ProviderApiType = "openai-compatible" | "anthropic" | "google";
 export type ProviderAuthType = "bearer" | "x-api-key" | "query" | "none";
 
 /**
- * A static description of a provider Sunny knows how to talk to. Model lists
+ * A static description of a provider NEUTRON knows how to talk to. Model lists
  * are deliberately NOT stored here: they are discovered from the provider's
  * own `/models` endpoint (see discovery.ts) and cached locally.
  */
@@ -251,22 +251,57 @@ export function envPrefixesFor(entry: ProviderCatalogEntry): string[] {
   return [...new Set([...entry.env, idUpper])];
 }
 
-/** Resolve a provider's endpoint/key from the environment, if present. */
-export function resolveEnvProvider(entry: ProviderCatalogEntry): ProviderResolved | undefined {
+/** Fields explicitly set in the environment for a catalog provider. */
+export interface EnvProviderFields {
+  id: string;
+  /** Set only when `<PREFIX>_BASE_URL` is present. */
+  baseUrl?: string;
+  /** Set only when `<PREFIX>_API_KEY` is present. */
+  apiKey?: string;
+  /** Set only when `<PREFIX>_MODELS` is present. */
+  models?: string[];
+  /** True when at least one of the above was set. */
+  matched: boolean;
+}
+
+/**
+ * Which provider fields were explicitly configured from the environment.
+ * Unlike {@link resolveEnvProvider}, this does not apply catalog fallbacks,
+ * so callers can merge env values over a config-file entry field by field.
+ */
+export function resolveEnvProviderFields(entry: ProviderCatalogEntry): EnvProviderFields {
+  const fields: EnvProviderFields = { id: entry.id, matched: false };
   for (const prefix of envPrefixesFor(entry)) {
     const baseUrl = process.env[`${prefix}_BASE_URL`];
     const apiKey = process.env[`${prefix}_API_KEY`];
-    if (!baseUrl && !apiKey) continue;
     const models = process.env[`${prefix}_MODELS`];
-    return {
-      id: entry.id,
-      baseUrl: baseUrl ?? entry.baseUrl,
-      apiKey,
-      models: models ? models.split(",").map((m) => m.trim()).filter(Boolean) : [],
-      enabled: true,
-    };
+    if (!baseUrl && !apiKey && !models) continue;
+    fields.matched = true;
+    if (baseUrl) fields.baseUrl = baseUrl;
+    if (apiKey) fields.apiKey = apiKey;
+    if (models) fields.models = models.split(",").map((m) => m.trim()).filter(Boolean);
+    break; // first matching prefix wins
   }
-  return undefined;
+  return fields;
+}
+
+/** Resolve a provider's endpoint/key from the environment, if present. */
+export function resolveEnvProvider(entry: ProviderCatalogEntry): ProviderResolved | undefined {
+  const fields = resolveEnvProviderFields(entry);
+  // A key or base URL is required to configure a provider; a bare MODELS
+  // list alone does not (it can still override a config-file entry's models).
+  if (!fields.matched || (!fields.baseUrl && !fields.apiKey)) return undefined;
+  // A key without an explicit base URL falls back to the known default, so
+  // `AGENTROUTER_API_KEY=...` alone is enough to configure the provider.
+  const baseUrl = fields.baseUrl ?? entry.baseUrl;
+  if (!baseUrl) return undefined;
+  return {
+    id: entry.id,
+    baseUrl,
+    apiKey: fields.apiKey,
+    models: fields.models ?? [],
+    enabled: true,
+  };
 }
 
 /** Deep copy of the built-in catalog, useful in tests to reset state. */

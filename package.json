@@ -1,9 +1,10 @@
 {
-  "name": "sunny-agent",
+  "name": "neutron-agent",
   "version": "0.1.0",
-  "description": "A multi-agent AI software engineering platform and interactive coding agent for your terminal. Give it a goal, and a team of specialized AI agents plans, builds, tests, reviews and verifies it.",
+  "description": "NEUTRON \u2014 Autonomous Software Maintenance Intelligence. Give it a maintenance request; a team of specialised AI agents analyses impact, plans, implements, tests, security-reviews and code-reviews the change behind human approval gates.",
   "type": "module",
   "bin": {
+    "neutron": "dist/cli-entry.js",
     "sunny": "dist/cli-entry.js"
   },
   "main": "dist/index.js",
@@ -20,7 +21,8 @@
     "install.ps1"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/copy-web.mjs",
+    "build:vercel": "npm run build && node scripts/copy-web-vercel.mjs",
     "dev": "tsup --watch",
     "start": "node dist/cli-entry.js",
     "chat": "node dist/cli-entry.js chat",
@@ -35,13 +37,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sunny-ai/sunny-agent.git"
+    "url": "git+https://github.com/sunnymishraatf-lgtm/My-Agent.git"
   },
-  "homepage": "https://github.com/sunny-ai/sunny-agent#readme",
+  "homepage": "https://github.com/sunnymishraatf-lgtm/My-Agent#readme",
   "bugs": {
-    "url": "https://github.com/sunny-ai/sunny-agent/issues"
+    "url": "https://github.com/sunnymishraatf-lgtm/My-Agent/issues"
   },
-  "author": "sunny contributors",
+  "author": "NEUTRON contributors",
   "publishConfig": {
     "access": "public"
   },
@@ -51,7 +53,9 @@
     "cli",
     "orchestration",
     "llm",
-    "multi-agent"
+    "multi-agent",
+    "software-maintenance",
+    "impact-analysis"
   ],
   "license": "MIT",
   "dependencies": {

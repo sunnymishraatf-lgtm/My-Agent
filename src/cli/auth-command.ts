@@ -39,7 +39,7 @@ export function authLogout(id: string): void {
 export async function authLogin(provider: string | undefined, opts: AuthLoginOptions = {}): Promise<void> {
   if (!provider) {
     if (!process.stdin.isTTY) {
-      console.log("Usage: sunny auth login <provider> --key <key> [--base-url <url>] [--models a,b]");
+      console.log("Usage: neutron auth login <provider> --key <key> [--base-url <url>] [--models a,b]");
       console.log(`Known providers: ${freeProviders.map((p) => p.id).join(", ")}`);
       process.exitCode = 1;
       return;
@@ -82,7 +82,7 @@ export async function authLogin(provider: string | undefined, opts: AuthLoginOpt
     return;
   }
   console.log(`Logged in ${provider} -> ${baseUrl} [${providerConfig.apiKey ? "key set" : "no key"}]`);
-  console.log("Verify with `sunny doctor --chat`.");
+  console.log("Verify with `neutron doctor --chat`.");
 }
 
 export async function ensureProviderInteractive(): Promise<boolean> {

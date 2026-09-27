@@ -82,7 +82,8 @@ export type ApprovalReason =
   | "contains-secret"
   | "large-delete"
   | "public-exposure"
-  | "package-install";
+  | "package-install"
+  | "plan-approval";
 
 export interface CompletionGate {
   requirements: number;

@@ -17,14 +17,14 @@ let root: string;
 let prevConfigDir: string | undefined;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-g-"));
-  prevConfigDir = process.env.SUNNY_CONFIG_DIR;
-  process.env.SUNNY_CONFIG_DIR = join(root, "config");
+  root = mkdtempSync(join(tmpdir(), "neutron-g-"));
+  prevConfigDir = process.env.NEUTRON_CONFIG_DIR;
+  process.env.NEUTRON_CONFIG_DIR = join(root, "config");
 });
 
 afterEach(() => {
-  if (prevConfigDir === undefined) delete process.env.SUNNY_CONFIG_DIR;
-  else process.env.SUNNY_CONFIG_DIR = prevConfigDir;
+  if (prevConfigDir === undefined) delete process.env.NEUTRON_CONFIG_DIR;
+  else process.env.NEUTRON_CONFIG_DIR = prevConfigDir;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -39,7 +39,7 @@ describe("transcript", () => {
     const md = sessionToMarkdown(session);
     expect(md).toContain("# Demo");
     expect(md).toContain("**You**");
-    expect(md).toContain("**sunny**");
+    expect(md).toContain("**NEUTRON**");
   });
 });
 
@@ -60,7 +60,7 @@ describe("session prune", () => {
 
 describe("shell completion", () => {
   it("includes commands for supported shells", () => {
-    expect(completionScript("bash")).toContain("sunny");
+    expect(completionScript("bash")).toContain("neutron");
     expect(completionScript("powershell")).toContain("Register-ArgumentCompleter");
     expect(completionScript("zsh")).toContain("compdef");
     expect(completionScript("fish")).toBe("");
@@ -98,9 +98,9 @@ describe("aliases", () => {
 
 describe("plugins from global config", () => {
   it("loads plugins listed in the config", async () => {
-    mkdirSync(process.env.SUNNY_CONFIG_DIR!, { recursive: true });
+    mkdirSync(process.env.NEUTRON_CONFIG_DIR!, { recursive: true });
     writeFileSync(
-      join(process.env.SUNNY_CONFIG_DIR!, "config.json"),
+      join(process.env.NEUTRON_CONFIG_DIR!, "config.json"),
       JSON.stringify({ version: 1, plugin: [pluginPath] }),
       "utf8",
     );

@@ -141,7 +141,7 @@ export type TuiAction =
   | { type: "addApproval"; approval: TuiApproval }
   | { type: "resolveApproval"; id: string; approved: boolean }
   | { type: "setError"; error?: string }
-  | { type: "setInput"; text: string }
+  | { type: "setInput"; text: string; cursor?: number }
   | { type: "setCursor"; cursor: number }
   | { type: "setAgent"; agent: AgentConfig }
   | { type: "setProvider"; provider: string }

@@ -1,4 +1,5 @@
 import type { Task, TaskStatus } from "./task";
+import { isTaskFinished } from "./task";
 
 export interface SchedulerOptions {
   maxConcurrent?: number;
@@ -64,8 +65,11 @@ export class TaskScheduler {
       if (t.status !== "pending") continue;
       const depsDone = t.dependencies.every((d) => {
         const dep = this.tasks.get(d);
-        if (!dep) return false;
-        return this.doneSet.has(d) || dep.status === "completed" || dep.status === "skipped";
+        // A missing dependency is not something we can wait for; treat it as
+        // satisfied so the task does not deadlock the scheduler.
+        if (!dep) return true;
+        // Any terminal state releases dependents — not just success.
+        return this.doneSet.has(d) || isTaskFinished(dep.status);
       });
       if (depsDone) result.push(t);
     }
@@ -76,7 +80,8 @@ export class TaskScheduler {
     if (this.running >= this.maxConcurrent) return undefined;
     const ready = this.readyTasks();
     if (ready.length === 0) return undefined;
-    ready.sort((a, b) => prio(a) - prio(b));
+    // Highest priority first.
+    ready.sort((a, b) => prio(b) - prio(a));
     return ready[0];
   }
 

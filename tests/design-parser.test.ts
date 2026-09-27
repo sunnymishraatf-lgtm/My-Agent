@@ -149,3 +149,117 @@ x
     expect(css).toContain("--radius-card: 16px");
   });
 });
+describe("section lookup robustness", () => {
+  it("matches section headings case-insensitively", () => {
+    const md = `# Design
+
+## COLORS
+
+### Primary
+
+#FF0000
+
+### Background
+
+#000000
+
+### Text
+
+#FFFFFF
+
+## typography
+
+Font family: Inter
+
+## LAYOUT
+
+Maximum content width: 1280px
+Page layout: Sidebar + main content
+
+## responsive design
+
+### Desktop
+
+x
+
+### Mobile
+
+x
+`;
+    const d = parseDesignSystem(md);
+    expect(d.colors.primary).toBe("#FF0000");
+    expect(d.typography.font).toBe("Inter");
+    expect(d.layout.maxWidth).toBe("1280px");
+    expect(d.responsive.mobile).toBeTruthy();
+  });
+
+  it("merges duplicate section headings instead of dropping the earlier body", () => {
+    const md = `# Design
+
+## Core Features
+
+- Login
+
+## Core Features
+
+- Dashboard
+
+## Colors
+
+### Primary
+
+#FF0000
+
+### Background
+
+#000000
+
+### Text
+
+#FFFFFF
+`;
+    const d = parseDesignSystem(md);
+    expect(d.features).toContain("Login");
+    expect(d.features).toContain("Dashboard");
+  });
+
+  it("parses bullet color lines like '- Primary: #FF0000'", () => {
+    const md = `# Design
+
+## Colors
+
+- Primary: #FF0000
+- Background: #000000
+- Text: #FFFFFF
+`;
+    const d = parseDesignSystem(md);
+    expect(d.colors.primary).toBe("#FF0000");
+    expect(d.colors.background).toBe("#000000");
+    expect(d.colors.text).toBe("#FFFFFF");
+  });
+
+  it("parses subsections from merged duplicate color sections", () => {
+    const md = `# Design
+
+## Colors
+
+### Primary
+
+#FF0000
+
+## Colors
+
+### Background
+
+#000000
+
+### Text
+
+#FFFFFF
+`;
+    const d = parseDesignSystem(md);
+    expect(d.colors.primary).toBe("#FF0000");
+    expect(d.colors.background).toBe("#000000");
+    expect(d.colors.text).toBe("#FFFFFF");
+  });
+});

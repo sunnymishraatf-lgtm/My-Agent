@@ -9,26 +9,40 @@ function splitSections(md: string, prefix: string): Map<string, string> {
   const re = new RegExp(`^${prefix}\\s+(.+?)\\s*$`);
   let current: string | null = null;
   const buf: string[] = [];
+  const flush = () => {
+    if (current === null) return;
+    const body = buf.join("\n");
+    // Duplicate headings merge instead of silently dropping the earlier body.
+    const prev = sections.get(current);
+    sections.set(current, prev !== undefined ? `${prev}\n${body}` : body);
+    buf.length = 0;
+  };
   for (const line of md.split(/\r?\n/)) {
     const m = line.match(re);
     if (m) {
-      if (current !== null) sections.set(current, buf.join("\n"));
+      flush();
       current = m[1]!.trim();
-      buf.length = 0;
     } else if (current !== null) {
       buf.push(line);
     }
   }
-  if (current !== null) sections.set(current, buf.join("\n"));
+  flush();
   return sections;
 }
 
 function sections(md: string): Map<string, string> {
-  return splitSections(md, "##");
+  // Section lookup is case-insensitive.
+  const out = new Map<string, string>();
+  for (const [name, body] of splitSections(md, "##")) {
+    const key = name.toLowerCase();
+    const prev = out.get(key);
+    out.set(key, prev !== undefined ? `${prev}\n${body}` : body);
+  }
+  return out;
 }
 
 export function sectionContent(md: string, heading: string): string {
-  return sections(md).get(heading) ?? "";
+  return sections(md).get(heading.toLowerCase()) ?? "";
 }
 
 export function listItems(content: string): string[] {
@@ -62,7 +76,8 @@ function parseColorsSection(content: string): Record<string, string> {
     const hex = body.match(/#[0-9a-fA-F]{3,8}/);
     if (hex) out[normalizeColorKey(name)] = hex[0]!.toUpperCase();
   }
-  for (const m of content.matchAll(/^\s*([A-Za-z0-9 ]+?)\s*:\s*(#[0-9a-fA-F]{3,8})\s*$/gm)) {
+  // Also accept bullet lines such as "- Primary: #FF0000".
+  for (const m of content.matchAll(/^\s*(?:[-*•]\s*)?([A-Za-z0-9 ]+?)\s*:\s*(#[0-9a-fA-F]{3,8})\s*$/gm)) {
     out[normalizeColorKey(m[1]!)] = m[2]!.toUpperCase();
   }
   return out;

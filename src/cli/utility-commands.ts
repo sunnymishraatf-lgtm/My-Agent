@@ -9,13 +9,14 @@ import type { ToolContext } from "../tools";
 import { formatFile, detectFormatters } from "../format/formatter";
 import { Terminal } from "../terminal/terminal";
 import { getVersion } from "../version";
+import { envVar } from "../compat";
 
 export function envCommand(root: string): void {
   const config = loadConfig();
   const providers = readGlobalProviders();
   const sessions = new SessionStore(root).list().length;
   const lines = [
-    "SUNNY ENV",
+    "NEUTRON ENV",
     "",
     `Version:   ${getVersion()}`,
     `Platform:  ${process.platform} ${process.arch}`,
@@ -24,7 +25,7 @@ export function envCommand(root: string): void {
     `Config:    ${existsSync(globalConfigPath()) ? globalConfigPath() : `${globalConfigPath()} (missing)`}`,
     `Providers: ${providers.length} configured, ${config.providers.length} resolved`,
     `Sessions:  ${sessions}`,
-    `Theme:     ${process.env.SUNNY_THEME ?? "(config default)"}`,
+    `Theme:     ${envVar("THEME") ?? "(config default)"}`,
   ];
   console.log(lines.join("\n"));
 }
@@ -157,7 +158,7 @@ export async function benchCommand(root: string): Promise<void> {
 
 export function watchCommand(root: string, command: string[]): void {
   if (command.length === 0) {
-    console.log("Usage: sunny watch -- <command>");
+    console.log("Usage: neutron watch -- <command>");
     process.exitCode = 1;
     return;
   }
@@ -207,13 +208,13 @@ export function completionScript(shell: string): string {
     "diff",
   ];
   if (shell === "bash") {
-    return `_sunny_complete() {\n  local cur="\${COMP_WORDS[COMP_CWORD]}"\n  COMPREPLY=( $(compgen -W "${commands.join(" ")}" -- "$cur") )\n}\ncomplete -F _sunny_complete sunny`;
+    return `_neutron_complete() {\n  local cur="\${COMP_WORDS[COMP_CWORD]}"\n  COMPREPLY=( $(compgen -W "${commands.join(" ")}" -- "$cur") )\n}\ncomplete -F _neutron_complete neutron`;
   }
   if (shell === "zsh") {
-    return `#compdef sunny\n_sunny() { compadd ${commands.join(" ")} }\ncompdef _sunny sunny`;
+    return `#compdef neutron\n_neutron() { compadd ${commands.join(" ")} }\ncompdef _neutron neutron`;
   }
   if (shell === "powershell") {
-    return `Register-ArgumentCompleter -Native -CommandName sunny -ScriptBlock {\n  param($wordToComplete)\n  "${commands.join(" ")}".Split(" ") | Where-Object { $_ -like "$wordToComplete*" }\n}`;
+    return `Register-ArgumentCompleter -Native -CommandName neutron -ScriptBlock {\n  param($wordToComplete)\n  "${commands.join(" ")}".Split(" ") | Where-Object { $_ -like "$wordToComplete*" }\n}`;
   }
   return "";
 }
@@ -221,18 +222,18 @@ export function completionScript(shell: string): string {
 export function selfUpdateCommand(): void {
   const current = getVersion();
   console.log(`Current version: ${current}`);
-  const res = spawnSync("npm", ["view", "sunny-agent", "version"], {
+  const res = spawnSync("npm", ["view", "neutron-agent", "version"], {
     encoding: "utf8",
     shell: process.platform === "win32",
   });
   if (res.status !== 0) {
-    console.log("Could not reach the npm registry. Run `npm install -g sunny-agent@latest` to update.");
+    console.log("Could not reach the npm registry. Run `npm install -g neutron-agent@latest` to update.");
     return;
   }
   const latest = res.stdout.trim();
   if (latest && latest !== current) {
     console.log(`Latest version:  ${latest}`);
-    console.log(`Update with: npm install -g sunny-agent@latest`);
+    console.log(`Update with: npm install -g neutron-agent@latest`);
   } else {
     console.log("You are on the latest version.");
   }

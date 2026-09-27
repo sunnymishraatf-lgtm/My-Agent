@@ -52,7 +52,7 @@ export abstract class BaseAgent implements Agent {
   }
 
   protected systemPrompt(ctx: AgentContext): string {
-    return `You are the ${this.label} agent in a multi-agent software engineering platform called sunny.
+    return `You are the ${this.label} agent in a multi-agent software engineering platform called NEUTRON (Autonomous Software Maintenance Intelligence).
 You operate inside a project repository. Your job: complete the assigned task precisely, follow design.md where relevant, guard against over-engineering, and never touch unrelated files.
 Never fabricate test results. Never reveal API keys. Only run commands through the provided run() tool.`;
   }

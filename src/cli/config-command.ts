@@ -3,6 +3,7 @@ import {
   globalConfigPath,
   loadConfig,
   readGlobalProviders,
+  readFileProviders,
   writeGlobalConfig,
   readRawConfig,
   registerSecrets,
@@ -76,12 +77,22 @@ export function listProviders(): void {
   console.log(`Config: ${file}`);
   if (providers.length === 0) {
     console.log("No providers configured.");
-    console.log('Add one: sunny config --add groq --base-url https://api.groq.com/openai/v1 --api-key YOUR_KEY --models llama-3.3-70b-versatile');
+    console.log('Add one: neutron config --add groq --base-url https://api.groq.com/openai/v1 --api-key YOUR_KEY --models llama-3.3-70b-versatile');
     return;
   }
   for (const p of providers) {
     console.log(`  ${p.id}: ${p.baseUrl} (${p.enabled ? "enabled" : "disabled"}) [${p.apiKey ? "key set" : "no key"}]`);
   }
+}
+
+/**
+ * Build the config document written after interactive configuration.
+ * Merge order: defaults FIRST, then persisted/raw values overlay them, then
+ * the freshly edited provider list. Reversing this clobbers saved user
+ * values with defaults.
+ */
+export function buildConfigForSave(out: ConfigProvider[]): Record<string, unknown> {
+  return { version: 1, ...defaultConfig(), ...readRawConfig(), providers: out };
 }
 
 export async function configCommand(opts?: ConfigCommandOptions): Promise<void> {
@@ -151,12 +162,15 @@ export async function configCommand(opts?: ConfigCommandOptions): Promise<void> 
       process.exitCode = 1;
       return;
     }
+    // Preserve fields the user did not pass: only explicitly provided flags
+    // overwrite an existing provider entry.
+    const existing = readFileProviders().find((p) => p.id === opts.add);
     const provider: ConfigProvider = {
       id: opts.add,
       baseUrl: opts.baseUrl,
-      apiKey: opts.apiKey,
-      models: opts.models ? opts.models.split(",").map((m) => m.trim()).filter(Boolean) : [],
-      enabled: true,
+      apiKey: opts.apiKey ?? existing?.apiKey,
+      models: opts.models ? opts.models.split(",").map((m) => m.trim()).filter(Boolean) : (existing?.models ?? []),
+      enabled: existing?.enabled ?? true,
     };
     const ok = upsertProvider(provider);
     if (!ok) {
@@ -166,7 +180,7 @@ export async function configCommand(opts?: ConfigCommandOptions): Promise<void> 
     }
     console.log(`Saved provider ${opts.add} -> ${opts.baseUrl} [${opts.apiKey ? "key set" : "no key"}]`);
     console.log(`Config: ${globalConfigPath()}`);
-    console.log("Verify with `sunny doctor --chat`.");
+    console.log("Verify with `neutron doctor --chat`.");
     return;
   }
 
@@ -178,14 +192,14 @@ export async function configCommand(opts?: ConfigCommandOptions): Promise<void> 
   if (!process.stdin.isTTY) {
     listProviders();
     console.log("");
-    console.log("Non-interactive mode: use `sunny config --add <id> --base-url <url> --api-key <key> [--models a,b]`.");
+    console.log("Non-interactive mode: use `neutron config --add <id> --base-url <url> --api-key <key> [--models a,b]`.");
     return;
   }
 
   const file = globalConfigPath();
   const providers = readGlobalProviders();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  console.log(`\nSunny provider configuration (${file})\n`);
+  console.log(`\nNEUTRON provider configuration (${file})\n`);
   console.log("Available providers:");
 
   const candidates = freeProviders.map((f) => ({
@@ -237,12 +251,12 @@ export async function configCommand(opts?: ConfigCommandOptions): Promise<void> 
     console.log("  Saved.\n");
   }
 
-  const saved = writeGlobalConfig({ version: 1, ...readRawConfig(), ...defaultConfig(), providers: out });
+  const saved = writeGlobalConfig(buildConfigForSave(out));
   rl.close();
 
   if (saved) {
     console.log(`\nSaved config to ${file}`);
-    console.log("API keys are stored locally. `sunny doctor --chat` can verify connectivity.\n");
+    console.log("API keys are stored locally. `neutron doctor --chat` can verify connectivity.\n");
   } else {
     console.log("Failed to write config.");
   }

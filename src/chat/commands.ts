@@ -8,7 +8,7 @@ export interface CustomCommand {
   file: string;
 }
 
-const COMMAND_DIRS = [".sunny/commands", ".agent/commands", ".opencode/command"];
+const COMMAND_DIRS = [".sunny/commands", ".neutron/commands", ".agent/commands", ".opencode/command"];
 
 export function loadCommands(root: string): CustomCommand[] {
   const out = new Map<string, CustomCommand>();
@@ -45,7 +45,16 @@ export function loadCommands(root: string): CustomCommand[] {
 export function expandCommand(command: CustomCommand, args: string): string {
   const trimmed = args.trim();
   const argv = trimmed.length > 0 ? trimmed.split(/\s+/) : [];
+  // `$` is special in a String.replace *replacement string* ($&, $1, $$, ...).
+  // Escape every `$` as `$$` in user-controlled replacement text so literal
+  // dollar sequences survive. (Note: the escape target is `$$$$` here because
+  // `$$` in the replacement passed to replaceAll collapses back to `$`.)
+  // A function replacer inserts its return value literally, so only the
+  // string-replacement form needs escaping.
+  const escapeReplacement = (s: string): string => s.replaceAll("$", "$$$$");
+  // Positional args first: greedy `\d+` gives longest-match ($10, $11, ...),
+  // and text inserted afterwards is never re-scanned for placeholders.
   return command.body
-    .replaceAll("$ARGUMENTS", trimmed)
-    .replace(/\$([1-9])/g, (_, n: string) => argv[Number(n) - 1] ?? "");
+    .replace(/\$(\d+)/g, (_, n: string) => argv[Number(n) - 1] ?? "")
+    .replaceAll("$ARGUMENTS", escapeReplacement(trimmed));
 }

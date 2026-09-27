@@ -4,6 +4,8 @@ export type { RunCommandOptions } from "./cli/run-command";
 export { runDoctor, formatDoctor } from "./cli/doctor";
 export type { DoctorReport } from "./cli/doctor";
 
+export * from "./neutron";
+
 export { Orchestrator, createFallbackTasks } from "./orchestrator";
 export type { OrchestratorOptions, PlanResult, RunSummary } from "./orchestrator";
 export { TaskScheduler } from "./scheduler/scheduler";
@@ -114,8 +116,8 @@ export {
   readEventFromEnv,
 } from "./github/actions";
 export type { GitHubEventContext, RunGitHubOptions } from "./github/actions";
-export { SunnyClient, createClient } from "./sdk/client";
-export type { SunnyClientOptions, ChatResult, AgentInfo, SessionInfo, HealthInfo } from "./sdk/client";
+export { NeutronClient, createClient } from "./sdk/client";
+export type { NeutronClientOptions, ChatResult, AgentInfo, SessionInfo, HealthInfo } from "./sdk/client";
 export { getVersion } from "./version";
 export { CompletionEngine } from "./completion/engine";
 export { detectPlatform } from "./platform/platform";

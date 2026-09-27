@@ -2,7 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactNode } from "react";
 import { borderStyle } from "./utils";
 import { ModelLine } from "./StatusBar";
-import { SunLogo } from "./SunLogo";
+import { NeutronLogo } from "./NeutronLogo";
 
 export interface HomeScreenProps {
   width: number;
@@ -17,7 +17,7 @@ export function HomeScreen({ width, menu, input, agentName, model, provider }: H
   const panelWidth = Math.max(40, Math.min(width - 4, 76));
   return (
     <Box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center" width="100%">
-      <SunLogo />
+      <NeutronLogo />
       <Box marginTop={1} flexDirection="column" alignItems="center">
         {menu}
       </Box>

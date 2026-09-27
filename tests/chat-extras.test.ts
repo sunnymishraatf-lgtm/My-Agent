@@ -77,7 +77,7 @@ function newSession(id = "test"): ChatSession {
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-extras-"));
+  root = mkdtempSync(join(tmpdir(), "neutron-extras-"));
 });
 
 afterEach(() => {
@@ -163,7 +163,7 @@ describe("Snapshots and undo", () => {
 
 describe("custom commands", () => {
   it("loads markdown commands and expands arguments", () => {
-    const dir = join(root, ".sunny", "commands");
+    const dir = join(root, ".neutron", "commands");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "review.md"), "# Review code\nPlease review $ARGUMENTS focusing on $1.", "utf8");
 
@@ -179,6 +179,35 @@ describe("custom commands", () => {
 
   it("returns an empty list when no command directory exists", () => {
     expect(loadCommands(root)).toEqual([]);
+  });
+});
+
+describe("expandCommand", () => {
+  const cmd = (body: string) => ({ name: "t", description: "", body, file: "t.md" });
+
+  it("preserves literal dollar sequences in args substituted via $ARGUMENTS", () => {
+    // `$&`, `$1`, `$$` are special in a String.replace replacement string;
+    // they must survive as literal text.
+    const expanded = expandCommand(cmd("Run $ARGUMENTS now"), "a $& b $$ c $1");
+    expect(expanded).toBe("Run a $& b $$ c $1 now");
+  });
+
+  it("preserves literal dollar sequences in positional args", () => {
+    expect(expandCommand(cmd("[$1]"), "p$&q")).toBe("[p$&q]");
+    expect(expandCommand(cmd("[$1]"), "$$")).toBe("[$$]");
+  });
+
+  it("preserves literal $$ in the template", () => {
+    expect(expandCommand(cmd("price: $$"), "x")).toBe("price: $$");
+  });
+
+  it("substitutes multi-digit positional args ($10, $11, ...)", () => {
+    const args = "a b c d e f g h i j k l";
+    expect(expandCommand(cmd("$10 $1 $2 $12"), args)).toBe("j a b l");
+  });
+
+  it("leaves out-of-range multi-digit placeholders empty", () => {
+    expect(expandCommand(cmd("[$10]"), "a b")).toBe("[]");
   });
 });
 

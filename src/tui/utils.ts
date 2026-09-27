@@ -1,14 +1,15 @@
 import { homedir } from "node:os";
 import { sep } from "node:path";
+import { envVar } from "../compat";
 
 /**
  * On legacy Windows consoles (CMD / old conhost) the default code page does not
  * render box-drawing or many symbols. Windows Terminal, VS Code's terminal and
- * Linux/macOS terminals all handle Unicode fine. `SUNNY_ASCII=1` forces the
+ * Linux/macOS terminals all handle Unicode fine. `NEUTRON_ASCII=1` forces the
  * ASCII-safe fallback everywhere.
  */
 function detectUnicode(): boolean {
-  if (process.env.SUNNY_ASCII === "1" || process.env.SUNNY_ASCII === "true") return false;
+  if (envVar("ASCII") === "1" || envVar("ASCII") === "true") return false;
   if (process.env.TERM === "dumb") return false;
   if (process.platform !== "win32") return true;
   if (process.env.WT_SESSION) return true;

@@ -1,406 +1,354 @@
-# sunny
+# NEUTRON — Autonomous Software Maintenance Intelligence
 
-A multi-agent AI software engineering platform and interactive coding agent for your terminal. Give it a `design.md`, and a team of specialized AI agents — requirements, design, frontend, backend, database, security, devops, QA and review — plans the work, builds it, tests it, reviews it, and loops until the project is done. Or use `sunny chat` to pair with a coding agent that can read, edit and run your code.
-
-```
-+------------------------------------------------------+
-|                       SUNNY                          |
-|        multi-agent software engineering team         |
-+------------------------------------------------------+
-```
-
-## Install
+Give NEUTRON a natural-language maintenance request for an existing repository. It analyzes the repository, computes the impact, proposes an engineering plan — and only after **you approve the plan** does a team of specialized AI agents implement, test, security-review, and code-review the change. Nothing is modified or deployed without human approval.
 
 ```bash
-npm install -g sunny-agent      # installs the `sunny` command
-npx sunny-agent --help          # or run without installing
+neutron maintain "Add Google OAuth while preserving email/password login"
+```
+
+> **IBM Bob 2.0 Hackathon submission.** IBM Bob 2.0 was used to develop, analyze, review, and improve NEUTRON itself. Bob is **not** a runtime backend of NEUTRON — the runtime AI backend is any OpenAI-compatible provider you configure (e.g. AgentRouter). See [IBM Bob 2.0 Hackathon](#ibm-bob-20-hackathon).
+
+## The problem
+
+Software maintenance — bug fixes, dependency migrations, auth changes, security patches — is where developers spend most of their time, and it is the riskiest work: a "small" change can break checkout, webhooks, and tests three modules away. Existing AI coding tools act like autocomplete with a keyboard: they edit files immediately, with no understanding of blast radius, no plan you can review, and no verification you can trust.
+
+## The solution
+
+NEUTRON turns a maintenance request into a **controlled engineering workflow**: understand the repository first, measure the impact, propose a plan, get explicit human approval, then execute with specialized agents that implement, test, scan for security issues, and review — producing an auditable report. You stay in control at every consequential step.
+
+Why it matters: unreviewed AI edits are a liability in production codebases. NEUTRON's differentiator is not "AI that writes code" but a **safe loop** — Understand → Analyze → Plan → Approve → Execute → Verify → Secure → Review → Report — that makes AI-assisted maintenance trustworthy enough to demo live and run on real repositories.
+
+## The NEUTRON workflow
+
+```
+Natural-language request
+        ↓
+Repository analysis      (languages, dependencies, import graph, tests, entry points)
+        ↓
+Impact analysis          (affected files/functions/modules, blast radius, risk level)
+        ↓
+Implementation plan      (file-level changes, agents assigned, test strategy)
+        ↓
+Human approval           (approve / reject — fail-closed; auto-deny when non-interactive)
+        ↓
+Specialized agents       (Backend, Frontend, Database, Security, QA, DevOps, Reviewer — parallel where independent)
+        ↓
+Code changes             (git checkpoint created first)
+        ↓
+Testing                  (real build + test execution, honest blocked states)
+        ↓
+Security analysis        (secret/unsafe-code scanning)
+        ↓
+Code review              (actionable findings)
+        ↓
+Release readiness        (release gate + maintenance report)
+```
+
+## Architecture
+
+```
+neutron (commander CLI, src/cli/)
+├── maintain                 src/neutron/workflow.ts   — the hero pipeline
+│   ├── analyzer.ts          — real static repo analysis (import graph, test links)
+│   ├── impact.ts            — deterministic impact engine (no LLM guessing)
+│   ├── planner.ts           — engineering plan generation
+│   ├── agents.ts            — parallel agent execution (max 4, configurable)
+│   ├── test-runner.ts       — real build/test execution + result parsing
+│   ├── security-scanner.ts  — secret & unsafe-code detection
+│   ├── review.ts            — code-review findings
+│   └── record.ts            — per-run audit trail → .agent/neutron/runs/<id>.json
+├── approval/                — fail-closed human approval gate
+├── agents/                  — 10 real specialized agents (LLM-backed, provider failover)
+├── providers/ + api/        — OpenAI-compatible, Anthropic, Google; classified errors
+├── chat/                    — interactive coding agent (separate from maintain)
+├── web/ + server/           — dashboard (`neutron web`, http://127.0.0.1:4096)
+└── git/ github/             — checkpoints, GitHub automation
+```
+
+Key design decisions: impact analysis is deterministic (keyword-alias scoring over the real dependency graph), never LLM-improvised; the no-LLM path fails loudly instead of fabricating results; tests are executed for real and reported as BLOCKED — never "passed" — when they cannot run.
+
+## Main CLI commands
+
+All verified present in `src/cli/index.ts`:
+
+| Command | What it does |
+|---|---|
+| `neutron maintain "<request>"` | The full workflow: analyze → impact → plan → approve → agents → tests → security → review → release |
+| `neutron maintain --execution plan-only` | Analyze + impact + plan without changing anything |
+| `neutron maintain report [--json --audit --metrics --bob --history]` | Report on the workspace / latest runs |
+| `neutron maintain demo [name]` | Scaffold a real sample project (TaskFlow) to practice on |
+| `neutron maintain what-breaks` | "What could break?" from the cached impact graph |
+| `neutron doctor` | Verify provider configuration and connectivity |
+| `neutron models` | List models from configured providers |
+| `neutron chat [message]` | Interactive coding agent (separate from the maintain workflow) |
+| `neutron config` | Configure API providers |
+| `neutron test` | Run the project's tests and build |
+| `neutron review` | Run the reviewer agent |
+| `neutron fix` | Re-run failed tasks |
+| `neutron web` | Start the dashboard (default http://127.0.0.1:4096) |
+| `neutron --help` | Full command list |
+
+`neutron maintain` options: `-y/--yes` (auto-approve, use with care), `--execution plan-only|implement|implement-and-test`, `--risk safe|balanced|aggressive`, `--branch <name>`.
+
+## Demo instructions
+
+The recommended 3-minute demo, using only real functionality:
+
+```bash
+# 1. Create a realistic sample project (a real, functional TaskFlow app)
+neutron maintain demo --dir ./taskflow-demo
+cd taskflow-demo
+
+# 2. Run the hero workflow — plan only first (changes nothing)
+neutron maintain "Add Google OAuth while preserving email/password login" --execution plan-only
+
+# 3. Review the impact analysis and plan, then run for real (approves each gate)
+neutron maintain "Add Google OAuth while preserving email/password login"
+
+# 4. Inspect the auditable result
+neutron maintain report --audit --metrics
+```
+
+You will see: repository discovery → analysis → impact → plan → your approval → parallel agents → file changes → real test run → security scan → review → release gate → final report. If a gate denies, nothing changes — that is the point.
+
+Example maintenance request used throughout this repo: **"Add Google OAuth while preserving the existing email/password login"** — it exercises frontend, backend, auth middleware, and tests, which is exactly what impact analysis is for.
+
+## Human approval mechanism
+
+- Before any implementation: the plan is displayed (files to modify/add, tests, database impact, risk, agents) and NEUTRON waits for **your** decision.
+- A second **release gate** approves the finished change before it is considered done.
+- Fail-closed: in non-interactive environments approval **auto-denies**; nothing proceeds silently.
+- The only bypass is an explicit `-y/--yes` flag — clearly controlled, and every decision (approve/deny, gate, source) is persisted with a timestamp in the run's audit trail.
+- Client input cannot inject approval: there is no flag or prompt trick that flips a denial.
+
+## Testing
+
+NEUTRON executes your project's real verification tooling and parses the results — it never claims "passed" without running:
+
+- Build and test execution via the project's own scripts (`suggestedTestCommand()` detection; honest BLOCKED state when nothing can run)
+- Type checking and lint where the project supports them
+- Results feed the release gate: failing tests block release
+
+Project's own test suite: `tests/` — 42 files, 345 tests, all passing (last verified 2026-09-26).
+
+```bash
+npm test           # vitest run — the project's full suite
+npm run typecheck  # tsc --noEmit
+npm run build      # tsup build + web asset copy
+```
+
+## Security
+
+- Static security scan on every maintain run: hardcoded secrets, suspicious credentials, unsafe patterns — with severity-ranked, file-specific findings.
+- Secrets are redacted in all output; API keys are never printed or logged.
+- File operations are workspace-contained (path-traversal protected); deletes require approval; chained shell commands are skipped.
+- `.env` is git-ignored; `.env.example` documents configuration without values.
+- The repository was scanned for committed secrets: none found.
+
+## Release gate
+
+After implementation, tests, security scan, and review, the **release gate** summarizes: changes made, tests (passed/failed), security findings, review outcome — and requires human approval before the run is marked complete. The full audit trail (timestamps, agents, actions, files, approvals, verification results, errors) is stored per run in `.agent/neutron/runs/<runId>.json` and viewable via `neutron maintain report --audit` or the dashboard.
+
+## IBM Bob 2.0 Hackathon
+
+1. **Developer problem:** maintenance work is high-risk and time-consuming; AI tools that edit code without understanding blast radius, planning, or verification are unsafe for production repositories.
+2. **How NEUTRON improves the workflow:** it replaces ad-hoc AI edits with a controlled loop — repository intelligence → impact analysis → human-approved plan → parallel specialized agents → real testing → security review → auditable report.
+3. **How IBM Bob 2.0 was used:** Bob 2.0 was used during the development of NEUTRON itself — to analyze the repository architecture, review the maintenance workflow and agent orchestration, review testing/QA and the human-approval security boundaries, and to review code. Bob is a development assistant in NEUTRON's story, **not** NEUTRON's runtime AI backend.
+4. **Parts developed/reviewed with Bob:** repository architecture analysis, maintenance workflow design, impact-analysis logic review, agent orchestration review, approval/security-boundary review, testing and QA review.
+5. **Independent verification:** NEUTRON verifies every change itself — real test execution, static security scanning, code review, and a release gate — none of which depend on Bob.
+6. **Evidence location:** real Bob task-session screenshots go in `bob_sessions/` (naming: `team_taskNN_description.png`; capture steps in `bob_sessions/README.md`). **TODO (manual):** capture real IBM Bob IDE session screenshots and add them there — no screenshots exist yet, and none are fabricated. Submission drafts (problem/solution and Bob-usage statements, checklist, demo script, slide content, judge-readiness notes) live in `docs/` (`SUBMISSION.md`, `HACKATHON_SUBMISSION_CHECKLIST.md`, `DEMO_VIDEO_SCRIPT.md`, `PRESENTATION.md`, `JUDGE_READINESS.md`, `FINAL_AUDIT.md`).
+
+## Installation
+
+Requires Node.js 20+.
+
+```bash
+# From the repository
+npm install
+npm run build
+
+# Or via npm (if published)
+npm install -g neutron-agent
 ```
 
 One-line installers (macOS, Linux, Windows):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sunny-ai/sunny-agent/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/sunnymishraatf-lgtm/My-Agent/main/install.sh | sh
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/sunny-ai/sunny-agent/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/sunnymishraatf-lgtm/My-Agent/main/install.ps1 | iex
 ```
-
-Requires Node 20+. Optional: `ink`/`react` for the interactive TUI (sunny falls back to plain CLI output automatically).
-
-## Quickstart
-
-Fastest path — chat with the coding agent in any directory:
-
-```bash
-sunny config               # point sunny at an OpenAI-compatible provider
-sunny chat                 # interactive coding agent (read/edit/run tools)
-```
-
-Full multi-agent workflow:
-
-```bash
-mkdir my-app && cd my-app
-sunny init --template      # creates design.md from a template
-$EDITOR design.md          # describe what you want to build
-sunny doctor               # verify your provider is configured
-sunny run                  # plan + execute with the agent team
-```
-
-When the run finishes you get a **PROJECT HEALTH** report: readiness, per-agent status, task completion, API usage, token counts, and any blocking issues. Failed tasks can be retried with `sunny fix` followed by `sunny run --resume`.
-
-## Commands
-
-| Command | Description |
-| --- | --- |
-| `sunny init [--template] [--force]` | Initialize a sunny project (`.agent/` state dir); `--template` writes a starter `design.md`, `--force` overwrites it |
-| `sunny design [--template] [--check]` | Create or validate `design.md`; `--check` parses and reports features/pages |
-| `sunny plan` | Generate the engineering task plan from `design.md` without executing |
-| `sunny run [--resume] [--no-ui] [--json] [--yes]` | Plan and execute with the full agent team; TUI by default, plain output with `--no-ui`, machine-readable summary with `--json`; `--yes` auto-approves commands |
-| `sunny status [--json]` | Show agent and task status |
-| `sunny chat [message] [--continue] [--session id] [--model m] [--provider p] [--yes] [--no-stream]` | Interactive coding agent with read/write/edit/glob/grep/bash tools, streaming responses and saved sessions |
-| `sunny models [--provider id] [--json]` | List models available from configured providers |
-| `sunny sessions [--show id] [--delete id] [--rename id --title t] [--search q] [--fork id [--at n]] [--json]` | List, view, search, rename, fork or delete chat sessions |
-| `sunny undo [--session id]` | Restore files changed by the last chat turn |
-| `sunny redo [--session id]` | Re-apply the last undone chat turn |
-| `sunny diff [--session id] [--json]` | Show the last turn's file changes as a unified diff |
-| `sunny replay [session] [--json]` | Re-print a session transcript |
-| `sunny tokens [session] [--json]` | Estimate token usage for a session |
-| `sunny fmt [paths...] [--all]` | Run the detected formatter on files |
-| `sunny grep <pattern> [--path d] [--include g] [--json]` | Search file contents |
-| `sunny find <glob> [--path d] [--json]` | Find files by glob |
-| `sunny watch <command...>` | Re-run a command when project files change |
-| `sunny bench` | Benchmark provider latency |
-| `sunny env` | Show environment/config summary |
-| `sunny alias list\|set\|remove` | Manage command shortcuts |
-| `sunny completion [shell]` | Print a shell completion script |
-| `sunny self-update` | Check for a newer published version |
-| `sunny agent list` / `sunny agent create --name n --description d [--mode m] [--permissions a,b]` | List built-in + custom agents / create a markdown agent |
-| `sunny agent show <name>` / `sunny agent delete <name>` | Inspect an agent / delete a custom agent file |
-| `sunny stats [--json]` | Show session and usage statistics |
-| `sunny export [session] [--sanitize]` / `sunny import <file>` | Export a session to JSON / import one |
-| `sunny mcp list [--json]` | List configured MCP servers and their tools |
-| `sunny mcp add --name n --command c [--args a,b] [--env K=V] [--project]` | Add an MCP server (global config or `.sunny/mcp.json`) |
-| `sunny share [session]` | Write a session to `.agent/shares/` as JSON |
-| `sunny serve [--port 4096] [--hostname 127.0.0.1]` | Start a headless HTTP API (`/health`, `/v1/agents`, `/v1/sessions`, `/v1/chat`) |
-| `sunny web [--port 4096] [--hostname 127.0.0.1] [--no-open]` | Start the server with a browser UI |
-| `sunny acp [--cwd dir]` | Start an Agent Client Protocol server over stdio |
-| `sunny theme [list]` / `sunny theme set <name>` | List / choose the CLI color theme |
-| `sunny lsp list [--json]` | List configured language servers |
-| `sunny github install` / `sunny github run [--event-path f] [--prompt p]` | Install a CI workflow / run the agent for a GitHub event |
-| `sunny upgrade` | Update sunny to the latest published version |
-| `sunny review` | Run only the code reviewer agent |
-| `sunny test` | Run the project's tests and build |
-| `sunny fix` | Re-queue failed/blocked tasks for retry |
-| `sunny doctor [--chat]` | Check Node/npm/git, config, and live provider health + model list; `--chat` sends a tiny request to prove the key works |
-| `sunny config [--list] [--show]` | Interactive provider configuration; `--show` prints the resolved config with keys redacted |
-| `sunny config --add <id> --base-url <url> --api-key <key> [--models a,b]` | Add/update a provider non-interactively; also `--remove/--enable/--disable <id>` |
-| `sunny auth login [provider] [--key k] [--base-url url] [--models a,b]` | Store provider credentials (alias for `sunny config`); prompts for the key if omitted |
-| `sunny auth list` / `sunny auth logout <provider>` | List providers / remove stored credentials |
-| `sunny logs [agent]` | Show per-agent logs from `.agent/logs/` |
-| `sunny stop` | Stop running agents (sets the stop flag) |
-| `sunny resume` | Resume interrupted work |
-
-## Interactive coding agent
-
-`sunny chat` is a general-purpose coding assistant, separate from the project-building agent team. It runs a tool loop against your configured provider:
-
-| Tool | What it does |
-| --- | --- |
-| `read` | Read a text file (numbered lines, paged) |
-| `write` | Create or overwrite a file |
-| `edit` | Replace an exact string (fails on ambiguous matches unless `replaceAll`) |
-| `list` | List a directory |
-| `glob` | Find files by `*` / `?` / `**` pattern |
-| `grep` | Regex-search file contents |
-| `bash` | Run a shell command (goes through the security classifier) |
-| `webfetch` | Fetch a URL and return it as plain text |
-| `task` | Delegate a task to a subagent (`general`, `explore`, or custom) |
-| `todowrite` / `todoread` | Maintain a task list for the session |
-| `skill` | Load instructions from `.sunny/skills/*/SKILL.md` |
-| `lsp` | Run the configured language server on a file and return diagnostics |
-
-### MCP servers, custom tools, formatters
-
-Connect [Model Context Protocol](https://modelcontextprotocol.io) servers and their tools become available to the agent (`<server>_<tool>`):
-
-```bash
-sunny mcp add --name fetch --command npx --args -y,@modelcontextprotocol/server-fetch
-sunny mcp list
-```
-
-Define command-based custom tools in `.sunny/tool/<name>.json` or the global config `tool` map:
-
-```json
-{ "description": "Deploy to an environment", "command": "deploy {{target}}", "parameters": { "target": { "type": "string", "required": true } } }
-```
-
-After the agent writes or edits a file, sunny runs a detected formatter (Prettier, gofmt, rustfmt, black) when one is available.
-
-Long sessions are compacted automatically: when the transcript grows past a threshold, older messages are summarized into a single note before the next turn (`/compact` forces it).
-
-**Plugins** hook into the agent loop. Drop an ESM/CJS module in `.sunny/plugin/` (or load one with `--plugin`); any exported `hooks` object participates:
-
-```js
-export const hooks = {
-  "chat.message": (text) => text,                                  // rewrite the user message
-  "tool.before": ({ name, args }) => ({ args }),                   // rewrite or cancel tool calls
-  "tool.after": ({ name, args, ok, output }) => ({ ok, output }),  // rewrite tool results
-};
-```
-
-`tool.before` may also return `{ cancel: "reason" }` to block a call. `/plugins` lists what's loaded.
-
-### Headless server
-
-Run sunny as an HTTP API (useful for scripting, editors and SDK-style integrations):
-
-```bash
-sunny serve --port 4096
-curl http://127.0.0.1:4096/health
-curl -X POST http://127.0.0.1:4096/v1/chat -H "content-type: application/json" -d '{"message":"explain this repo"}'
-```
-
-Set `SUNNY_SERVER_PASSWORD` to enable HTTP basic auth (username `sunny`).
-
-Additional endpoints:
-
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /v1/sessions/:id` | Full transcript for a session |
-| `POST /v1/chat/stream` | NDJSON event stream (`delta`, `tool-call`, `assistant`, `done`) |
-| `POST /v1/chat/completions` | OpenAI-compatible shim (point any OpenAI client at sunny) |
-
-For scripting, `sunny chat "..." --stream-json` emits the same NDJSON events on stdout. `sunny web` starts the server with a full browser UI (session sidebar, agent picker, streaming responses).
-
-The JS/TS client is exported from the package:
-
-```ts
-import { createClient } from "sunny-agent";
-
-const client = createClient({ baseUrl: "http://127.0.0.1:4096" });
-console.log(await client.health());
-console.log(await client.chat({ message: "explain this repo" }));
-```
-
-`sunny acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com) over stdio (JSON-RPC), so ACP-compatible editors can drive sunny as their coding agent.
-
-### Language server diagnostics
-
-Configure LSP servers in `.sunny/lsp.json` (or the global config under `"lsp"`); the agent can then use the `lsp` tool to check a file, and `sunny lsp list` shows what's configured:
-
-```json
-{
-  "lsp": {
-    "typescript": {
-      "command": "typescript-language-server",
-      "args": ["--stdio"],
-      "extensions": [".ts", ".tsx", ".js", ".jsx"]
-    }
-  }
-}
-```
-
-### GitHub automation
-
-```bash
-sunny github install                       # writes .github/workflows/sunny.yml
-sunny github run --event-path event.json   # run the agent for an event payload
-```
-
-In CI, set `SUNNY_API_KEY` (or the provider env vars) and sunny reads `GITHUB_EVENT_PATH`, handles `issues`, `issue_comment` and `pull_request` events, and replies on the issue/PR when `GITHUB_TOKEN` is present.
-
-### Themes
-
-```bash
-sunny theme list          # default, ocean, forest, sunset, mono
-sunny theme set ocean
-SUNNY_THEME=mono sunny chat   # per-invocation override
-```
-
-### Agents, modes and permissions
-
-Sunny ships with two primary agents (`build`, `plan`) and two subagents (`general`, `explore`). `plan` is read-only: edits are denied and shell commands ask for approval. Define your own agents as markdown files in `.sunny/agent/` (or `.opencode/agent/`):
-
-```markdown
----
-description: Reviews code without making edits
-mode: subagent
-permission:
-  edit: deny
-  bash:
-    "*": ask
-    "git *": allow
----
-You are a code reviewer. Focus on correctness and security.
-```
-
-Switch at runtime with `/agents`, `/agent <name>`, or `/mode plan`; from the CLI use `sunny chat --agent review` or `sunny chat --mode plan`. The model can delegate work to subagents through the `task` tool.
-
-```bash
-sunny chat                              # interactive REPL (streams by default)
-sunny chat "add a healthcheck endpoint" # one-shot
-sunny chat --continue                   # resume the latest session
-sunny chat --session <id>               # resume a specific session
-sunny chat --model gpt-5.5 -y           # pick a model, auto-approve commands
-sunny chat --no-stream                  # disable streaming
-sunny chat --deny bash,write            # override the agent's permissions
-sunny chat --plugin ./plugin.mjs        # load a plugin for this session
-sunny chat --stream-json "summarize"    # emit NDJSON events for scripting
-sunny chat --max-tool-output 8000       # cap tool output kept in context
-```
-
-- Sessions are stored in `.agent/sessions/` and can be listed with `sunny sessions`.
-- All file tools are sandboxed to the workspace root; paths that escape it are refused.
-- Drop an `AGENTS.md` (or `CLAUDE.md`) in the project to give the agent persistent instructions; `design.md` is included as context when present.
-- The `bash` tool reuses the same destructive-command classifier as the agent team, so dangerous commands require approval unless `--yes` is passed.
-- Responses stream token-by-token. Free models are preferred automatically when a provider exposes them.
-
-**In-session commands and input helpers:**
-
-| Input | Effect |
-| --- | --- |
-| `/help`, `/new`, `/sessions`, `/fork`, `/exit` | Built-in session controls |
-| `/undo` / `/redo` | Restore / re-apply files touched in the previous turn |
-| `/diff` | Show the previous turn's changes as a unified diff |
-| `/agents`, `/agent <name>`, `/mode plan|build` | Inspect or switch agents |
-| `/model <id>`, `/provider <id>` | Switch model / provider for this session |
-| `/rename <title>` | Rename the current session |
-| `/search <query>` | Search past sessions by title or message |
-| `/skills` | List skills from `.sunny/skills/` |
-| `/plugins` | List loaded plugins from `.sunny/plugin/` |
-| `/init` | Generate an `AGENTS.md` project summary |
-| `/compact` | Summarize older messages to shrink context (also automatic) |
-| `/share` | Write this session to `.agent/shares/` |
-| `/commands` | List custom commands from `.sunny/commands/*.md` |
-| `/yourcommand args` | Run a custom command (`$ARGUMENTS`, `$1`, `$2`, ... are substituted) |
-| `@path/to/file` | Attach a file's contents to your message |
-| `!command` | Run a shell command locally, outside the model loop |
-
-Custom commands are markdown files — the first non-empty line becomes the description:
-
-```markdown
-# Review code
-Review $ARGUMENTS. Focus on correctness and tests first.
-```
-
-Undo history is stored per session under `.agent/snapshots/`; `sunny undo` restores the most recent turn from the latest session, and deleted files are recreated while newly created files are removed.
 
 ## Configuration
 
-Providers are OpenAI-compatible endpoints. Configure via environment variables or the config file (`~/.sunny/config.json`, or `%APPDATA%\sunny\config.json` on Windows; override with `SUNNY_CONFIG_DIR`).
-
-Quick non-interactive setup (great for scripts and for letting users add their own key):
+NEUTRON loads `.env` automatically on startup (project dir, then home dir) — no shell exports needed, works on Windows CMD too. Real environment variables override `.env` values. Copy `.env.example` to `.env` and fill in:
 
 ```bash
-sunny config --add groq --base-url https://api.groq.com/openai/v1 --api-key "$GROQ_KEY" --models llama-3.3-70b-versatile
-sunny doctor --chat     # sends one tiny request to confirm the key works
+# Required — AgentRouter (recommended provider)
+AGENTROUTER_API_KEY=<redacted>
+
+# Optional
+AGENTROUTER_BASE_URL=https://agentrouter.org/v1
+AGENTROUTER_MODELS=claude-opus-5,claude-opus-4-8,deepseek-v4-flash,gpt-5.6-sol,gpt-6-astra
 ```
 
-Or run `sunny config` with no flags for an interactive wizard. `--list`, `--remove <id>`, `--enable <id>` and `--disable <id>` manage existing entries.
+Other providers follow the same `<PREFIX>_API_KEY` / `<PREFIX>_BASE_URL` / `<PREFIX>_MODELS` convention (OpenAI, Anthropic, OpenRouter, Groq, DeepSeek, Google, Ollama, or any custom OpenAI-compatible endpoint). Verify with `neutron doctor`.
 
-`sunny auth` is a friendlier alias:
+Parallelism/timeout tuning: `NEUTRON_MAX_PARALLEL` (default 4), `NEUTRON_TASK_TIMEOUT_MS` (default 10 min).
 
-```bash
-sunny auth login groq            # prompts for the key, uses the known base URL
-sunny auth login openai --key "$OPENAI_API_KEY"
-sunny auth list
-sunny auth logout groq
-```
+## Web Demo
 
-On first run — `sunny` with no arguments, or `sunny chat` before any provider exists — sunny offers to launch the setup wizard automatically when you're in a terminal.
+A browser interface around the real NEUTRON workflow — no CLI required for judges.
+Two deployment targets are supported:
 
-**Environment variables** (checked in this order for each id):
+**A. Vercel (serverless)** — repository analysis, impact analysis, planning and
+the approval gate run live via serverless functions (`api/`); the UI is served
+statically from `public/`. Full agent execution is honestly unavailable here
+(the UI says so instead of faking it) — it needs the persistent host below.
 
-| id | env prefix | example |
-| --- | --- | --- |
-| free-llm | `LLM_` | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODELS` |
-| groq | `GROQ_` | `GROQ_BASE_URL`, `GROQ_API_KEY`, `GROQ_MODELS` |
-| openrouter | `OPENROUTER_` | `OPENROUTER_BASE_URL`, ... |
-| openai | `OPENAI_` | `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODELS` |
-| ollama | `OLLAMA_` | `OLLAMA_BASE_URL`, ... |
-| any | `ANY_` | any OpenAI-compatible endpoint |
+**B. Persistent Node host (Render/Docker)** — the full demo including real
+agent execution, testing, security scan and review via `neutron web`.
 
-`*_MODELS` is a comma-separated list; if omitted, sunny discovers models automatically from the provider's `/models` endpoint on first use.
-
-**Config file** (`sunny config` writes this):
-
-```json
-{
-  "providers": [
-    {
-      "id": "my-gateway",
-      "baseUrl": "https://gateway.example.com/v1",
-      "apiKey": "sk-...",
-      "models": [],
-      "enabled": true
-    }
-  ],
-  "api": {
-    "maxConcurrentRequests": 8,
-    "maxRetries": 3,
-    "timeoutMs": 120000,
-    "backoffBaseMs": 1000,
-    "providerCooldownMs": 30000
-  },
-  "routing": {
-    "frontend": "claude-sonnet-5",
-    "backend": "gpt-5.5"
-  },
-  "completion": { "maxIterations": 5 }
-}
-```
-
-`routing` maps task kinds (`requirements`, `design`, `frontend`, `backend`, `database`, `security`, `devops`, `qa`, `review`, `general`) to model ids. Multiple providers get automatic failover; a provider that returns 429 is put on cooldown and skipped.
-
-## The design.md workflow
-
-`design.md` is the single source of truth. Describe:
-
-- **Project** — name and one-line description
-- **Core Features** and **Pages** — what gets built (each feature/page becomes tasks)
-- **Theme / Colors / Typography / Layout / Components** — the design system (parsed into tokens, exported as CSS variables by the frontend agent)
-- **Frontend / Backend / Database / Authentication** — the stack
-- **Acceptance Criteria** — how completion is judged
-- **Do Not** — hard constraints agents must respect
-
-Run `sunny design --check` to validate the file, and see [examples/design.md](examples/design.md) for a full example.
-
-## Agent team
-
-| Agent | Prefix | Responsibility |
-| --- | --- | --- |
-| Manager | MGR | Builds the task DAG from design.md |
-| Requirements | REQ | Turns features into requirements.md with acceptance criteria |
-| Design | DSN | Design system tokens, layout specs |
-| Frontend | FE | UI components and pages |
-| Backend | BE | APIs and server logic |
-| Database | DB | Schema and migrations |
-| Security | SEC | Auth, input validation, threat review |
-| DevOps | DEV | Build setup, configs |
-| QA | QA | Runs the test suite, parses results |
-| Reviewer | REV | Code review; can reject work and re-queue tasks |
-
-Tasks run concurrently where the dependency graph allows (up to `maxConcurrentRequests` in-flight LLM calls).
-
-## Safety
-
-- All shell commands pass through a security classifier: destructive patterns (`rm -rf`, `sudo`, `git push`, package installs, ...) require approval; deny-listed commands are blocked outright
-- In a TTY you get an interactive prompt; with `--yes` everything is auto-approved; non-interactive runs deny dangerous commands
-- API keys are redacted from all logs and output
-- Project state lives in `.agent/` (tasks, review, test results, logs) — safe to commit or ignore
-
-## Development
+Run the Node server locally:
 
 ```bash
 npm install
-npm test        # 109 tests
-npm run build   # tsup -> dist/ (ESM + types)
-npx tsc --noEmit
+npm run build
+node dist/cli-entry.js web --no-open
+# Dashboard: http://127.0.0.1:4096/
+# Web demo:  http://127.0.0.1:4096/demo
 ```
 
-Library API is exported from `dist/index.js` — `Orchestrator`, `ApiSystem`, `StateStore`, `parseDesignSystem`, `ChatAgent`, `SunnyClient`, `AcpServer`, MCP/LSP clients and more; see `docs/ARCHITECTURE.md`.
+Click **Prepare demo repository** (scaffolds the TaskFlow sample app), enter a
+maintenance request, and click **Analyze Repository**. The UI walks through
+Repository Analysis → Impact Analysis → Implementation Plan → **Human Approval**
+→ Agent Execution → Testing → Security → Code Review → Release Readiness, with
+live stage statuses and the real engine output at each step. Approving the plan
+runs the actual `createNeutronWorkflow` pipeline server-side; without an
+approval, execution is refused (HTTP 409) — the gate is fail-closed.
+
+The demo calls only server-side API routes (`/api/demo/*`); the browser never
+receives API keys or secrets, and repository access is restricted to the
+server's demo workspace.
+
+## Environment Variables
+
+| Variable | Purpose |
+|---|---|
+| `AGENTROUTER_API_KEY` | Server-side LLM key (enables agent execution; analysis/impact/planning work without it) |
+| `PORT` | Web server port (default `4096`) |
+| `NEUTRON_DEMO_WORKSPACE` | Directory the web demo may read/write (default `./neutron-demo-workspace`) |
+| `SERVER_PASSWORD` | Optional HTTP Basic auth password for `neutron web` |
+| `SERVER_SECRET` | **Required on Vercel** — signs the stateless plan-approval tokens (generate with `openssl rand -hex 32`); not needed for the Node server |
+| `NEUTRON_DEMO_ALLOW_CLONE` | Set to `1` to allow GitHub URL cloning in the web demo (off by default; do not enable on Vercel) |
+| `NEUTRON_DEMO_MAX_JOBS` | Max concurrent web-demo executions (default `2`) |
+| `NEUTRON_MAX_PARALLEL` | Max parallel maintain tasks (default `4`) |
+| `NEUTRON_TASK_TIMEOUT_MS` | Per-task orchestrator timeout (default 10 min) |
+
+## Deployment
+
+Two targets are supported — pick based on what you need to show:
+
+- **Vercel (serverless):** repository analysis, impact analysis, planning and
+  the approval gate run live; full agent execution honestly reports itself
+  unavailable (it needs the persistent host). Easiest path to a public URL.
+- **Persistent Node host (Render/Docker):** the complete demo, including real
+  agent execution, testing, security scan and review.
+
+```bash
+docker build -t neutron-demo .
+docker run -d -p 4096:4096 \
+  -e AGENTROUTER_API_KEY="$AGENTROUTER_API_KEY" \
+  -v neutron-data:/data \
+  neutron-demo
+# Demo at http://<host>:4096/demo
+```
+
+Full steps for both targets, Render walkthrough, and the LabLab Demo
+Application URL guidance: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+## CLI
+
+The original NEUTRON CLI is fully intact — the web demo is an addition, not a
+replacement. All commands work as before:
+
+```bash
+node dist/cli-entry.js maintain "Add Google OAuth while preserving email/password login"
+node dist/cli-entry.js maintain --execution plan-only
+node dist/cli-entry.js doctor
+node dist/cli-entry.js --help
+```
+
+## Architecture
+
+```
+Browser
+  → Web API (src/server/server.ts, /api/demo/* — server-side only)
+  → NEUTRON workflow (src/neutron/: analyzer → impact → planner → agents → test-runner → security-scanner → review)
+  → Agents (src/agents/: 10 specialized agents)
+  → Tools (src/tools/: file/shell/search with safety hardening)
+  → Validation (real test execution, security scan, code review, release gate)
+```
+
+IBM Bob 2.0 was used as a development partner during the creation of NEUTRON. NEUTRON does not use IBM Bob as its runtime backend.
+
+## Project structure
+
+```
+src/
+├── cli/            # command definitions (commander)
+├── neutron/        # maintain workflow: analyzer, impact, planner, agents,
+│                   # test-runner, security-scanner, review, record, demo, bob
+├── agents/         # 10 specialized agents + registry
+├── approval/       # human approval gate (fail-closed)
+├── providers/      # LLM providers: OpenAI-compatible, Anthropic, Google
+├── api/            # provider failover + request pooling
+├── chat/           # interactive coding agent
+├── web/            # dashboard UI (served by src/server/)
+├── git/ github/    # checkpoints, GitHub automation
+├── tools/          # file/shell/search tools with safety hardening
+├── tui/            # terminal UI components
+└── config.ts env.ts# configuration + .env loading
+tests/              # 42 test files, 345 tests
+docs/               # ARCHITECTURE.md + hackathon docs
+examples/           # design.md example
+bob_sessions/       # TODO (manual): real IBM Bob session screenshots
+```
+
+Legacy compatibility (kept intentionally, clearly marked): the `sunny` binary alias and the hidden `neutron sun` command still work (they print a deprecation note); `SUNNY_*` environment variables and the legacy `sunny` config directory are read as fallbacks. See `MIGRATION.md`.
+
+## Test & build commands
+
+```bash
+npm ci                                # clean install from the lockfile
+npm run typecheck                      # tsc --noEmit
+npm test                               # vitest run (full suite: 42 files, 345 tests)
+npm run build                          # tsup build + copy web assets to dist/
+node dist/cli-entry.js --help          # CLI smoke test
+```
+
+## Limitations
+
+- LLM-backed steps (agent implementation, chat) require a valid provider API key; without one, analysis/impact/planning still work but agents cannot implement.
+- The maintain security step is static analysis; dependency-vulnerability auditing (`npm audit`) is not yet wired in.
+- Test detection currently targets Node/npm projects; pytest/cargo/go test ecosystems are not auto-detected.
+- `rollback` restores via git checkpoints only where a checkpoint branch was created; there is no standalone `neutron rollback` command yet.
+- The approval gate offers approve/reject but no plan editing yet.
+- No standalone `neutron analyze` / `impact` / `benchmark` commands yet (the engines exist inside `maintain`).
+- Bob session evidence is pending manual capture (see above).
+
+## Future improvements
+
+- Standalone `analyze`, `impact`, `security`, and `benchmark` commands; Markdown/HTML report export.
+- Bounded test-failure repair loop (analyze failure → repair agent → re-test, max N attempts).
+- `neutron rollback` with real restore; PR summary/creation flow.
+- Wire the LLM SecurityAgent and ReviewerAgent into the maintain pipeline (currently used on the legacy `run` path).
+- Multi-ecosystem verification (pytest, cargo, go test) and `npm audit` integration.
+- Approval v2: edit plan, reject with feedback, per-stage approval granularity.
+- Dashboard agents/audit pages and server route tests.
 
 ## License
 
-MIT
+MIT — see `LICENSE`.

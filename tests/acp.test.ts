@@ -55,7 +55,7 @@ function makeApi(): ApiSystem {
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-acp-"));
+  root = mkdtempSync(join(tmpdir(), "neutron-acp-"));
 });
 
 afterEach(() => {

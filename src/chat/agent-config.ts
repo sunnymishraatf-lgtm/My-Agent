@@ -24,7 +24,7 @@ export interface AgentConfig {
   permissions: Record<string, AgentPermission | PermissionAction>;
 }
 
-const SUBAGENT_DIRS = [".sunny/agent", ".opencode/agent", ".agent/agent"];
+const SUBAGENT_DIRS = [".sunny/agent", ".neutron/agent", ".opencode/agent", ".agent/agent"];
 
 export const BUILTIN_AGENTS: AgentConfig[] = [
   {
@@ -269,7 +269,9 @@ export function permissionFor(agent: AgentConfig, tool: string, argText = ""): P
 function globMatch(pattern: string, text: string): boolean {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
   try {
-    return new RegExp(`^${escaped}$`).test(text) || new RegExp(`^${escaped}`).test(text);
+    // Full-string match only: a bare prefix match would fail open and grant
+    // permissions the pattern never intended (e.g. "read" matching "read-secret").
+    return new RegExp(`^${escaped}$`).test(text);
   } catch {
     return false;
   }

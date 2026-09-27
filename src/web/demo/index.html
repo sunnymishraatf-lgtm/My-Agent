@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NEUTRON — AI Software Maintenance Agent</title>
+<link rel="stylesheet" href="/src/web/demo/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">NEUTRON</div>
+    <div class="subtitle">AI Software Maintenance Agent</div>
+  </div>
+  <div class="topbar-right">
+    <span id="llm-pill" class="pill">checking…</span>
+  </div>
+</header>
+
+<p class="tagline">Understand, plan, execute, test, and review changes to existing software projects.</p>
+
+<section class="why-strip" aria-label="What NEUTRON is">
+  <div class="why-card"><span class="why-k">WHAT</span><span class="why-t">An AI agent that maintains existing software — not a chatbot, not a code generator.</span></div>
+  <div class="why-card"><span class="why-k">WHY</span><span class="why-t">Every change needs analysis, planning, implementation, testing, security review and code review.</span></div>
+  <div class="why-card"><span class="why-k">HOW</span><span class="why-t">NEUTRON runs those stages in order, with a human approval gate before anything is changed.</span></div>
+</section>
+
+<div id="llm-note" class="notice hidden"></div>
+<div id="serverless-note" class="notice hidden"></div>
+<div id="error-bar" class="error-bar hidden"></div>
+
+<main class="layout">
+  <!-- LEFT: repository -->
+  <aside class="col" id="col-repo">
+    <section class="panel">
+      <h2>Repository</h2>
+      <div id="demo-repo-card" class="repo-card">
+        <div class="repo-name">taskflow <span class="badge">demo repository</span></div>
+        <p class="muted" id="demo-repo-desc">Loading…</p>
+        <button id="btn-prepare" class="btn">Prepare demo repository</button>
+        <div id="prepare-state" class="muted small"></div>
+      </div>
+      <div class="divider"></div>
+      <label class="field-label" for="repo-input">Custom repository</label>
+      <input id="repo-input" class="input" value="demo" spellcheck="false"
+             placeholder="demo, or a path inside the demo workspace" />
+      <p class="muted small">Paths are restricted to the server's demo workspace. GitHub URL cloning is disabled on the hosted demo.</p>
+      <div class="row">
+        <button id="btn-clone" class="btn ghost">Clone GitHub URL</button>
+      </div>
+      <div id="repo-state" class="muted small"></div>
+    </section>
+    <section class="panel">
+      <h2>Run options</h2>
+      <label class="field-label" for="risk-input">Risk tolerance</label>
+      <select id="risk-input" class="input">
+        <option value="safe">safe</option>
+        <option value="balanced" selected>balanced</option>
+        <option value="aggressive">aggressive</option>
+      </select>
+    </section>
+  </aside>
+
+  <!-- CENTER: request + workflow -->
+  <section class="col" id="col-main">
+    <section class="panel">
+      <h2>Maintenance request</h2>
+      <textarea id="request-input" class="input mono" rows="4"
+        placeholder="Describe the change you want to make..."></textarea>
+      <div class="row">
+        <button id="btn-analyze" class="btn primary">Analyze repository</button>
+        <span id="analyze-state" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Workflow</h2>
+      <ol id="stages" class="stages"></ol>
+    </section>
+
+    <section class="panel hidden" id="analysis-panel">
+      <h2>Repository analysis</h2>
+      <div id="analysis-summary" class="kv-grid"></div>
+      <h3>Detected technologies</h3>
+      <div id="analysis-tech" class="chips"></div>
+      <h3>What could break</h3>
+      <ul id="impact-breaks" class="list"></ul>
+      <h3>Affected files <span id="impact-count" class="muted small"></span></h3>
+      <div class="table-wrap"><table class="tbl" id="impact-table">
+        <thead><tr><th>File</th><th>Category</th><th>Impact</th><th>Confidence</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+
+    <section class="panel hidden" id="plan-panel">
+      <h2>Implementation plan</h2>
+      <div id="plan-meta" class="muted small"></div>
+      <ol id="plan-tasks" class="plan-tasks"></ol>
+      <div class="row gate">
+        <button id="btn-approve" class="btn primary">Approve plan</button>
+        <button id="btn-reject" class="btn danger-ghost">Reject</button>
+        <span id="gate-state" class="muted small"></span>
+      </div>
+      <p class="muted small">NEUTRON never executes changes before you approve the plan. Approval is recorded server-side and is single-use.</p>
+      <div class="row">
+        <button id="btn-execute" class="btn primary hidden">Execute approved plan</button>
+        <span id="execute-state" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="results-panel">
+      <h2>Results</h2>
+      <div id="results-note" class="notice hidden"></div>
+      <div class="result-grid">
+        <div class="result-card"><h3>Testing</h3><div id="res-tests" class="muted">—</div></div>
+        <div class="result-card"><h3>Security</h3><div id="res-security" class="muted">—</div></div>
+        <div class="result-card"><h3>Code review</h3><div id="res-review" class="muted">—</div></div>
+        <div class="result-card"><h3>Release readiness</h3><div id="res-release" class="muted">—</div></div>
+      </div>
+      <h3>File changes</h3>
+      <div id="res-changes" class="muted small">—</div>
+      <div id="res-deviations-wrap" class="hidden">
+        <h3>Deviations</h3>
+        <ul id="res-deviations" class="list warn"></ul>
+      </div>
+      <div id="res-errors-wrap" class="hidden">
+        <h3>Errors</h3>
+        <ul id="res-errors" class="list warn"></ul>
+      </div>
+    </section>
+  </section>
+
+  <!-- RIGHT: activity -->
+  <aside class="col" id="col-activity">
+    <section class="panel activity">
+      <h2>Agent activity</h2>
+      <div id="job-state" class="muted small">No run yet. Analyze a repository to begin.</div>
+      <div id="event-log" class="event-log" aria-live="polite"></div>
+    </section>
+  </aside>
+</main>
+
+<footer class="footer">
+  <span>NEUTRON — autonomous software maintenance.</span>
+  <span class="muted">IBM Bob 2.0 was used as a development partner during the creation of NEUTRON. NEUTRON does not use IBM Bob as its runtime backend.</span>
+</footer>
+
+<script src="/src/web/demo/app.js"></script>
+</body>
+</html>

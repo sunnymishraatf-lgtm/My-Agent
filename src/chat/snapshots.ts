@@ -8,6 +8,15 @@ export interface TurnSnapshot {
   files: Record<string, string | null>;
 }
 
+const SNAPSHOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/** Snapshot ids become file names; reject anything that could traverse directories. */
+function assertValidSnapshotId(id: string): void {
+  if (typeof id !== "string" || !SNAPSHOT_ID_PATTERN.test(id)) {
+    throw new Error(`Invalid snapshot id: ${String(id).slice(0, 64)}`);
+  }
+}
+
 export class SnapshotStore {
   private dir: string;
 
@@ -20,10 +29,12 @@ export class SnapshotStore {
   }
 
   private path(id: string): string {
+    assertValidSnapshotId(id);
     return join(this.dir, `${id}.json`);
   }
 
   private redoPath(id: string): string {
+    assertValidSnapshotId(id);
     return join(this.dir, `${id}.redo.json`);
   }
 
@@ -73,6 +84,12 @@ export class SnapshotStore {
     this.ensure();
     writeFileSync(this.redoPath(id), JSON.stringify(all, null, 2), "utf8");
     return turn;
+  }
+
+  /** Drop all redo history for a session. New turns invalidate redo. */
+  clearRedo(id: string): void {
+    this.ensure();
+    writeFileSync(this.redoPath(id), "[]", "utf8");
   }
 }
 

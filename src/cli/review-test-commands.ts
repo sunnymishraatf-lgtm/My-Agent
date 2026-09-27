@@ -8,6 +8,7 @@ import type { Agent } from "../agents/agent";
 import { writeProjectFile } from "../files/project-files";
 import { parseTestOutput } from "../agents/qa";
 import { Terminal } from "../terminal/terminal";
+import { watchCommand } from "./utility-commands";
 
 export async function reviewCommand(root: string): Promise<void> {
   const designText = readFileSafe(join(root, "design.md"));
@@ -70,12 +71,30 @@ export async function reviewCommand(root: string): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.log(`Review failed: ${message}`);
-    console.log("Check your provider configuration with `sunny doctor`.");
+    console.log("Check your provider configuration with `neutron doctor`.");
     process.exitCode = 1;
   }
 }
 
-export async function testCommand(root: string): Promise<void> {
+export interface TestCommandOptions {
+  watch?: boolean;
+}
+
+export interface TestCommandDeps {
+  /** Testable seam: defaults to the real file-watching implementation. */
+  watchImpl?: (root: string, command: string[]) => void;
+}
+
+export async function testCommand(
+  root: string,
+  options: TestCommandOptions = {},
+  deps: TestCommandDeps = {},
+): Promise<void> {
+  if (options.watch) {
+    const watchImpl = deps.watchImpl ?? watchCommand;
+    watchImpl(root, ["npm", "test", "--", "--run"]);
+    return;
+  }
   if (!existsSync(join(root, "package.json"))) {
     console.log("No package.json found — nothing to build or test.");
     return;

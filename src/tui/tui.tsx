@@ -32,7 +32,7 @@ function OrchestratorApp(props: UiAppProps) {
   return (
     <Box flexDirection="column">
       <Box marginBottom={1} borderStyle="round" borderColor="green" paddingX={2}>
-        <Text bold color="green">{" SUNNY — AI SOFTWARE TEAM "}</Text>
+        <Text bold color="green">{" NEUTRON — Autonomous Software Maintenance Intelligence "}</Text>
         <Text color={props.running ? "green" : "gray"}>{props.running ? "● WORKING" : "○ IDLE"}</Text>
       </Box>
       <Text dimColor>{props.statusLine}</Text>

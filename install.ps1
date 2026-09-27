@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Package = if ($env:SUNNY_PACKAGE) { $env:SUNNY_PACKAGE } else { "sunny-agent" }
+$Package = if ($env:NEUTRON_PACKAGE) { $env:NEUTRON_PACKAGE } else { "neutron-agent" }
 $MinNode = 20
 
 function Fail([string]$Message) {
@@ -42,6 +42,6 @@ if (-not $installed) {
 
 Write-Host ""
 Write-Host "Installed. Try:"
-Write-Host "  sunny --version"
-Write-Host "  sunny config"
-Write-Host "  sunny chat"
+Write-Host "  neutron --version"
+Write-Host "  neutron config"
+Write-Host "  neutron chat"

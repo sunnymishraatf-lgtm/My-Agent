@@ -320,7 +320,7 @@ export class ChatRuntime {
       "Type /help to see all available commands",
     ];
     if (existsSync(join(this.root, "design.md"))) {
-      tips.unshift("design.md found - run `sunny run` to start the engineering team");
+      tips.unshift("design.md found - run `neutron run` to start the engineering team");
     }
     if (existsSync(join(this.root, ".git"))) {
       tips.unshift(`On branch: ${this.currentBranchSync()}`);
@@ -620,7 +620,7 @@ export class ChatRuntime {
     return { ok: !result.error, latencyMs: Date.now() - started };
   }
 
-  /** Persist a provider through Sunny's existing config system. */
+  /** Persist a provider through NEUTRON's existing config system. */
   configureProvider(input: {
     id: string;
     baseUrl?: string;
@@ -738,7 +738,7 @@ export class ChatRuntime {
   getDebugText(): string {
     const stats = this.getStats();
     return [
-      `sunny        v${this.getVersion()}`,
+      `neutron        v${this.getVersion()}`,
       `node         ${process.version}`,
       `platform     ${process.platform} ${process.arch}`,
       `cwd          ${this.root}`,
@@ -941,7 +941,7 @@ export async function createChatRuntime(
   if (opts.sessionId) {
     session = store.load(opts.sessionId);
     if (!session) {
-      console.log(`Session not found: ${opts.sessionId}. Run \`sunny sessions\` to list them.`);
+      console.log(`Session not found: ${opts.sessionId}. Run \`neutron sessions\` to list them.`);
       return null;
     }
   } else if (opts.continue) {

@@ -8,7 +8,7 @@ import type { TurnSnapshot } from "../src/chat/snapshots";
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-diff-"));
+  root = mkdtempSync(join(tmpdir(), "neutron-diff-"));
 });
 
 afterEach(() => {

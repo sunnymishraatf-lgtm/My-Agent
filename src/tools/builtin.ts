@@ -33,6 +33,21 @@ function readTextFile(full: string): string | undefined {
   }
 }
 
+/**
+ * Read a file in full, regardless of size. The edit tool must operate on the complete
+ * contents: truncating to MAX_READ_BYTES and writing back would silently destroy data
+ * beyond the first megabyte.
+ */
+function readFullFile(full: string): string | undefined {
+  try {
+    const st = statSync(full);
+    if (!st.isFile()) return undefined;
+    return readFileSync(full, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 const readTool: Tool = {
   name: "read",
   description: "Read a UTF-8 text file inside the workspace. Returns numbered lines.",
@@ -108,7 +123,7 @@ const editTool: Tool = {
     if (oldString === "") return fail("oldString must not be empty");
     const { full, ok: within } = resolveInWorkspace(ctx.root, p);
     if (!within) return fail(`Path is outside the workspace: ${p}`);
-    const original = readTextFile(full);
+    const original = readFullFile(full);
     if (original === undefined) return fail(`Cannot read ${p}`);
     const count = original.split(oldString).length - 1;
     if (count === 0) return fail(`oldString not found in ${p}`);

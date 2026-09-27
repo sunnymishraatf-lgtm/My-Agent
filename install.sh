@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-PKG="${SUNNY_PACKAGE:-sunny-agent}"
+PKG="${NEUTRON_PACKAGE:-neutron-agent}"
 MIN_NODE=20
 
 say() { printf '%s\n' "$*"; }
@@ -26,6 +26,6 @@ fi
 
 say ""
 say "Installed. Try:"
-say "  sunny --version"
-say "  sunny config"
-say "  sunny chat"
+say "  neutron --version"
+say "  neutron config"
+say "  neutron chat"

@@ -22,7 +22,7 @@ export interface RunGitHubOptions {
 
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
-const WORKFLOW = `name: sunny
+const WORKFLOW = `name: neutron
 
 on:
   issues:
@@ -38,17 +38,17 @@ permissions:
   pull-requests: write
 
 jobs:
-  sunny:
+  neutron:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install -g sunny-agent
-      - run: sunny github run
+      - run: npm install -g neutron-agent
+      - run: neutron github run
         env:
-          SUNNY_API_KEY: \${{ secrets.SUNNY_API_KEY }}
+          NEUTRON_API_KEY: \${{ secrets.NEUTRON_API_KEY }}
           OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: \${{ secrets.OPENAI_BASE_URL }}
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
@@ -56,7 +56,7 @@ jobs:
 
 export function installGitHubWorkflow(root: string): { path: string; created: boolean } {
   const dir = join(root, ".github", "workflows");
-  const path = join(dir, "sunny.yml");
+  const path = join(dir, "neutron.yml");
   if (existsSync(path)) return { path, created: false };
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, WORKFLOW, "utf8");
@@ -122,7 +122,7 @@ export async function postIssueComment(repo: string, issueNumber: number, body: 
         authorization: `Bearer ${token}`,
         accept: "application/vnd.github+json",
         "content-type": "application/json",
-        "user-agent": "sunny-agent",
+        "user-agent": "neutron-agent",
       },
       body: JSON.stringify({ body }),
     });

@@ -1,5 +1,5 @@
-import { mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const SYSTEM_DIRS = new Set([".git", "node_modules", ".agent", ".next", "dist", "build"]);
 
@@ -28,7 +28,35 @@ export function workspaceFiles(root: string, max = 500): string[] {
 }
 
 export function isWithinWorkspace(root: string, p: string): boolean {
-  return isSubpath(root, p);
+  // Resolve symlinks first: a path that lexically sits inside the workspace may
+  // still escape through a symlink, so containment must be checked on real paths.
+  return isSubpath(resolveRealPath(root), resolveRealPath(p));
+}
+
+/**
+ * Resolve symlinks in a path. For paths that do not exist yet (e.g. a file about
+ * to be created), resolve the nearest existing ancestor and re-append the rest.
+ * Falls back to the lexically resolved path when nothing can be resolved.
+ */
+export function resolveRealPath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    /* path does not exist (yet) — resolve via nearest existing ancestor */
+  }
+  const parts: string[] = [];
+  let cur = resolve(p);
+  while (!existsSync(cur)) {
+    const parent = dirname(cur);
+    if (parent === cur) return resolve(p);
+    parts.unshift(basename(cur));
+    cur = parent;
+  }
+  try {
+    return join(realpathSync(cur), ...parts);
+  } catch {
+    return resolve(p);
+  }
 }
 
 export function isSubpath(parent: string, child: string): boolean {

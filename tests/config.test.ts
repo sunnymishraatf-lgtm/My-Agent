@@ -16,14 +16,14 @@ let dir: string;
 let previous: string | undefined;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "sunny-config-"));
-  previous = process.env.SUNNY_CONFIG_DIR;
-  process.env.SUNNY_CONFIG_DIR = dir;
+  dir = mkdtempSync(join(tmpdir(), "neutron-config-"));
+  previous = process.env.NEUTRON_CONFIG_DIR;
+  process.env.NEUTRON_CONFIG_DIR = dir;
 });
 
 afterEach(() => {
-  if (previous === undefined) delete process.env.SUNNY_CONFIG_DIR;
-  else process.env.SUNNY_CONFIG_DIR = previous;
+  if (previous === undefined) delete process.env.NEUTRON_CONFIG_DIR;
+  else process.env.NEUTRON_CONFIG_DIR = previous;
   rmSync(dir, { recursive: true, force: true });
 });
 

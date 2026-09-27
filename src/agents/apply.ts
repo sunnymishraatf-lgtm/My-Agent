@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { AgentContext } from "../agents/agent";
 import type { Issue } from "../scheduler/task";
 
@@ -16,13 +18,30 @@ export interface ApplyResult {
   issues: Issue[];
 }
 
+/**
+ * Resolve `p` against the workspace root. Returns the resolved absolute path
+ * only if it is contained in the workspace (not the root itself, and no
+ * escapes via `..` or absolute paths outside the workspace). Returns
+ * `undefined` for anything outside.
+ */
+export function resolveInWorkspace(root: string, p: string): string | undefined {
+  const base = resolve(root);
+  const target = isAbsolute(p) ? resolve(p) : resolve(base, p);
+  const rel = relative(base, target);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return undefined;
+  return target;
+}
+
 export function parseFileOps(text: string): { ops: FileOp[]; commands: string[] } {
   const ops: FileOp[] = [];
   const commands: string[] = [];
   const blocks = text.match(/```(\w+)\n([\s\S]*?)```/g) ?? [];
   const src = blocks.length ? blocks.join("\n") : text;
 
-  const writeRe = /FILE:\s*([^\n]+)\n(?:TYPE:\s*(\w+)\n)?([\s\S]*?)(?=\nFILE:|## |$)/g;
+  // A FILE block's content ends at the next "\nFILE:" line or at the end of
+  // input. Markdown headings (## ...) inside the content are part of the
+  // file and must not truncate it.
+  const writeRe = /FILE:\s*([^\n]+)\n(?:TYPE:\s*(\w+)\n)?([\s\S]*?)(?=\nFILE:|$)/g;
   let m: RegExpExecArray | null;
   while ((m = writeRe.exec(src)) !== null) {
     const path = m[1]!.trim();
@@ -58,8 +77,25 @@ export async function applyFileOps(ctx: AgentContext, text: string): Promise<App
         issues.push({ severity: "medium", category: "agent", title: `Delete not approved: ${op.path}` });
         continue;
       }
+      const target = resolveInWorkspace(ctx.root, op.path);
+      if (!target) {
+        failed++;
+        issues.push({ severity: "medium", category: "agent", title: `Refused to delete outside workspace: ${op.path}` });
+        continue;
+      }
       ctx.log(`deleting ${op.path}`);
-      files.push({ path: op.path, op: "delete" });
+      try {
+        await fs.unlink(target);
+        files.push({ path: op.path, op: "delete" });
+      } catch (err) {
+        failed++;
+        issues.push({
+          severity: "medium",
+          category: "agent",
+          title: `Failed to delete ${op.path}`,
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
       continue;
     }
     const ok = ctx.writeFile(op.path, op.content ?? "");

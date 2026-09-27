@@ -10,7 +10,7 @@ export interface Skill {
   path: string;
 }
 
-const SKILL_DIRS = [".sunny/skills", ".claude/skills", ".opencode/skills"];
+const SKILL_DIRS = [".sunny/skills", ".neutron/skills", ".claude/skills", ".opencode/skills"];
 
 function dirsFor(root: string): string[] {
   return [...SKILL_DIRS.map((d) => join(root, d)), join(configDir(), "skills")];

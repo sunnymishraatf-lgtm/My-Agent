@@ -9,18 +9,18 @@ let prevConfigDir: string | undefined;
 let prevTheme: string | undefined;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-theme-"));
-  prevConfigDir = process.env.SUNNY_CONFIG_DIR;
-  prevTheme = process.env.SUNNY_THEME;
-  process.env.SUNNY_CONFIG_DIR = join(root, "config");
-  delete process.env.SUNNY_THEME;
+  root = mkdtempSync(join(tmpdir(), "neutron-theme-"));
+  prevConfigDir = process.env.NEUTRON_CONFIG_DIR;
+  prevTheme = process.env.NEUTRON_THEME;
+  process.env.NEUTRON_CONFIG_DIR = join(root, "config");
+  delete process.env.NEUTRON_THEME;
 });
 
 afterEach(() => {
-  if (prevConfigDir === undefined) delete process.env.SUNNY_CONFIG_DIR;
-  else process.env.SUNNY_CONFIG_DIR = prevConfigDir;
-  if (prevTheme === undefined) delete process.env.SUNNY_THEME;
-  else process.env.SUNNY_THEME = prevTheme;
+  if (prevConfigDir === undefined) delete process.env.NEUTRON_CONFIG_DIR;
+  else process.env.NEUTRON_CONFIG_DIR = prevConfigDir;
+  if (prevTheme === undefined) delete process.env.NEUTRON_THEME;
+  else process.env.NEUTRON_THEME = prevTheme;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -47,8 +47,8 @@ describe("theme", () => {
     expect(setTheme("nope")).toBe(false);
   });
 
-  it("honors the SUNNY_THEME environment variable", () => {
-    process.env.SUNNY_THEME = "forest";
+  it("honors the NEUTRON_THEME environment variable", () => {
+    process.env.NEUTRON_THEME = "forest";
     expect(loadTheme().name).toBe("forest");
   });
 });

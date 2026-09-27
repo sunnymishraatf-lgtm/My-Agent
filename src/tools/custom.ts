@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { globalConfigPath } from "../config";
 import { fail, ok, type Tool, type ToolParameter } from "./types";
+import { preferExisting, projectDirs } from "../compat";
 
 export interface CustomToolDef {
   description?: string;
@@ -32,11 +33,17 @@ function normalizeDef(raw: unknown): CustomToolDef | undefined {
   };
 }
 
+/** Quote a value so it is safe to interpolate into a shell command. */
+export function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 function substitute(command: string, args: Record<string, unknown>): string {
   return command.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key: string) => {
     const value = args[key];
     if (value === undefined || value === null) return match;
-    return String(value).replace(/"/g, '\\"');
+    return shellQuote(String(value));
   });
 }
 
@@ -46,6 +53,13 @@ function toTool(name: string, def: CustomToolDef): Tool {
     description: def.description ?? `Custom tool ${name}`,
     parameters: def.parameters ?? {},
     async execute(args, ctx) {
+      const missing = Object.entries(def.parameters ?? {})
+        .filter(([, p]) => p.required === true)
+        .map(([name]) => name)
+        .filter((name) => args[name] === undefined || args[name] === null || args[name] === "");
+      if (missing.length > 0) {
+        return fail(`Missing required parameter(s): ${missing.join(", ")}`);
+      }
       const command = substitute(def.command, args);
       const res = await ctx.run(command);
       const parts = [`exit code: ${res.exitCode}`, res.stdout.trimEnd()];
@@ -71,7 +85,7 @@ export function loadCustomTools(root: string): Tool[] {
     }
   }
 
-  const dir = join(root, ".sunny", "tool");
+  const dir = preferExisting(projectDirs(root, "tool"));
   if (existsSync(dir)) {
     let files: string[] = [];
     try {

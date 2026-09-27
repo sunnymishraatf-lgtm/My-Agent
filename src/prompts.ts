@@ -72,7 +72,7 @@ Rules:
 - Never invent test results; only RUN commands you are asked to.`;
 
 function basePrompt(role: string, task: Task): string {
-  return `You are the ${role} in the "sunny" multi-agent team.
+  return `You are the ${role} in the NEUTRON multi-agent team (Autonomous Software Maintenance Intelligence).
 
 TASK ${task.id}: ${task.description}
 PRIORITY: ${task.priority}

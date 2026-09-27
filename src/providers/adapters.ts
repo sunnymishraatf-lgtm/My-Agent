@@ -2,29 +2,67 @@ import type { ChatMessage, ChatRequest, ChatResponse, Model } from "../types";
 import { normalizeBaseUrl, type BaseProviderOptions, type ChatStreamChunk, type LLMProvider } from "./provider";
 import type { ProviderApiType, ProviderAuthType, ProviderCatalogEntry } from "./catalog";
 import { OpenAICompatibleProvider } from "./openai";
+import {
+  classifyHttpError,
+  classifyInvalidJson,
+  classifyNetworkError,
+  keyEnvVar,
+} from "./errors";
 
 export interface AdapterOptions extends BaseProviderOptions {
   auth?: ProviderAuthType;
+}
+
+interface Ctx {
+  provider: string;
+  endpoint: string;
+  model?: string;
+  keyEnv?: string;
 }
 
 function joinUrl(baseUrl: string, path: string): string {
   return `${normalizeBaseUrl(baseUrl)}/${path.replace(/^\/+/, "")}`;
 }
 
-async function readError(res: Response, name: string, endpoint: string): Promise<Error> {
-  const body = await res.text().catch(() => "");
-  let detail = "";
+/** Shared fetch/JSON/error handling for Anthropic and Google requests. */
+async function requestJson(
+  ctx: Ctx,
+  url: string,
+  init: RequestInit,
+  endpointLabel: string,
+): Promise<{ ok: true; data: unknown } | { ok: false; error: Error }> {
+  let res: Response;
   try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } };
-    detail = parsed.error?.message ?? "";
-  } catch {
-    detail = body.slice(0, 200);
+    res = await fetch(url, init);
+  } catch (err) {
+    return { ok: false, error: classifyNetworkError(err, ctx) };
   }
-  const err = new Error(`Provider ${name} returned ${res.status} from ${endpoint}${detail ? `: ${detail}` : ""}`);
-  (err as Error & { status?: number; retryable?: boolean; cooldown?: boolean }).status = res.status;
-  (err as Error & { retryable?: boolean }).retryable = res.status === 408 || res.status === 429 || res.status >= 500;
-  (err as Error & { cooldown?: boolean }).cooldown = res.status === 429;
-  return err;
+  const body = await res.text().catch(() => "");
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const parsed = JSON.parse(body) as {
+        error?: { message?: string };
+        message?: string;
+      };
+      detail = parsed.error?.message ?? (typeof parsed.message === "string" ? parsed.message : "");
+    } catch {
+      detail = body.slice(0, 200);
+    }
+    const classified = classifyHttpError(res.status, detail, ctx);
+    // Backwards-compatible flags consumed by the retry/failover layer.
+    (classified as Error & { status?: number }).status = res.status;
+    (classified as Error & { cooldown?: boolean }).cooldown = res.status === 429;
+    (classified as Error & { detail?: string }).detail = body.slice(0, 1000);
+    void endpointLabel;
+    return { ok: false, error: classified };
+  }
+  if (!body) return { ok: false, error: classifyInvalidJson(ctx, "") };
+  try {
+    return { ok: true, data: JSON.parse(body) as unknown };
+  } catch {
+    return { ok: false, error: classifyInvalidJson(ctx, body.slice(0, 200)) };
+  }
 }
 
 /** Parse a `text/event-stream` body, yielding each `data:` payload. */
@@ -52,6 +90,38 @@ async function* sseEvents(res: Response): AsyncGenerator<string> {
   }
 }
 
+/**
+ * Open a streaming (SSE) request with classified error handling. On failure
+ * the returned object carries `error`; otherwise `res`.
+ */
+async function openStream(
+  ctx: Ctx,
+  url: string,
+  init: RequestInit,
+  endpointLabel: string,
+): Promise<{ ok: true; res: Response } | { ok: false; error: Error }> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    return { ok: false, error: classifyNetworkError(err, ctx) };
+  }
+  if (res.ok && res.body) return { ok: true, res };
+  const body = await res.text().catch(() => "");
+  let detail = "";
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
+    detail = parsed.error?.message ?? "";
+  } catch {
+    detail = body.slice(0, 200);
+  }
+  const classified = classifyHttpError(res.status, detail, ctx);
+  (classified as Error & { status?: number }).status = res.status;
+  (classified as Error & { cooldown?: boolean }).cooldown = res.status === 429;
+  void endpointLabel;
+  return { ok: false, error: classified };
+}
+
 /** Anthropic Messages API adapter (`/v1/messages`). */
 export class AnthropicProvider implements LLMProvider {
   readonly name: string;
@@ -75,6 +145,15 @@ export class AnthropicProvider implements LLMProvider {
     return h;
   }
 
+  private ctx(model?: string): Ctx {
+    return {
+      provider: this.name,
+      endpoint: this.baseUrl,
+      ...(model ? { model } : {}),
+      keyEnv: keyEnvVar(this.name),
+    };
+  }
+
   private static splitMessages(messages: ChatMessage[]): {
     system?: string;
     messages: { role: "user" | "assistant"; content: string }[];
@@ -87,32 +166,39 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async models(): Promise<Model[]> {
-    const res = await fetch(joinUrl(this.baseUrl, "v1/models"), {
-      headers: this.headers(),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) throw await readError(res, this.name, "/v1/models");
-    const data = (await res.json()) as { data?: { id: string; display_name?: string }[] };
+    const result = await requestJson(
+      this.ctx(),
+      joinUrl(this.baseUrl, "v1/models"),
+      { headers: this.headers(), signal: AbortSignal.timeout(15_000) },
+      "/v1/models",
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data as { data?: { id: string; display_name?: string }[] };
     return (data.data ?? []).map((m) => ({ id: m.id, name: m.display_name ?? m.id, contextWindow: 0, free: false }));
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const started = Date.now();
     const { system, messages } = AnthropicProvider.splitMessages(request.messages);
-    const res = await fetch(joinUrl(this.baseUrl, "v1/messages"), {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        model: request.model,
-        max_tokens: request.maxTokens ?? 4096,
-        temperature: request.temperature,
-        ...(system ? { system } : {}),
-        messages,
-      }),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    if (!res.ok) throw await readError(res, this.name, "/v1/messages");
-    const data = (await res.json()) as {
+    const result = await requestJson(
+      this.ctx(request.model),
+      joinUrl(this.baseUrl, "v1/messages"),
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({
+          model: request.model,
+          max_tokens: request.maxTokens ?? 4096,
+          temperature: request.temperature,
+          ...(system ? { system } : {}),
+          messages,
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      },
+      "/v1/messages",
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data as {
       content?: { type: string; text?: string }[];
       usage?: { input_tokens?: number; output_tokens?: number };
     };
@@ -129,21 +215,26 @@ export class AnthropicProvider implements LLMProvider {
 
   async *stream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
     const { system, messages } = AnthropicProvider.splitMessages(request.messages);
-    const res = await fetch(joinUrl(this.baseUrl, "v1/messages"), {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        model: request.model,
-        max_tokens: request.maxTokens ?? 4096,
-        temperature: request.temperature,
-        stream: true,
-        ...(system ? { system } : {}),
-        messages,
-      }),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    if (!res.ok) throw await readError(res, this.name, "/v1/messages");
-    for await (const payload of sseEvents(res)) {
+    const opened = await openStream(
+      this.ctx(request.model),
+      joinUrl(this.baseUrl, "v1/messages"),
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({
+          model: request.model,
+          max_tokens: request.maxTokens ?? 4096,
+          temperature: request.temperature,
+          stream: true,
+          ...(system ? { system } : {}),
+          messages,
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      },
+      "/v1/messages",
+    );
+    if (!opened.ok) throw opened.error;
+    for await (const payload of sseEvents(opened.res)) {
       if (payload === "[DONE]") {
         yield { delta: "", done: true };
         return;
@@ -198,6 +289,15 @@ export class GoogleProvider implements LLMProvider {
     return this.apiKey ? `${sep}key=${encodeURIComponent(this.apiKey)}` : "";
   }
 
+  private ctx(model?: string): Ctx {
+    return {
+      provider: this.name,
+      endpoint: this.baseUrl,
+      ...(model ? { model } : {}),
+      keyEnv: keyEnvVar(this.name),
+    };
+  }
+
   private static splitMessages(messages: ChatMessage[]): {
     system?: string;
     contents: { role: "user" | "model"; parts: { text: string }[] }[];
@@ -210,12 +310,14 @@ export class GoogleProvider implements LLMProvider {
   }
 
   async models(): Promise<Model[]> {
-    const res = await fetch(`${this.baseUrl}/models?pageSize=1000${this.keyParam("&")}`, {
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) throw await readError(res, this.name, "/models");
-    const data = (await res.json()) as { models?: { name: string; displayName?: string }[] };
+    const result = await requestJson(
+      this.ctx(),
+      `${this.baseUrl}/models?pageSize=1000${this.keyParam("&")}`,
+      { headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(15_000) },
+      "/models",
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data as { models?: { name: string; displayName?: string }[] };
     return (data.models ?? []).map((m) => ({
       id: m.name.replace(/^models\//, ""),
       name: m.displayName ?? m.name.replace(/^models\//, ""),
@@ -227,21 +329,26 @@ export class GoogleProvider implements LLMProvider {
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const started = Date.now();
     const { system, contents } = GoogleProvider.splitMessages(request.messages);
-    const res = await fetch(`${this.baseUrl}/models/${request.model}:generateContent${this.keyParam("?")}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents,
-        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-        generationConfig: {
-          ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-          ...(request.maxTokens !== undefined ? { maxOutputTokens: request.maxTokens } : {}),
-        },
-      }),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    if (!res.ok) throw await readError(res, this.name, "/generateContent");
-    const data = (await res.json()) as {
+    const result = await requestJson(
+      this.ctx(request.model),
+      `${this.baseUrl}/models/${request.model}:generateContent${this.keyParam("?")}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents,
+          ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+          generationConfig: {
+            ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+            ...(request.maxTokens !== undefined ? { maxOutputTokens: request.maxTokens } : {}),
+          },
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      },
+      "/generateContent",
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data as {
       candidates?: { content?: { parts?: { text?: string }[] } }[];
       usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
     };
@@ -259,7 +366,8 @@ export class GoogleProvider implements LLMProvider {
 
   async *stream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
     const { system, contents } = GoogleProvider.splitMessages(request.messages);
-    const res = await fetch(
+    const opened = await openStream(
+      this.ctx(request.model),
       `${this.baseUrl}/models/${request.model}:streamGenerateContent?alt=sse${this.keyParam("&")}`,
       {
         method: "POST",
@@ -274,9 +382,10 @@ export class GoogleProvider implements LLMProvider {
         }),
         signal: AbortSignal.timeout(this.timeoutMs),
       },
+      "/streamGenerateContent",
     );
-    if (!res.ok) throw await readError(res, this.name, "/streamGenerateContent");
-    for await (const payload of sseEvents(res)) {
+    if (!opened.ok) throw opened.error;
+    for await (const payload of sseEvents(opened.res)) {
       try {
         const json = JSON.parse(payload) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
         const delta = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";

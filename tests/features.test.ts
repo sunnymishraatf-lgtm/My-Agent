@@ -10,7 +10,7 @@ import { ChatAgent, type ChatEvent } from "../src/chat/agent";
 import { type ChatSession } from "../src/chat/session";
 import { shareSession } from "../src/chat/share";
 import { startServer } from "../src/server/server";
-import { SunnyClient } from "../src/sdk/client";
+import { NeutronClient } from "../src/sdk/client";
 import type { ResolvedConfig } from "../src/config";
 
 class FakeProvider implements LLMProvider {
@@ -66,7 +66,7 @@ function makeApi(provider: LLMProvider): ApiSystem {
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-features-"));
+  root = mkdtempSync(join(tmpdir(), "neutron-features-"));
 });
 
 afterEach(() => {
@@ -144,9 +144,9 @@ describe("http server", () => {
       const page = await fetch(`http://127.0.0.1:${running.port}/`);
       expect(page.status).toBe(200);
       expect(page.headers.get("content-type")).toContain("text/html");
-      expect(await page.text()).toContain("<title>sunny</title>");
+      expect(await page.text()).toContain("<title>NEUTRON — Autonomous Software Maintenance Intelligence</title>");
 
-      const client = new SunnyClient({ baseUrl: `http://127.0.0.1:${running.port}` });
+      const client = new NeutronClient({ baseUrl: `http://127.0.0.1:${running.port}` });
       const health = await client.health();
       expect(health.ok).toBe(true);
       expect(health.agents).toContain("build");
@@ -162,7 +162,7 @@ describe("http server", () => {
     try {
       const denied = await fetch(`http://127.0.0.1:${running.port}/health`);
       expect(denied.status).toBe(401);
-      const auth = Buffer.from("sunny:secret").toString("base64");
+      const auth = Buffer.from("neutron:secret").toString("base64");
       const allowed = await fetch(`http://127.0.0.1:${running.port}/health`, {
         headers: { authorization: `Basic ${auth}` },
       });

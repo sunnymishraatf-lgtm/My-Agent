@@ -81,7 +81,7 @@ export function sessionsCommand(opts: SessionsCommandOptions): void {
   }
   if (sessions.length === 0) {
     console.log(
-      opts.search ? `No sessions matching "${opts.search}".` : "No chat sessions yet. Start one with `sunny chat`.",
+      opts.search ? `No sessions matching "${opts.search}".` : "No chat sessions yet. Start one with `neutron chat`.",
     );
     return;
   }
@@ -89,5 +89,5 @@ export function sessionsCommand(opts: SessionsCommandOptions): void {
   for (const s of sessions) {
     console.log(`  ${s.id}  ${s.updatedAt}  ${s.title} (${s.messageCount} messages)`);
   }
-  console.log("\nResume with `sunny chat --session <id>` or `sunny chat --continue`.");
+  console.log("\nResume with `neutron chat --session <id>` or `neutron chat --continue`.");
 }

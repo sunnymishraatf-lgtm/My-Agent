@@ -81,7 +81,7 @@ function newSession(id = "s"): ChatSession {
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-agents-"));
+  root = mkdtempSync(join(tmpdir(), "neutron-agents-"));
 });
 
 afterEach(() => {
@@ -116,7 +116,7 @@ describe("agent config", () => {
   });
 
   it("loads built-in and custom agents", () => {
-    const dir = join(root, ".sunny", "agent");
+    const dir = join(root, ".neutron", "agent");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "docs.md"), "---\ndescription: Docs writer\nmode: subagent\n---\nWrite docs.", "utf8");
 
@@ -129,7 +129,7 @@ describe("agent config", () => {
   });
 
   it("locates and deletes custom agent files", () => {
-    const dir = join(root, ".sunny", "agent");
+    const dir = join(root, ".neutron", "agent");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "docs.md"), "---\ndescription: Docs writer\nmode: subagent\n---\nWrite docs.", "utf8");
     expect(findAgentFile(root, "docs")).toBe(join(dir, "docs.md"));
@@ -178,7 +178,7 @@ describe("session store", () => {
 
 describe("skills", () => {
   it("loads SKILL.md files", () => {
-    const dir = join(root, ".sunny", "skills", "react");
+    const dir = join(root, ".neutron", "skills", "react");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"), "---\nname: react\ndescription: React tips\n---\nUse hooks.", "utf8");
     const skills = loadSkills(root);
@@ -222,7 +222,7 @@ describe("subagents and todo tools", () => {
   });
 
   it("loads a skill body through the skill tool", async () => {
-    const dir = join(root, ".sunny", "skills", "style");
+    const dir = join(root, ".neutron", "skills", "style");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"), "---\nname: style\ndescription: style guide\n---\nPrefer composition.", "utf8");
     const provider = new FakeProvider([

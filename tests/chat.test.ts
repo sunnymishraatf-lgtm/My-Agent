@@ -75,7 +75,7 @@ function newSession(): ChatSession {
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-chat-"));
+  root = mkdtempSync(join(tmpdir(), "neutron-chat-"));
 });
 
 afterEach(() => {

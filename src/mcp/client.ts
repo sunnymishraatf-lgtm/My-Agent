@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { globalConfigPath } from "../config";
 import { fail, ok, type Tool, type ToolResult } from "../tools/types";
 
@@ -30,36 +31,73 @@ interface JsonRpcMessage {
   error?: { code: number; message: string; data?: unknown };
 }
 
-const CLIENT_INFO = { name: "sunny-agent", version: "0.1.0" };
+const CLIENT_INFO = { name: "neutron-agent", version: "0.1.0" };
 const PROTOCOL_VERSION = "2024-11-05";
+
+/** JSON-RPC method-not-found error code. */
+export const METHOD_NOT_FOUND = -32601;
+
+/**
+ * Factory used to spawn the server child process. Defaults to `spawn` from
+ * `node:child_process`; injectable so tests can supply a fake child process
+ * instead of a real subprocess.
+ */
+export type SpawnFn = typeof spawn;
 
 export class McpClient {
   readonly name: string;
   private config: McpServerConfig;
+  private spawnFn: SpawnFn;
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private buffer = "";
   private stderr = "";
+  private decoder = new StringDecoder("utf8");
+  private startPromise?: Promise<void>;
 
-  constructor(name: string, config: McpServerConfig) {
+  constructor(name: string, config: McpServerConfig, spawnFn: SpawnFn = spawn) {
     this.name = name;
     this.config = config;
+    this.spawnFn = spawnFn;
   }
 
+  /** Idempotent: concurrent or repeated calls share a single child process. */
   async start(): Promise<void> {
-    this.child = spawn(this.config.command, this.config.args ?? [], {
+    if (!this.startPromise) {
+      this.startPromise = this.doStart().catch((err) => {
+        // Allow a retry after a failed start.
+        this.startPromise = undefined;
+        throw err;
+      });
+    }
+    return this.startPromise;
+  }
+
+  private async doStart(): Promise<void> {
+    this.child = this.spawnFn(this.config.command, this.config.args ?? [], {
       env: { ...process.env, ...(this.config.env ?? {}) },
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
     });
-    this.child.stdout.on("data", (d: Buffer) => this.onData(d.toString()));
+    // StringDecoder keeps multi-byte UTF-8 sequences that are split across
+    // chunk boundaries intact.
+    this.child.stdout.on("data", (d: Buffer) => this.onData(this.decoder.write(d)));
+    this.child.stdout.on("end", () => {
+      const tail = this.decoder.end();
+      if (tail) this.onData(tail);
+    });
     this.child.stderr.on("data", (d: Buffer) => {
       this.stderr = (this.stderr + d.toString()).slice(-4000);
     });
     this.child.on("exit", () => {
-      for (const { reject } of this.pending.values()) reject(new Error(`MCP server ${this.name} exited`));
-      this.pending.clear();
+      this.failPending(new Error(`MCP server ${this.name} exited`));
+    });
+    // A spawn failure surfaces as an "error" event on the child. Handle it so
+    // it rejects pending requests instead of crashing the Node process with
+    // an unhandled "error" event.
+    this.child.on("error", (err: Error) => {
+      this.failPending(new Error(`MCP server ${this.name} failed: ${err.message}`));
     });
 
     await this.request("initialize", {
@@ -68,6 +106,11 @@ export class McpClient {
       clientInfo: CLIENT_INFO,
     });
     this.notify("notifications/initialized", {});
+  }
+
+  private failPending(err: Error): void {
+    for (const { reject } of this.pending.values()) reject(err);
+    this.pending.clear();
   }
 
   private onData(chunk: string): void {
@@ -88,6 +131,19 @@ export class McpClient {
         this.pending.delete(message.id);
         if (message.error) entry.reject(new Error(message.error.message));
         else entry.resolve(message.result);
+        continue;
+      }
+      // Server-initiated request or notification. Notifications (no id) are
+      // dropped; requests get a JSON-RPC response so the server never hangs.
+      if (message.method !== undefined) {
+        if (typeof message.id === "number") {
+          this.send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: METHOD_NOT_FOUND, message: `Method not found: ${message.method}` },
+          });
+        }
+        continue;
       }
     }
   }
@@ -134,7 +190,9 @@ export class McpClient {
     const parts = (result?.content ?? [])
       .map((c) => (c.type === "text" ? c.text ?? "" : `[${c.type}]`))
       .filter(Boolean);
-    return parts.join("\n") || "(no output)";
+    const output = parts.join("\n") || "(no output)";
+    if (result?.isError) throw new Error(`MCP tool ${name} failed: ${output}`);
+    return output;
   }
 
   stop(): void {
@@ -148,7 +206,8 @@ export class McpClient {
 
 export function readMcpConfig(root: string): Record<string, McpServerConfig> {
   const servers: Record<string, McpServerConfig> = {};
-  const paths = [globalConfigPath(), join(root, ".sunny", "mcp.json")];
+  // Later paths override earlier ones: global < legacy .sunny < .neutron.
+  const paths = [globalConfigPath(), join(root, ".sunny", "mcp.json"), join(root, ".neutron", "mcp.json")];
   for (const path of paths) {
     if (!existsSync(path)) continue;
     try {

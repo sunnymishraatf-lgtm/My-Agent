@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NEUTRON — Autonomous Software Maintenance Intelligence</title>
+<meta name="description" content="NEUTRON — Autonomous Software Maintenance Intelligence" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Cpath d='M9 24V8l14 16V8' fill='none' stroke='%2360a5fa' stroke-width='3' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/src/web/styles/neutron.css" />
+<style>
+  .neutron-sidebar.collapsed { width: 60px; }
+  .neutron-sidebar.collapsed .neutron-title, .neutron-sidebar.collapsed .nav-section-title, .neutron-sidebar.collapsed .repo-select-label, .neutron-sidebar.collapsed .repo-select, .neutron-sidebar.collapsed .neutron-repo-selector { display: none; }
+  .neutron-sidebar.collapsed .nav-item { justify-content: center; padding: 10px; }
+  .neutron-sidebar.collapsed .nav-badge { display: none; }
+</style>
+</head>
+<body>
+<div class="neutron-app">
+  <aside class="neutron-sidebar" id="sidebar">
+    <div class="neutron-brand">
+      <div class="neutron-title" title="Autonomous Software Maintenance Intelligence">NEUTRON</div>
+      <button id="sidebar-toggle" class="btn btn-ghost btn-icon" style="margin-left: auto;" title="Collapse sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg></button>
+    </div>
+    <nav class="neutron-nav">
+      <div class="nav-section">
+        <div class="nav-section-title">Maintenance</div>
+        <div class="nav-item active" data-view="overview"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>Dashboard</div>
+        <div class="nav-item" data-view="analyze"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>Analyze</div>
+        <div class="nav-item" data-view="plan"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>Plan</div>
+        <div class="nav-item" data-view="execute"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>Execute</div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Intelligence</div>
+        <div class="nav-item" data-view="impact"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>Impact Graph</div>
+        <div class="nav-item" data-view="what-breaks"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>What Could Break?</div>
+        <div class="nav-item" data-view="tests"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>Test Intelligence</div>
+        <div class="nav-item" data-view="security"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>Security Review</div>
+        <div class="nav-item" data-view="review"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>Code Review</div>
+        <div class="nav-item" data-view="release"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"></path></svg>Release Readiness</div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Knowledge</div>
+        <div class="nav-item" data-view="memory"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>Engineering Memory</div>
+        <div class="nav-item" data-view="history"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>Maintenance History</div>
+        <div class="nav-item" data-view="bob"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>IBM Bob 2.0</div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Settings</div>
+        <div class="nav-item" data-view="settings"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>Settings</div>
+      </div>
+    </nav>
+    <div class="neutron-repo-selector">
+      <label class="repo-select-label">Repository</label>
+      <select class="repo-select" id="repo-select"></select>
+    </div>
+  </aside>
+
+  <header class="neutron-header">
+    <div class="neutron-breadcrumb">
+      <span>NEUTRON</span>
+      <span class="sep">/</span>
+      <span id="view-title" class="current">Dashboard</span>
+    </div>
+    <div class="neutron-actions">
+      <button id="what-breaks-btn" class="btn btn-secondary btn-sm">What Could Break?</button>
+    </div>
+  </header>
+
+  <main class="neutron-main" id="main-content">
+    <!-- Overview -->
+    <div id="view-overview" class="neutron-view active"></div>
+
+    <!-- Analyze -->
+    <div id="view-analyze" class="neutron-view">
+      <div class="neutron-card" style="margin-bottom: 24px;">
+        <div class="neutron-card-header">
+          <div class="neutron-card-title">Maintenance Request</div>
+        </div>
+        <div class="neutron-card-body">
+          <div class="form-group">
+            <label class="form-label">What needs to change?</label>
+            <textarea class="form-textarea" id="request-input" placeholder='e.g., "Add Google OAuth while preserving the existing email/password login"' rows="3"></textarea>
+            <div class="form-help">Describe the maintenance task in natural language. NEUTRON will analyze the repository and predict impact.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Risk Tolerance</label>
+            <div class="risk-toggle">
+              <div class="risk-option">
+                <input type="radio" name="risk" value="safe" id="risk-safe">
+                <label for="risk-safe"><span class="risk-label">Safe</span><span class="risk-desc">Minimize changes, prefer conservative approach</span></label>
+              </div>
+              <div class="risk-option">
+                <input type="radio" name="risk" value="balanced" id="risk-balanced" checked>
+                <label for="risk-balanced"><span class="risk-label">Balanced</span><span class="risk-desc">Standard approach, optimize for correctness</span></label>
+              </div>
+              <div class="risk-option">
+                <input type="radio" name="risk" value="aggressive" id="risk-aggressive">
+                <label for="risk-aggressive"><span class="risk-label">Aggressive</span><span class="risk-desc">Move fast, accept higher risk for speed</span></label>
+              </div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 12px; margin-top: 8px;">
+            <button class="btn btn-primary" id="analyze-btn">Analyze Impact</button>
+            <button class="btn btn-secondary" id="plan-only-btn">Plan Only</button>
+            <button class="btn btn-primary" id="execute-btn">Implement & Test</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Plan -->
+    <div id="view-plan" class="neutron-view"></div>
+
+    <!-- Execute -->
+    <div id="view-execute" class="neutron-view"></div>
+
+    <!-- Impact Graph -->
+    <div id="view-impact" class="neutron-view">
+      <div class="neutron-card">
+        <div class="neutron-card-header">
+          <div class="neutron-card-title">Impact Graph</div>
+          <div class="neutron-card-subtitle">Visual representation of affected components and their relationships</div>
+        </div>
+        <div class="neutron-card-body" style="padding: 0;">
+          <div id="impact-canvas-container" class="impact-graph-container"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- What Could Break -->
+    <div id="view-what-breaks" class="neutron-view"></div>
+
+    <!-- Tests -->
+    <div id="view-tests" class="neutron-view"></div>
+
+    <!-- Security -->
+    <div id="view-security" class="neutron-view"></div>
+
+    <!-- Review -->
+    <div id="view-review" class="neutron-view"></div>
+
+    <!-- Release -->
+    <div id="view-release" class="neutron-view"></div>
+
+    <!-- Memory -->
+    <div id="view-memory" class="neutron-view"></div>
+
+    <!-- History -->
+    <div id="view-history" class="neutron-view"></div>
+
+    <!-- Bob -->
+    <div id="view-bob" class="neutron-view"></div>
+
+    <!-- Settings -->
+    <div id="view-settings" class="neutron-view">
+      <div class="neutron-card"><div class="neutron-card-header"><div class="neutron-card-title">Settings</div></div><div class="neutron-card-body">
+        <div class="form-group"><label class="form-label">LLM Provider</label><select class="form-select"><option>OpenAI (tokenharbor.ai)</option><option>Local (Ollama)</option><option>Custom</option></select></div>
+        <div class="form-group"><label class="form-label">Auto-approve plans</label><div style="display: flex; align-items: center; gap: 12px;"><input type="checkbox" id="auto-approve"><label for="auto-approve" style="cursor: pointer;">Automatically approve implementation plans</label></div></div>
+        <div class="form-group"><label class="form-label">Parallel agents</label><select class="form-select" style="width: auto;"><option>4 (default)</option><option>2</option><option>8</option></select></div>
+      </div></div>
+    </div>
+  </main>
+</div>
+
+<script type="module" src="/src/web/main.js"></script>
+</body>
+</html>

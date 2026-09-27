@@ -53,7 +53,7 @@ function makeApi(): ApiSystem {
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "sunny-gh-"));
+  root = mkdtempSync(join(tmpdir(), "neutron-gh-"));
 });
 
 afterEach(() => {
@@ -65,7 +65,7 @@ describe("github actions", () => {
     const result = installGitHubWorkflow(root);
     expect(result.created).toBe(true);
     expect(existsSync(result.path)).toBe(true);
-    expect(readFileSync(result.path, "utf8")).toContain("sunny github run");
+    expect(readFileSync(result.path, "utf8")).toContain("neutron github run");
   });
 
   it("parses an issues event into a prompt", () => {

@@ -16,10 +16,10 @@ export function formatTranscript(session: ChatSession, opts?: { includeTools?: b
   const includeTools = opts?.includeTools ?? true;
   const lines: string[] = [];
   for (const message of session.messages) {
-    const role = message.role === "user" ? "You" : message.role === "assistant" ? "sunny" : message.role;
+    const role = message.role === "user" ? "You" : message.role === "assistant" ? "NEUTRON" : message.role;
     const content = message.content.trim();
     if (!content) continue;
-    if (!includeTools && role !== "You" && role !== "sunny") continue;
+    if (!includeTools && role !== "You" && role !== "NEUTRON") continue;
     lines.push(`**${role}**`, "", content, "");
   }
   return lines.join("\n").trimEnd();

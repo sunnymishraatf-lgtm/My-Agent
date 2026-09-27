@@ -23,17 +23,17 @@ import { createAdapter, AnthropicProvider, GoogleProvider } from "../src/provide
 import { OpenAICompatibleProvider } from "../src/providers/openai";
 
 let dir: string;
-const originalDir = process.env.SUNNY_CONFIG_DIR;
+const originalDir = process.env.NEUTRON_CONFIG_DIR;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "sunny-prov-"));
-  process.env.SUNNY_CONFIG_DIR = dir;
+  dir = mkdtempSync(join(tmpdir(), "neutron-prov-"));
+  process.env.NEUTRON_CONFIG_DIR = dir;
 });
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
-  if (originalDir === undefined) delete process.env.SUNNY_CONFIG_DIR;
-  else process.env.SUNNY_CONFIG_DIR = originalDir;
+  if (originalDir === undefined) delete process.env.NEUTRON_CONFIG_DIR;
+  else process.env.NEUTRON_CONFIG_DIR = originalDir;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });

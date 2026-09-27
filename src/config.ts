@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { envVar } from "./compat";
+import { listCatalog, resolveEnvProvider, resolveEnvProviderFields } from "./providers/catalog";
 
 export interface ConfigProvider {
   id: string;
@@ -10,6 +12,12 @@ export interface ConfigProvider {
   models: string[];
   enabled: boolean;
   weight?: number;
+  /**
+   * Explicit API flavor for this provider, e.g. 'anthropic', 'google',
+   * 'openai' (or 'openai-compatible'). Optional: when omitted the registry
+   * infers the adapter from the provider id/catalog entry or base URL.
+   */
+  apiType?: "anthropic" | "google" | "openai" | string;
 }
 
 export interface Config {
@@ -56,16 +64,27 @@ export function userHome(): string {
   return homedir();
 }
 
-export function configDir(): string {
-  if (process.env.SUNNY_CONFIG_DIR) return process.env.SUNNY_CONFIG_DIR;
+function configDirFor(name: string): string {
   const xdg = process.env.XDG_CONFIG_HOME;
   if (process.platform === "win32") {
-    return process.env.APPDATA
-      ? join(process.env.APPDATA, "sunny")
-      : join(homedir(), ".sunny");
+    return process.env.APPDATA ? join(process.env.APPDATA, name) : join(homedir(), `.${name}`);
   }
-  if (xdg) return join(xdg, "sunny");
-  return join(homedir(), ".config", "sunny");
+  if (xdg) return join(xdg, name);
+  return join(homedir(), ".config", name);
+}
+
+/**
+ * Global config directory. Resolution order:
+ *   1. NEUTRON_CONFIG_DIR, then legacy SUNNY_CONFIG_DIR
+ *   2. the NEUTRON directory if it exists (or if no legacy one exists)
+ *   3. the legacy "sunny" directory, so existing users keep their providers/keys
+ */
+export function configDir(): string {
+  const explicit = envVar("CONFIG_DIR");
+  if (explicit) return explicit;
+  const next = configDirFor("neutron");
+  const legacy = configDirFor("sunny");
+  return !existsSync(next) && existsSync(legacy) ? legacy : next;
 }
 
 export function globalConfigPath(): string {
@@ -76,10 +95,14 @@ export function providerEnv(prefix: string, id: string): ProviderResolved | unde
   const baseUrl = process.env[`${prefix}_BASE_URL`] || process.env[`${id.toUpperCase()}_BASE_URL`];
   const apiKey = process.env[`${prefix}_API_KEY`] || process.env[`${id.toUpperCase()}_API_KEY`];
   const models = process.env[`${prefix}_MODELS`] || process.env[`${id.toUpperCase()}_MODELS`];
-  if (!baseUrl) return undefined;
+  if (!baseUrl && !apiKey) return undefined;
+  // A key without an explicit base URL falls back to the known default, so
+  // `OPENAI_API_KEY=...` alone is enough to configure the provider.
+  const resolvedBase = baseUrl || knownBaseUrls[id];
+  if (!resolvedBase) return undefined;
   return {
     id,
-    baseUrl,
+    baseUrl: resolvedBase,
     apiKey,
     models: models ? models.split(",").map((m) => m.trim()).filter(Boolean) : [],
     enabled: true,
@@ -146,14 +169,90 @@ export function findFileProvider(id: string): ProviderResolved | undefined {
 
 export function readGlobalProviders(): ProviderResolved[] {
   const fromFile = readFileProviders();
+  const fileById = new Map(fromFile.map((p) => [p.id, p]));
 
-  // Environment variables are appended last so they override same-id file entries.
+  // Environment variables override config-file entries field by field: only
+  // fields actually set in the environment replace the file values, so e.g.
+  // setting AGENTROUTER_API_KEY alone keeps the file's base URL and models.
   const fromEnv: ProviderResolved[] = [];
-  for (const p of freeProviders) {
-    const env = providerEnv(p.env, p.id);
-    if (env) fromEnv.push(env);
+  const envIds = new Set<string>();
+
+  // 1. Every catalog provider (including agentrouter) can be configured from
+  //    the environment: <PREFIX>_API_KEY / <PREFIX>_BASE_URL / <PREFIX>_MODELS.
+  //    A key without a base URL falls back to the catalog default base URL.
+  for (const entry of listCatalog()) {
+    // "custom" has no default base URL; it is covered by the legacy "any"
+    // alias below, which requires an explicit base URL.
+    if (entry.id === "custom" || envIds.has(entry.id)) continue;
+    const fields = resolveEnvProviderFields(entry);
+    if (!fields.matched) continue;
+    envIds.add(entry.id);
+    const fileEntry = fileById.get(entry.id);
+    if (fileEntry && (fields.baseUrl || fields.apiKey || fields.models)) {
+      fromEnv.push({
+        ...fileEntry,
+        baseUrl: fields.baseUrl ?? fileEntry.baseUrl ?? entry.baseUrl,
+        ...(fields.apiKey !== undefined ? { apiKey: fields.apiKey } : {}),
+        ...(fields.models !== undefined ? { models: fields.models } : {}),
+        enabled: true,
+      });
+    } else {
+      const resolved = resolveEnvProvider(entry);
+      if (resolved) fromEnv.push(resolved);
+      else if (fileEntry) fromEnv.push(fileEntry);
+    }
   }
-  return [...fromFile, ...fromEnv];
+
+  // 2. Legacy aliases whose ids predate the catalog (e.g. ANY_* -> "any").
+  for (const p of freeProviders) {
+    if (envIds.has(p.id)) continue;
+    const env = providerEnv(p.env, p.id);
+    if (!env) continue;
+    envIds.add(p.id);
+    const fileEntry = fileById.get(p.id);
+    if (fileEntry) {
+      // Merge field by field: providerEnv() already applied the
+      // known-base-URL fallback for key-only configuration, and an explicit
+      // env base URL always beats the file one; unset env fields keep the
+      // file values (notably models).
+      const explicitBase = process.env[`${p.env}_BASE_URL`] || process.env[`${p.id.toUpperCase()}_BASE_URL`];
+      const explicitModels = process.env[`${p.env}_MODELS`] || process.env[`${p.id.toUpperCase()}_MODELS`];
+      fromEnv.push({
+        ...fileEntry,
+        // An explicit env base URL wins; otherwise the file's base URL is
+        // kept, and the known-base-URL fallback applies only when the file
+        // has none either.
+        baseUrl: explicitBase || fileEntry.baseUrl || env.baseUrl,
+        ...(env.apiKey !== undefined ? { apiKey: env.apiKey } : {}),
+        ...(explicitModels !== undefined
+          ? { models: explicitModels.split(",").map((m) => m.trim()).filter(Boolean) }
+          : {}),
+        enabled: true,
+      });
+    } else {
+      fromEnv.push(env);
+    }
+  }
+
+  // File entries not overridden from the environment are kept as-is.
+  const fileKept = fromFile.filter((p) => !envIds.has(p.id));
+  return [...fileKept, ...fromEnv];
+}
+
+/**
+ * Ids whose effective configuration came (at least partly) from the
+ * environment. Used for "source" reporting in diagnostics.
+ */
+export function envConfiguredIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of listCatalog()) {
+    if (entry.id === "custom") continue;
+    if (resolveEnvProviderFields(entry).matched) ids.add(entry.id);
+  }
+  for (const p of freeProviders) {
+    if (providerEnv(p.env, p.id)) ids.add(p.id);
+  }
+  return ids;
 }
 
 export function loadConfig(params?: { providers?: ProviderResolved[]; raw?: unknown }): ResolvedConfig {
@@ -276,7 +375,7 @@ export function ensureGlobalConfig(): { path: string; providers: ProviderResolve
 }
 
 export function docsUrl(): string {
-  return "https://github.com/sunny-ai/sunny-agent";
+  return "https://github.com/sunnymishraatf-lgtm/My-Agent";
 }
 
 export function defaultDesignDir(): string {
@@ -284,5 +383,5 @@ export function defaultDesignDir(): string {
 }
 
 export function defaultWorkspaceDir(): string {
-  return join(tmpdir(), "sunny-workspaces");
+  return join(tmpdir(), "neutron-workspaces");
 }

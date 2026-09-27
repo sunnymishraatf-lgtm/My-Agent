@@ -1,4 +1,4 @@
-export interface SunnyClientOptions {
+export interface NeutronClientOptions {
   baseUrl: string;
   username?: string;
   password?: string;
@@ -30,18 +30,18 @@ export interface HealthInfo {
   agents: string[];
 }
 
-/** Programmatic client for a running `sunny serve` instance. */
-export class SunnyClient {
+/** Programmatic client for a running `neutron serve` instance. */
+export class NeutronClient {
   private base: string;
   private headers: Record<string, string>;
   private fetchImpl: typeof fetch;
 
-  constructor(opts: SunnyClientOptions) {
+  constructor(opts: NeutronClientOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, "");
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.headers = { "content-type": "application/json" };
     if (opts.password) {
-      const token = Buffer.from(`${opts.username ?? "sunny"}:${opts.password}`).toString("base64");
+      const token = Buffer.from(`${opts.username ?? "neutron"}:${opts.password}`).toString("base64");
       this.headers.authorization = `Basic ${token}`;
     }
   }
@@ -81,6 +81,6 @@ export class SunnyClient {
   }
 }
 
-export function createClient(opts: SunnyClientOptions): SunnyClient {
-  return new SunnyClient(opts);
+export function createClient(opts: NeutronClientOptions): NeutronClient {
+  return new NeutronClient(opts);
 }

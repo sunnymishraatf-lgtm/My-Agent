@@ -3,11 +3,20 @@ import type { AgentContext, AgentResult, ReviewResult } from "./agent";
 import type { Task, Issue } from "../scheduler/task";
 import { writeProjectFile } from "../files/project-files";
 import { Terminal } from "../terminal/terminal";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { validateBuild, suggestedTestCommand, type BuildFailureReason } from "../neutron/test-runner";
 
 export interface TestRunReport {
   pass: number;
   fail: number;
   buildOk: boolean;
+  /** Why the build is not OK — "missing node_modules" vs "build failed" are distinct. */
+  buildReason?: BuildFailureReason;
+  /** The build command that was evaluated, if the project has any build setup. */
+  buildCommand?: string;
+  /** Set when the test run could not start at all (must be reported, not omitted). */
+  blocked?: string;
   stdout: string;
 }
 
@@ -44,17 +53,43 @@ export class QAAgent extends BaseAgent {
       });
     }
     if (tests.buildOk === false) {
-      issues.push({ severity: "critical", category: "build", title: "Build failed" });
+      // "missing node_modules" and "build failed" are separate failure reasons.
+      if (tests.buildReason === "missing-node-modules") {
+        issues.push({
+          severity: "high",
+          category: "build",
+          title: "Build blocked: node_modules not found",
+          detail: `The configured build (${tests.buildCommand ?? "npm run build"}) could not run because dependencies are not installed. Run 'npm install' first.`,
+          fixRecommendation: "npm install",
+        });
+      } else {
+        issues.push({
+          severity: "critical",
+          category: "build",
+          title: "Build failed",
+          detail: tests.stdout.slice(-2000),
+        });
+      }
+    }
+    if (tests.blocked) {
+      // A run that couldn't start is reported explicitly, never silently omitted.
+      issues.push({
+        severity: "medium",
+        category: "testing",
+        title: "Test run blocked",
+        detail: tests.blocked,
+      });
     }
 
+    const failed = tests.fail > 0 || tests.buildOk === false;
     return {
-      status: tests.fail === 0 && tests.buildOk !== false ? "success" : "failed",
-      summary: `Tests: ${tests.pass} passed, ${tests.fail} failed; build ${tests.buildOk ? "OK" : "FAILED"}`,
+      status: failed ? "failed" : tests.blocked ? "blocked" : "success",
+      summary: `Tests: ${tests.pass} passed, ${tests.fail} failed${tests.blocked ? " (BLOCKED)" : ""}; build ${buildStatusLabel(tests)}`,
       filesChanged: [file],
       commandsRun: tests.commands,
       testsRun: tests.commands.filter((c) => c.includes("test") || c.includes("build")),
       issues,
-      nextActions: tests.fail > 0 ? ["Fix failing tests (see issues)."] : [],
+      nextActions: tests.fail > 0 ? ["Fix failing tests (see issues)."] : tests.blocked ? ["Resolve the blocked test run (see issues)."] : [],
     };
   }
 
@@ -74,6 +109,9 @@ export class QAAgent extends BaseAgent {
     pass: number;
     fail: number;
     buildOk: boolean;
+    buildReason?: BuildFailureReason;
+    buildCommand?: string;
+    blocked?: string;
     stdout: string;
     commands: string[];
   }> {
@@ -83,34 +121,68 @@ export class QAAgent extends BaseAgent {
     let pass = 0;
     let fail = 0;
     let stdout = "";
-
-    if (hasPkg) {
-      commands.push("npm run build", "npm test -- --run");
-    }
+    let blocked: string | undefined;
 
     const term = new Terminal({ cwd: ctx.root, logger: undefined });
-    let buildOk = true;
-    for (const cmd of commands) {
+    const runCmd = async (cmd: string): Promise<{ ok: boolean; stdout: string }> => {
+      commands.push(cmd);
       const r = await term.run(cmd, { timeoutMs: 180_000 });
-      stdout += `$ ${cmd}\n${r.stdout}\n${r.stderr}\n`;
-      if (r.status !== "ok") buildOk = false;
+      const out = `$ ${cmd}\n${r.stdout}\n${r.stderr}\n`;
+      stdout += out;
       const counts = parseTestOutput(r.stdout);
       pass += counts.pass;
       fail += counts.fail;
+      return { ok: r.status === "ok", stdout: out };
+    };
+
+    // Build validity: configured build script when one exists, else tsc --noEmit
+    // for TypeScript projects; projects with no build setup at all count as valid.
+    const build = await validateBuild(ctx.root, runCmd);
+
+    if (hasPkg) {
+      if (existsSync(join(ctx.root, "node_modules"))) {
+        // Use the repo-aware suggested command (e.g. `npx vitest run ...` for
+        // vitest projects), falling back to `npm test -- --run` when nothing is suggested.
+        const suggested = suggestedTestCommand(ctx.root, []);
+        const testCmd = suggested || "npm test -- --run";
+        await runCmd(testCmd);
+      } else {
+        blocked = "node_modules not found — the test run could not start. Run 'npm install' first.";
+        stdout += `$ npm test -- --run\n[BLOCKED] ${blocked}\n`;
+      }
+    } else {
+      blocked = "no package.json found — no test command is configured; the test run could not start.";
+      stdout += `[BLOCKED] ${blocked}\n`;
     }
 
     const counts = parseTestOutput(stdout);
-    return { pass: counts.pass || pass, fail: counts.fail || fail, buildOk, stdout, commands };
+    return {
+      pass: counts.pass || pass,
+      fail: counts.fail || fail,
+      buildOk: build.ok,
+      buildReason: build.reason,
+      buildCommand: build.command,
+      blocked,
+      stdout,
+      commands,
+    };
   }
 }
 
-function buildTestReport(t: { pass: number; fail: number; buildOk: boolean; stdout: string }): string {
+export function buildStatusLabel(t: { buildOk: boolean; buildReason?: BuildFailureReason; buildCommand?: string }): string {
+  if (t.buildOk) return t.buildCommand ? `OK (${t.buildCommand})` : "OK (no build configured)";
+  if (t.buildReason === "missing-node-modules") return "BLOCKED (node_modules not found)";
+  return `FAILED${t.buildCommand ? ` (${t.buildCommand})` : ""}`;
+}
+
+export function buildTestReport(t: { pass: number; fail: number; buildOk: boolean; buildReason?: BuildFailureReason; buildCommand?: string; blocked?: string; stdout: string }): string {
   return [
     "# Test Results",
     "",
     `Passed: ${t.pass}`,
     `Failed: ${t.fail}`,
-    `Build: ${t.buildOk ? "OK" : "FAILED"}`,
+    `Build: ${buildStatusLabel(t)}`,
+    ...(t.blocked ? [`Tests: BLOCKED — ${t.blocked}`] : []),
     "",
     "## Output",
     "",

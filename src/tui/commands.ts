@@ -7,7 +7,7 @@ export interface TuiCommand {
 /**
  * The commands surfaced by the `/` autocomplete menu. Every entry maps to a
  * real handler in the TUI (see App.tsx) or to a custom command loaded from
- * `.sunny/commands/`.
+ * `.neutron/commands/`.
  */
 export const COMMANDS: TuiCommand[] = [
   { name: "agents", description: "Switch agent" },

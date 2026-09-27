@@ -293,6 +293,7 @@ export class ChatAgent {
       stream: false,
       depth: this.depth + 1,
       ...(this.model ? { model: this.model } : {}),
+      ...(this.provider ? { provider: this.provider } : {}),
       ...(this.approveTool ? { approveTool: this.approveTool } : {}),
     });
     const now = new Date().toISOString();
@@ -333,6 +334,9 @@ export class ChatAgent {
 
   private persistSnapshot(sessionId: string): void {
     if (!this.snapshots) return;
+    // A new turn invalidates redo history whether or not it changed files:
+    // the redo stack only makes sense for the exact undone state.
+    this.snapshots.clearRedo(sessionId);
     const files = this.turnFiles;
     if (Object.keys(files).length === 0) return;
     this.snapshots.push(sessionId, { ts: new Date().toISOString(), files });
@@ -396,7 +400,7 @@ export class ChatAgent {
   private systemPrompt(): string {
     const parts: string[] = [];
     parts.push(
-      "You are sunny, an interactive terminal coding assistant working directly in the user's project.",
+      "You are NEUTRON, an autonomous software maintenance intelligence system, working directly in the user's project through an interactive terminal.",
       "Be concise and practical. Make changes by calling tools, verify them, and report what you did.",
       "Never invent file contents or command output; always inspect first.",
       "Prefer small, targeted edits. Do not modify files outside the workspace.",
@@ -426,7 +430,7 @@ export class ChatAgent {
   }
 
   private readRules(): string | undefined {
-    const dirs = [join(this.root, ".sunny", "rules"), join(this.root, ".opencode", "rules")];
+    const dirs = [join(this.root, ".neutron", "rules"), join(this.root, ".sunny", "rules"), join(this.root, ".opencode", "rules")];
     const chunks: string[] = [];
     for (const dir of dirs) {
       if (!existsSync(dir)) continue;
@@ -448,7 +452,7 @@ export class ChatAgent {
   }
 
   private readInstructionsFile(): string | undefined {
-    for (const name of ["AGENTS.md", ".sunny/AGENTS.md", "CLAUDE.md"]) {
+    for (const name of ["AGENTS.md", ".neutron/AGENTS.md", ".sunny/AGENTS.md", "CLAUDE.md"]) {
       const p = join(this.root, name);
       if (!existsSync(p)) continue;
       try {
