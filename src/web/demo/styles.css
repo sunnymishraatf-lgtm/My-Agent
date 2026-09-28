@@ -1,19 +1,20 @@
 /* ==========================================================================
-   NEUTRON demo — RawBlock design system
-   Brutalist: black on white, thick borders, zero radius, zero shadow.
+   NEUTRON demo — RawBlock design system (dark theme)
+   Brutalist: white on black, thick borders, zero radius, zero shadow.
+   --ink is the foreground ink, --paper is the background.
    ========================================================================== */
 
 :root {
-  color-scheme: light;
-  --black: #000000;
-  --white: #ffffff;
-  --blue: #0000ff;
-  --green: #008000;
+  color-scheme: dark;
+  --ink: #ffffff;
+  --paper: #000000;
+  --blue: #5b8cff;
+  --green: #00e676;
   --orange: #ffa500;
-  --red: #ff0000;
-  --sunken: #f0f0f0;
-  --sunken-2: #e8e8e8;
-  --grey-border: #cccccc;
+  --red: #ff5252;
+  --sunken: #161616;
+  --sunken-2: #1e1e1e;
+  --grey-border: #3a3a3a;
   --headline: "Archivo Black", "Arial Black", sans-serif;
   --body: "Work Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -23,8 +24,8 @@
 
 body {
   margin: 0;
-  background: var(--white);
-  color: var(--black);
+  background: var(--paper);
+  color: var(--ink);
   font-family: var(--body);
   font-size: 16px;
   line-height: 1.6;
@@ -34,7 +35,7 @@ body {
 }
 
 .hidden { display: none !important; }
-.muted { color: #333; }
+.muted { color: #b3b3b3; }
 .small { font-size: 14px; line-height: 1.5; }
 .mono { font-family: var(--mono); }
 
@@ -45,8 +46,8 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 16px 24px;
-  border-bottom: 5px solid var(--black);
-  background: var(--white);
+  border-bottom: 5px solid var(--ink);
+  background: var(--paper);
   flex-wrap: wrap;
 }
 .brand .logo {
@@ -72,9 +73,9 @@ body {
   text-transform: uppercase;
   letter-spacing: 1px;
   padding: 2px 10px;
-  border: 2px solid var(--black);
-  background: var(--white);
-  color: var(--black);
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
   white-space: nowrap;
 }
 .pill.ok { border-color: var(--green); color: var(--green); }
@@ -83,7 +84,7 @@ body {
 .tagline {
   margin: 0;
   padding: 12px 24px;
-  border-bottom: 3px solid var(--black);
+  border-bottom: 3px solid var(--ink);
   font-family: var(--mono);
   font-size: 15px;
 }
@@ -96,8 +97,8 @@ body {
   padding: 24px;
 }
 .why-card {
-  background: var(--white);
-  border: 3px solid var(--black);
+  background: var(--paper);
+  border: 3px solid var(--ink);
   padding: 24px;
   display: flex;
   gap: 16px;
@@ -114,8 +115,8 @@ body {
 .notice {
   margin: 0 24px 16px;
   padding: 10px 12px;
-  border: 3px solid var(--black);
-  background: var(--white);
+  border: 3px solid var(--ink);
+  background: var(--paper);
   font-family: var(--mono);
   font-size: 15px;
 }
@@ -124,7 +125,7 @@ body {
   margin: 0 24px 16px;
   padding: 10px 12px;
   border: 3px solid var(--red);
-  background: var(--white);
+  background: var(--paper);
   color: var(--red);
   font-family: var(--mono);
   font-size: 15px;
@@ -143,8 +144,8 @@ body {
 .col { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
 
 .panel {
-  background: var(--white);
-  border: 3px solid var(--black);
+  background: var(--paper);
+  border: 3px solid var(--ink);
   padding: 24px;
 }
 .panel h2 {
@@ -172,8 +173,8 @@ body {
 .input {
   width: 100%;
   background: var(--sunken);
-  border: 3px solid var(--black);
-  color: var(--black);
+  border: 3px solid var(--ink);
+  color: var(--ink);
   padding: 10px 12px;
   font-size: 15px;
   font-family: var(--mono);
@@ -183,9 +184,9 @@ textarea.input { resize: vertical; min-height: 90px; }
 .input:focus { outline: none; border-width: 5px; }
 
 .btn {
-  background: var(--black);
-  color: var(--white);
-  border: 3px solid var(--black);
+  background: var(--ink);
+  color: var(--paper);
+  border: 3px solid var(--ink);
   padding: 10px 24px;
   min-height: 44px;
   cursor: pointer;
@@ -195,26 +196,26 @@ textarea.input { resize: vertical; min-height: 90px; }
   letter-spacing: 2px;
   text-transform: uppercase;
 }
-.btn:hover:not(:disabled) { background: var(--white); color: var(--black); }
+.btn:hover:not(:disabled) { background: var(--paper); color: var(--ink); }
 .btn:active:not(:disabled) { border-width: 5px; }
-.btn:disabled { background: var(--sunken); color: #777; border-color: var(--grey-border); cursor: default; }
-.btn.primary { background: var(--black); color: var(--white); }
-.btn.ghost { background: transparent; color: var(--black); }
-.btn.ghost:hover:not(:disabled) { background: var(--black); color: var(--white); }
+.btn:disabled { background: var(--sunken); color: #999; border-color: var(--grey-border); cursor: default; }
+.btn.primary { background: var(--ink); color: var(--paper); }
+.btn.ghost { background: transparent; color: var(--ink); }
+.btn.ghost:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
 .btn.danger-ghost {
   background: var(--red);
-  border-color: var(--black);
-  color: var(--white);
+  border-color: var(--ink);
+  color: var(--paper);
 }
-.btn.danger-ghost:hover:not(:disabled) { background: var(--black); color: var(--red); }
+.btn.danger-ghost:hover:not(:disabled) { background: var(--ink); color: var(--red); }
 
 .row { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
-.divider { border-top: 3px solid var(--black); margin: 16px 0; }
+.divider { border-top: 3px solid var(--ink); margin: 16px 0; }
 
 .repo-card {
-  border: 3px solid var(--black);
+  border: 3px solid var(--ink);
   padding: 16px;
-  background: var(--white);
+  background: var(--paper);
 }
 .repo-name {
   font-family: var(--headline);
@@ -227,8 +228,8 @@ textarea.input { resize: vertical; min-height: 90px; }
   font-weight: 600;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: var(--black);
-  border: 2px solid var(--black);
+  color: var(--ink);
+  border: 2px solid var(--ink);
   padding: 4px 12px;
   margin-left: 8px;
   vertical-align: middle;
@@ -247,21 +248,21 @@ textarea.input { resize: vertical; min-height: 90px; }
   gap: 12px;
   align-items: flex-start;
   padding: 12px 0;
-  border-bottom: 3px solid var(--black);
+  border-bottom: 3px solid var(--ink);
 }
 .stage:last-child { border-bottom: none; }
 .stage .icon { width: 24px; text-align: center; flex-shrink: 0; font-family: var(--mono); font-weight: 700; }
 .stage .s-label { font-size: 16px; font-weight: 600; }
 .stage .s-detail { font-size: 14px; font-family: var(--mono); }
-.stage[data-status="running"] { background: var(--black); color: var(--white); padding-left: 8px; padding-right: 8px; }
-.stage[data-status="running"] .s-detail { color: var(--white); }
+.stage[data-status="running"] { background: var(--ink); color: var(--paper); padding-left: 8px; padding-right: 8px; }
+.stage[data-status="running"] .s-detail { color: var(--paper); }
 .stage[data-status="completed"] .icon { color: var(--green); }
 .stage[data-status="failed"] .icon { color: var(--red); }
 .stage[data-status="failed"] { border: 3px solid var(--red); padding-left: 8px; padding-right: 8px; }
 
 /* ---- key/value, chips, tables ---- */
 .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
-.kv { background: var(--white); border: 3px solid var(--black); padding: 8px 10px; }
+.kv { background: var(--paper); border: 3px solid var(--ink); padding: 8px 10px; }
 .kv .k { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
 .kv .v { font-family: var(--headline); font-size: 28px; margin-top: 2px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -270,8 +271,8 @@ textarea.input { resize: vertical; min-height: 90px; }
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 1px;
-  background: var(--white);
-  border: 2px solid var(--black);
+  background: var(--paper);
+  border: 2px solid var(--ink);
   padding: 4px 12px;
 }
 .list { margin: 6px 0; padding-left: 20px; font-size: 16px; }
@@ -279,16 +280,16 @@ textarea.input { resize: vertical; min-height: 90px; }
 .list.warn li { color: var(--orange); font-weight: 600; }
 .table-wrap { overflow-x: auto; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 14px; font-family: var(--mono); }
-.tbl th, .tbl td { text-align: left; padding: 8px 10px; border: 3px solid var(--black); }
-.tbl th { font-family: var(--headline); font-size: 13px; text-transform: uppercase; background: var(--black); color: var(--white); }
+.tbl th, .tbl td { text-align: left; padding: 8px 10px; border: 3px solid var(--ink); }
+.tbl th { font-family: var(--headline); font-size: 13px; text-transform: uppercase; background: var(--ink); color: var(--paper); }
 .impact-high, .impact-critical { color: var(--red); font-weight: 700; }
 .impact-medium { color: var(--orange); font-weight: 700; }
-.impact-low { color: var(--black); }
+.impact-low { color: var(--ink); }
 
 .plan-tasks { margin: 8px 0; padding-left: 24px; font-size: 16px; }
 .plan-tasks li { margin-bottom: 12px; }
 .plan-tasks .t-meta { display: block; font-size: 14px; font-family: var(--mono); }
-.gate { border-top: 3px solid var(--black); padding-top: 16px; }
+.gate { border-top: 3px solid var(--ink); padding-top: 16px; }
 
 /* ---- activity log ---- */
 .activity { position: sticky; top: 16px; }
@@ -301,8 +302,8 @@ textarea.input { resize: vertical; min-height: 90px; }
   font-size: 14px;
 }
 .event {
-  background: var(--white);
-  border: 3px solid var(--black);
+  background: var(--paper);
+  border: 3px solid var(--ink);
   padding: 8px 12px;
   font-family: var(--mono);
 }
@@ -318,7 +319,7 @@ textarea.input { resize: vertical; min-height: 90px; }
 
 /* ---- results ---- */
 .result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
-.result-card { background: var(--white); border: 3px solid var(--black); padding: 16px; }
+.result-card { background: var(--paper); border: 3px solid var(--ink); padding: 16px; }
 .result-card h3 { margin: 0 0 8px; font-size: 16px; }
 .result-card .ok { color: var(--green); font-weight: 700; }
 .result-card .bad { color: var(--red); font-weight: 700; }
@@ -326,7 +327,7 @@ textarea.input { resize: vertical; min-height: 90px; }
 .warn-t { color: var(--orange); font-weight: 700; }
 pre.stdout {
   background: var(--sunken);
-  border: 3px solid var(--black);
+  border: 3px solid var(--ink);
   padding: 10px;
   font-size: 13px;
   font-family: var(--mono);
@@ -338,7 +339,7 @@ pre.stdout {
 
 /* ---- footer ---- */
 .footer {
-  border-top: 5px solid var(--black);
+  border-top: 5px solid var(--ink);
   padding: 16px 24px;
   display: flex;
   justify-content: space-between;
