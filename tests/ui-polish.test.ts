@@ -147,3 +147,37 @@ describe("fetchWithTimeout", () => {
     await assertion;
   });
 });
+
+describe("stripAttachmentData", () => {
+  const { stripAttachmentData } = uiUtils;
+
+  it("replaces attachment base64 with a placeholder", () => {
+    const body = {
+      messages: [{ role: "user", content: "hi" }],
+      attachments: [
+        { name: "a.png", mime: "image/png", kind: "image", data: "x".repeat(100), size: 75 },
+      ],
+    };
+    const out: any = stripAttachmentData(body);
+    expect(out.attachments[0].data).toBe("[base64 omitted (100 chars)]");
+    expect(out.attachments[0].name).toBe("a.png");
+    expect(out.messages[0].content).toBe("hi");
+  });
+
+  it("does not mutate the input", () => {
+    const body = { attachments: [{ name: "a", kind: "image", data: "xyz" }] };
+    stripAttachmentData(body);
+    expect((body.attachments[0] as any).data).toBe("xyz");
+  });
+
+  it("leaves non-attachment data fields alone", () => {
+    const body = { data: "short", nested: { data: "also-short" } };
+    expect(stripAttachmentData(body)).toEqual(body);
+  });
+
+  it("handles arrays, nulls, and primitives", () => {
+    expect(stripAttachmentData([1, null, "s"])).toEqual([1, null, "s"]);
+    expect(stripAttachmentData(null)).toBe(null);
+    expect(stripAttachmentData(42)).toBe(42);
+  });
+});

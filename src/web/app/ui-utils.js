@@ -97,11 +97,35 @@
     );
   }
 
+  /**
+   * Deep-copy a JSON-safe value, replacing attachment base64 `data` with a
+   * short placeholder so API inspector logs stay readable (and small).
+   * Only objects shaped like attachments ({kind, data}) are touched.
+   */
+  function stripAttachmentData(value) {
+    if (Array.isArray(value)) return value.map(stripAttachmentData);
+    if (value && typeof value === "object") {
+      var isAttachment = typeof value.kind === "string" && typeof value.data === "string";
+      var out = {};
+      for (var k in value) {
+        if (!Object.prototype.hasOwnProperty.call(value, k)) continue;
+        if (k === "data" && isAttachment) {
+          out[k] = "[base64 omitted (" + value.data.length + " chars)]";
+        } else {
+          out[k] = stripAttachmentData(value[k]);
+        }
+      }
+      return out;
+    }
+    return value;
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
     cappedSlice: cappedSlice,
     shouldRefreshPill: shouldRefreshPill,
     fetchWithTimeout: fetchWithTimeout,
+    stripAttachmentData: stripAttachmentData,
   };
 });

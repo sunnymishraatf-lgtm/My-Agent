@@ -130,7 +130,13 @@ async function api(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
 
   var entry = { method: method, path: path, url: url, ts: new Date().toISOString(), status: 0, ms: 0 };
-  if (body !== undefined) entry.request = redactSecrets(JSON.stringify(body)).slice(0, 4000);
+  if (body !== undefined) {
+    /* Strip base64 attachment blobs before logging — the inspector shows
+       name/mime/kind/size, not megabytes of noise. */
+    var NU = window.NeutronUI;
+    var logBody = (NU && NU.stripAttachmentData) ? NU.stripAttachmentData(body) : body;
+    entry.request = redactSecrets(JSON.stringify(logBody)).slice(0, 4000);
+  }
 
   function finish() {
     entry.ms = Date.now() - t0;

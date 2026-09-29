@@ -25,3 +25,5 @@ export declare function fetchWithTimeout(
   ms: number,
   deps?: any
 ): Promise<any>;
+
+export declare function stripAttachmentData<T>(value: T): T;
