@@ -143,4 +143,46 @@ describe("relay rooms", () => {
     await waitFor(() => bMsgs.some((x) => x.type === "CHAT_DELETED" && x.id === id));
     a.leave(); b.leave();
   });
+
+  it("voice presence is advertised and signals route to the addressed member", async () => {
+    const code = relay.generateCode();
+    const aMsgs: any[] = [];
+    const bMsgs: any[] = [];
+    const a = relay.joinRelay(code, "Alice", { onMessage: (m: any) => aMsgs.push(m), onConn: () => {} });
+    const b = relay.joinRelay(code, "Bob", { onMessage: (m: any) => bMsgs.push(m), onConn: () => {} });
+    await waitFor(() => bMsgs.some((x) => x.type === "MEMBERS" && x.members.length === 2));
+
+    // Alice joins voice: Bob's roster should show voice:true for her.
+    a.setVoice(true);
+    await waitFor(() => {
+      const m = bMsgs.filter((x) => x.type === "MEMBERS").pop();
+      const alice = m && m.members.find((x: any) => x.displayName === "Alice");
+      return alice && alice.voice === true;
+    });
+
+    // Sealed signaling reaches only the addressed member.
+    const bMemberId = b.memberId;
+    a.sendSignal(bMemberId, { sdp: { type: "offer", sdp: "fake" } });
+    await waitFor(() => bMsgs.some((x) => x.type === "VOICE_SIGNAL"));
+    const sig = bMsgs.filter((x) => x.type === "VOICE_SIGNAL").pop();
+    expect(sig.from).toBe(a.memberId);
+    expect(sig.data.sdp.type).toBe("offer");
+    // Alice must NOT receive her own signal.
+    expect(aMsgs.some((x) => x.type === "VOICE_SIGNAL")).toBe(false);
+
+    // Leaving voice clears the flag.
+    a.setVoice(false);
+    await waitFor(() => {
+      const m = bMsgs.filter((x) => x.type === "MEMBERS").pop();
+      const alice = m && m.members.find((x: any) => x.displayName === "Alice");
+      return alice && alice.voice === false;
+    });
+
+    // The wire still carries only ciphertext.
+    for (const w of broker.wire) {
+      const asText = new TextDecoder().decode(w.payload);
+      expect(asText).not.toContain("fake");
+    }
+    a.leave(); b.leave();
+  });
 });

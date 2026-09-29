@@ -37,6 +37,7 @@
       ws: null,
       relay: null,       // NeutronRelay session when on serverless (no Node server)
       relayMode: false,  // true when this room runs over the MQTT relay
+      rvoice: null,      // relay voice-call state (serverless WebRTC), see rvInit()
       joined: false,
       conn: "idle", // idle|connecting|connected|reconnecting|failed
       memberId: null,
@@ -144,6 +145,7 @@
   }
 
   function leaveRelay() {
+    try { rvLeave(); } catch (e) {}
     if (S.relay) {
       try { S.relay.leave(); } catch (e) {}
       S.relay = null;
@@ -353,6 +355,10 @@
       case "MEMBERS":
         S.members = Array.isArray(msg.members) ? msg.members : [];
         paintMembers();
+        if (S.relayMode) {
+          rvSyncPeers();
+          rvPaintBar();
+        }
         break;
       case "CHAT_MESSAGE":
         if (msg.msg) {
@@ -426,6 +432,10 @@
         break;
       case "VERSION_TEXT":
         if (msg.fileId) renderVersionPreview(msg.fileId, msg.ts, msg.text || "");
+        break;
+      case "VOICE_SIGNAL":
+        // Serverless voice signaling (sealed relay message from a peer).
+        if (S.relayMode && msg.from && msg.data) rvOnSignal(msg.from, msg.data);
         break;
       case "VOICE_MEMBERS":
         onVoiceMembers(msg.members, false);
@@ -1025,7 +1035,7 @@
     view.appendChild(el("p", "muted", "Real-time collaboration rooms. Create one, share the code, and chat live."));
     view.appendChild(el("p", "muted small",
       "Relay mode: chat and presence are live and end-to-end encrypted — no server needed. " +
-      "Shared files, voice calls, and room AI need the Node server."));
+      "Shared files and room AI need the Node server."));
     var grid = el("div", "rm-grid");
     /* create */
     var create = el("div", "panel");
@@ -1212,6 +1222,10 @@
     head.appendChild(leaveBtn);
     view.appendChild(head);
 
+    /* Serverless voice calls (WebRTC over the encrypted relay). */
+    rvInit();
+    rvRenderBar(view);
+
     /* Name gate: ask once, remember per room. */
     if (!S.displayName) {
       renderNameGate(view);
@@ -1270,9 +1284,9 @@
     view.appendChild(body);
 
     view.appendChild(el("p", "muted small",
-      "Relay rooms: live chat, presence, and typing are end-to-end encrypted. " +
+      "Relay rooms: live chat, presence, typing, and voice calls are end-to-end encrypted. " +
       "Message history isn't stored — you see what happens while you're here. " +
-      "Shared files, voice calls, and room AI need the Node server."));
+      "Shared files and room AI need the Node server."));
 
     form.addEventListener("submit", function (ev) {
       ev.preventDefault();
@@ -1296,6 +1310,242 @@
     paintChat(false);
     paintActivity();
     joinRelaySession();
+  }
+
+  /* ---------- relay voice calls (serverless) ----------
+   * WebRTC audio over the encrypted MQTT relay: presence advertises who is
+   * in the call, SDP/ICE are exchanged as sealed relay messages, and audio
+   * flows peer-to-peer (mesh). No server, no accounts.
+   * Honest limits: STUN only (no TURN) — most home/office networks and
+   * hotspots connect fine, but symmetric NATs may fail. Best effort. */
+
+  var RV_STUN = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ];
+
+  function rvInit() {
+    if (!S.rvoice) {
+      S.rvoice = { inVoice: false, muted: false, joining: false, mic: null, pcs: {}, err: "" };
+    }
+    return S.rvoice;
+  }
+
+  function rvVoiceMembers() {
+    return (S.members || []).filter(function (m) { return m.id !== S.memberId && m.voice; });
+  }
+
+  function rvRenderBar(view) {
+    var bar = el("div", "rv-bar panel");
+    bar.id = "rv-bar";
+    view.appendChild(bar);
+    rvPaintBar();
+  }
+
+  function rvPaintBar() {
+    var bar = document.getElementById("rv-bar");
+    if (!bar) return;
+    var st = rvInit();
+    bar.innerHTML = "";
+    var title = el("span", "rv-title", "🎙️ Voice");
+    bar.appendChild(title);
+    if (!st.inVoice) {
+      var join = el("button", "btn sm primary", "Join voice call");
+      join.onclick = function () { rvJoin(); };
+      bar.appendChild(join);
+      bar.appendChild(el("span", "muted small", "Talk with room members — no server needed."));
+    } else {
+      var mute = el("button", "btn sm", st.muted ? "🔈 Unmute" : "🔇 Mute");
+      mute.onclick = function () { rvToggleMute(); };
+      bar.appendChild(mute);
+      var leave = el("button", "btn sm ghost", "Leave call");
+      leave.onclick = function () { rvLeave(); };
+      bar.appendChild(leave);
+    }
+    if (st.err) bar.appendChild(el("span", "rv-err", st.err));
+    var chips = el("span", "rv-chips");
+    var inCall = [{ id: S.memberId, displayName: S.displayName || "You", self: true }]
+      .concat(rvVoiceMembers().map(function (m) { return { id: m.id, displayName: m.displayName }; }));
+    if (st.inVoice || inCall.length > 1) {
+      inCall.forEach(function (m) {
+        var c = el("span", "rv-chip" + (m.self ? " self" : ""), (m.self ? "You" : m.displayName) + " 🎙️");
+        chips.appendChild(c);
+      });
+    }
+    bar.appendChild(chips);
+  }
+
+  function rvJoin() {
+    var st = rvInit();
+    if (st.inVoice || st.joining) return;
+    if (typeof RTCPeerConnection === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      st.err = "Voice calls aren't supported in this browser.";
+      rvPaintBar();
+      return;
+    }
+    if (!S.relay) {
+      st.err = "Not connected to the relay yet.";
+      rvPaintBar();
+      return;
+    }
+    st.joining = true;
+    st.err = "";
+    rvPaintBar();
+    navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+      .then(function (stream) {
+        st.joining = false;
+        st.mic = stream;
+        st.inVoice = true;
+        st.muted = false;
+        try { S.relay.setVoice(true); } catch (e) {}
+        rvSyncPeers();
+        rvPaintBar();
+        if (typeof announce === "function") announce("Joined the voice call.");
+      })
+      .catch(function (e) {
+        st.joining = false;
+        st.err = (e && e.name === "NotAllowedError")
+          ? "Microphone permission denied — allow it to join the call."
+          : "Couldn't open the microphone.";
+        rvPaintBar();
+      });
+  }
+
+  function rvLeave() {
+    var st = rvInit();
+    Object.keys(st.pcs).forEach(function (id) { rvDropPeer(id); });
+    if (st.mic) {
+      try { st.mic.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      st.mic = null;
+    }
+    st.inVoice = false;
+    st.muted = false;
+    st.err = "";
+    try { if (S.relay) S.relay.setVoice(false); } catch (e) {}
+    rvPaintBar();
+  }
+
+  function rvToggleMute() {
+    var st = rvInit();
+    if (!st.mic) return;
+    st.muted = !st.muted;
+    try {
+      st.mic.getAudioTracks().forEach(function (t) { t.enabled = !st.muted; });
+    } catch (e) {}
+    rvPaintBar();
+  }
+
+  function rvSyncPeers() {
+    var st = rvInit();
+    if (!st.inVoice) return;
+    var want = {};
+    rvVoiceMembers().forEach(function (m) {
+      want[m.id] = true;
+      // Deterministic initiator (avoids offer glare): the member with the
+      // lexicographically larger id calls the smaller one.
+      if (m.id < S.memberId && !st.pcs[m.id]) rvCall(m.id);
+    });
+    Object.keys(st.pcs).forEach(function (id) {
+      if (!want[id]) rvDropPeer(id);
+    });
+    rvPaintBar();
+  }
+
+  function rvWirePc(peerId, pc) {
+    var st = rvInit();
+    pc.onicecandidate = function (ev) {
+      if (ev.candidate && S.relay) {
+        try { S.relay.sendSignal(peerId, { ice: ev.candidate }); } catch (e) {}
+      }
+    };
+    pc.ontrack = function (ev) {
+      var stream = ev.streams && ev.streams[0];
+      if (!stream) return;
+      var entry = st.pcs[peerId];
+      if (!entry) return;
+      if (entry.audio) { try { entry.audio.srcObject = stream; } catch (e) {} return; }
+      var audio = document.createElement("audio");
+      audio.autoplay = true;
+      try { audio.playsInline = true; } catch (e) {}
+      audio.srcObject = stream;
+      audio.className = "rv-audio";
+      document.body.appendChild(audio);
+      entry.audio = audio;
+      // Some browsers need a play() nudge after a user gesture already happened.
+      try { var pr = audio.play(); if (pr && pr.catch) pr.catch(function () {}); } catch (e) {}
+    };
+    pc.onconnectionstatechange = function () {
+      rvPaintBar();
+    };
+  }
+
+  function rvAddMic(pc) {
+    var st = rvInit();
+    if (st.mic) {
+      st.mic.getAudioTracks().forEach(function (t) {
+        try { pc.addTrack(t, st.mic); } catch (e) {}
+      });
+    }
+  }
+
+  function rvCall(peerId) {
+    var st = rvInit();
+    if (!st.inVoice || st.pcs[peerId] || !S.relay) return;
+    var pc;
+    try {
+      pc = new RTCPeerConnection({ iceServers: RV_STUN });
+    } catch (e) { return; }
+    st.pcs[peerId] = { pc: pc, audio: null };
+    rvWirePc(peerId, pc);
+    rvAddMic(pc);
+    pc.createOffer()
+      .then(function (offer) { return pc.setLocalDescription(offer); })
+      .then(function () {
+        if (S.relay) S.relay.sendSignal(peerId, { sdp: pc.localDescription });
+      })
+      .catch(function () { rvDropPeer(peerId); });
+  }
+
+  function rvOnSignal(from, data) {
+    var st = rvInit();
+    if (!st.inVoice || !data || !S.relay) return;
+    var entry = st.pcs[from];
+    if (data.sdp) {
+      if (data.sdp.type === "offer") {
+        // Answer path: only answer if we didn't already start (glare guard
+        // means the other side shouldn't offer, but be safe).
+        if (entry) rvDropPeer(from);
+        var pc;
+        try {
+          pc = new RTCPeerConnection({ iceServers: RV_STUN });
+        } catch (e) { return; }
+        st.pcs[from] = { pc: pc, audio: null };
+        rvWirePc(from, pc);
+        rvAddMic(pc);
+        pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
+          .then(function () { return pc.createAnswer(); })
+          .then(function (answer) { return pc.setLocalDescription(answer); })
+          .then(function () { S.relay.sendSignal(from, { sdp: pc.localDescription }); })
+          .catch(function () { rvDropPeer(from); });
+      } else if (data.sdp.type === "answer" && entry) {
+        entry.pc.setRemoteDescription(new RTCSessionDescription(data.sdp)).catch(function () {});
+      }
+    } else if (data.ice && entry) {
+      try {
+        entry.pc.addIceCandidate(new RTCIceCandidate(data.ice)).catch(function () {});
+      } catch (e) {}
+    }
+  }
+
+  function rvDropPeer(peerId) {
+    var st = rvInit();
+    var entry = st.pcs[peerId];
+    if (!entry) return;
+    delete st.pcs[peerId];
+    try { entry.pc.close(); } catch (e) {}
+    if (entry.audio && entry.audio.parentNode) {
+      try { entry.audio.parentNode.removeChild(entry.audio); } catch (e) {}
+    }
   }
 
   function renderList(view, pendingCode) {

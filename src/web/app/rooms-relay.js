@@ -105,6 +105,7 @@
     var timers = [];
     var left = false;
     var brokerIdx = 0;
+    var voiceOn = false; // our voice-call participation, advertised in presence
 
     function emit(obj) { if (hooks.onMessage) { try { hooks.onMessage(obj); } catch (e) {} } }
     function conn(s) { if (hooks.onConn) { try { hooks.onConn(s); } catch (e) {} } }
@@ -114,7 +115,7 @@
       return Object.keys(roster).map(function (id) { return roster[id]; })
         .sort(function (a, b) { return a.joinedAt - b.joinedAt; })
         .map(function (m) {
-          return { id: m.id, displayName: m.displayName, role: "member", status: m.status, activity: m.activity || "" };
+          return { id: m.id, displayName: m.displayName, role: "member", status: m.status, activity: m.activity || "", voice: !!m.voice };
         });
     }
     function emitMembers() { emit({ type: "MEMBERS", members: membersList() }); }
@@ -147,6 +148,7 @@
           displayName: String(p.displayName || "Someone").slice(0, 32) || "Someone",
           status: p.status === "away" ? "away" : "online",
           activity: String(p.activity || "").slice(0, 80),
+          voice: !!p.voice,
           joinedAt: roster[pid] ? roster[pid].joinedAt : (p.ts || Date.now()),
           lastBeat: Date.now(),
         };
@@ -162,6 +164,14 @@
         open(aesKey, td(payload)).then(function (obj) {
           if (!obj || left) return;
           if (rel === "c") {
+            if (obj.kind === "vsig") {
+              // WebRTC signaling for serverless voice calls: only the
+              // addressed member processes it.
+              if (obj.to === memberId && obj.from && obj.data) {
+                emit({ type: "VOICE_SIGNAL", from: obj.from, data: obj.data });
+              }
+              return;
+            }
             if (obj.kind === "del") {
               if (typeof obj.id === "string" && obj.id) emit({ type: "CHAT_DELETED", id: obj.id });
               return;
@@ -186,7 +196,7 @@
 
     function publishPresence() {
       if (!mqtt || !aesKey || !base || left) return Promise.resolve();
-      return seal(aesKey, { id: memberId, displayName: name, status: "online", activity: "", ts: Date.now() })
+      return seal(aesKey, { id: memberId, displayName: name, status: "online", activity: "", voice: !!voiceOn, ts: Date.now() })
         .then(function (s) { mqtt.publish(base + "/p/" + memberId, te(s), true); });
     }
 
@@ -285,6 +295,18 @@
         // Apply locally now; the relay echo deletes it for everyone else.
         emit({ type: "CHAT_DELETED", id: id });
         seal(aesKey, { kind: "del", id: id, memberId: memberId })
+          .then(function (s) { if (!left && mqtt) mqtt.publish(base + "/c", te(s), false); });
+        return true;
+      },
+      /** Advertise voice-call participation (republished in presence). */
+      setVoice: function (on) {
+        voiceOn = !!on;
+        publishPresence();
+      },
+      /** Sealed WebRTC signaling to one member (serverless voice calls). */
+      sendSignal: function (to, data) {
+        if (!mqtt || !aesKey || !base || left || !to || !data) return false;
+        seal(aesKey, { kind: "vsig", id: randomId("v"), from: memberId, to: String(to), data: data })
           .then(function (s) { if (!left && mqtt) mqtt.publish(base + "/c", te(s), false); });
         return true;
       },
