@@ -170,9 +170,9 @@ describe("NVIDIA catalog wiring", () => {
 
   it("suggests verified NVIDIA-hosted model ids (BYOK-compatible)", () => {
     const models = defaultModelsFor("nvidia");
-    expect(models).toContain("nvidia/nemotron-3-ultra-550b-a55b");
-    expect(models).toContain("nvidia/nemotron-3.5-lightning-30b-a3b");
-    expect(models).toContain("nvidia/nemotron-3-super-120b-a12b");
+    expect(models).toContain("nvidia/llama-3.3-nemotron-super-49b-v1");
+    expect(models).toContain("meta/llama-3.1-70b-instruct");
+    expect(models).toContain("meta/llama-3.3-70b-instruct");
   });
 
   it("exposes no default provider constant", () => {
@@ -376,7 +376,7 @@ describe("/api/chat on the Node server", () => {
     expect("defaultProvider" in json).toBe(false);
     for (const p of json.providers as any[]) expect("isDefault" in p).toBe(false);
     const nvidia = (json.providers as any[]).find((p) => p.id === "nvidia");
-    expect(nvidia.defaultModels).toContain("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(nvidia.defaultModels).toContain("nvidia/llama-3.3-nemotron-super-49b-v1");
     const openrouter = (json.providers as any[]).find((p) => p.id === "openrouter");
     expect(openrouter.defaultModels).toContain("nousresearch/hermes-4-405b");
     // No secrets in the catalog response.

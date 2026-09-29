@@ -1087,6 +1087,22 @@ async function renderSettings(view) {
   }
   provSel.onchange = persistChoice;
   modelSel.onchange = function () { modelCustom.value = ""; persistChoice(); };
+  /* Auto-save the custom model as it is typed (debounced) so it can never
+     be silently dropped — the STATUS line below always shows the truth. */
+  var modelSaveT = null;
+  modelCustom.oninput = function () {
+    if (modelSaveT) clearTimeout(modelSaveT);
+    modelSaveT = setTimeout(function () {
+      setStoredModel(modelCustom.value.trim() || modelSel.value);
+      paintModelStatus();
+      clearError();
+    }, 600);
+  };
+  modelCustom.onblur = function () {
+    if (modelSaveT) { clearTimeout(modelSaveT); modelSaveT = null; }
+    setStoredModel(modelCustom.value.trim() || modelSel.value);
+    paintModelStatus();
+  };
   var modelSave = el("button", "btn primary", "Save provider & model");
   modelSave.onclick = persistChoice;
   var mrow = el("div", "row");
