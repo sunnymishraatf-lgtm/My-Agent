@@ -1202,6 +1202,37 @@
     return { added: added, removed: removed };
   }
 
+  /**
+   * Build the model <select> options for the Settings provider/model picker.
+   * Pure — the DOM wiring lives in app.js so this stays unit-testable.
+   *
+   * defs: provider's defaultModels array (may be missing/empty).
+   * customValue: raw text in the custom-model input (trimmed here).
+   * storedModel: the persisted model choice (trimmed here).
+   *
+   * Returns { options: [{value, label}], selected } where:
+   *  - options always starts with "Auto (provider default)".
+   *  - a stored model absent from defs is kept as a visible "(saved)"
+   *    option so switching providers never silently discards the choice.
+   *  - selected is "" (Auto) when a custom id is typed, otherwise the
+   *    stored model — including the "(saved)" entry when present.
+   */
+  function buildModelOptions(defs, customValue, storedModel) {
+    var list = Array.isArray(defs) ? defs.slice() : [];
+    var custom = String(customValue == null ? "" : customValue).trim();
+    var stored = String(storedModel == null ? "" : storedModel).trim();
+    var options = [{ value: "", label: "Auto (provider default)" }];
+    list.forEach(function (m) {
+      var v = String(m == null ? "" : m);
+      options.push({ value: v, label: v });
+    });
+    if (stored && list.indexOf(stored) === -1) {
+      options.push({ value: stored, label: stored + "  (saved)" });
+    }
+    var selected = custom ? "" : stored;
+    return { options: options, selected: selected };
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -1271,5 +1302,7 @@
     parseRoomEditBlocks: parseRoomEditBlocks,
     diffLineBlocks: diffLineBlocks,
     diffLineStats: diffLineStats,
+    /* settings model picker */
+    buildModelOptions: buildModelOptions,
   };
 });

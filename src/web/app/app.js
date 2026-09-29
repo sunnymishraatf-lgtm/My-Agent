@@ -2663,26 +2663,21 @@ async function renderSettings(view) {
 
   function paintModels() {
     var pr = byId[provSel.value];
-    var defs = (pr && Array.isArray(pr.defaultModels) ? pr.defaultModels : []).slice();
-    var cur = modelCustom.value.trim() || storedModel();
+    var UI2 = window.NeutronUI;
+    /* Pure, unit-tested option builder: a stored model missing from the new
+       provider's list stays visible as a "(saved)" option AND stays selected,
+       so switching providers never silently discards the user's choice. */
+    var built = (UI2 && UI2.buildModelOptions)
+      ? UI2.buildModelOptions(pr && pr.defaultModels, modelCustom.value, storedModel())
+      : { options: [{ value: "", label: "Auto (provider default)" }], selected: "" };
     while (modelSel.firstChild) modelSel.removeChild(modelSel.firstChild);
-    var auto = document.createElement("option");
-    auto.value = "";
-    auto.textContent = "Auto (provider default)";
-    modelSel.appendChild(auto);
-    defs.forEach(function (m) {
-      var o = document.createElement("option");
-      o.value = m;
-      o.textContent = m;
-      modelSel.appendChild(o);
+    built.options.forEach(function (o) {
+      var opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.label;
+      modelSel.appendChild(opt);
     });
-    if (cur && defs.indexOf(cur) === -1 && !modelCustom.value.trim()) {
-      var o2 = document.createElement("option");
-      o2.value = cur;
-      o2.textContent = cur + "  (saved)";
-      modelSel.appendChild(o2);
-    }
-    modelSel.value = modelCustom.value.trim() ? "" : (defs.indexOf(cur) !== -1 ? cur : "");
+    modelSel.value = built.selected;
   }
   paintModels();
   pp.appendChild(field("MODEL", modelSel));

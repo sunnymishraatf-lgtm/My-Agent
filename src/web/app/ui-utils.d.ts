@@ -237,3 +237,14 @@ export declare function diffLineStats(
   oldText: string | null | undefined,
   newText: string | null | undefined
 ): { added: number; removed: number };
+
+export interface ModelOption {
+  value: string;
+  label: string;
+}
+
+export declare function buildModelOptions(
+  defs: unknown,
+  customValue: unknown,
+  storedModel: unknown
+): { options: ModelOption[]; selected: string };
