@@ -10,6 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { WebSocket } from "ws";
+import * as Y from "yjs";
 import { RoomManager } from "../src/server/collab/room-manager";
 import { CollabServer, TokenBucket } from "../src/server/collab/collab-server";
 import { startServer, roomCreateRateLimited, resetRoomCreateRateLimit, ROOM_CREATE_LIMIT } from "../src/server/server";
@@ -343,6 +344,62 @@ describe("room creation rate limit", () => {
     } finally {
       await running.close();
       resetRoomCreateRateLimit();
+    }
+  });
+});
+
+describe("oversized file open", () => {
+  it("refuses the Yjs handshake with FILE_TOO_LARGE instead of syncing", async () => {
+    const { CollabFileStore, MAX_FILE_CHARS } = await import("../src/server/collab/file-store");
+    const dataRoot = mkdtempSync(join(tmpdir(), "neutron-collab-big-"));
+    const store = new CollabFileStore(dataRoot, () => t);
+    const big = new CollabServer({ manager: mgr, fileStore: store, now: () => t, heartbeatMs: 60_000, sweepMs: 60_000 });
+    const srv = createServer();
+    big.attach(srv);
+    await new Promise<void>((res) => srv.listen(0, "127.0.0.1", () => res()));
+    const port = (srv.address() as AddressInfo).port;
+    const c = new WebSocket(`ws://127.0.0.1:${port}/collab`);
+    await new Promise<void>((res, rej) => {
+      c.once("open", () => res());
+      c.once("error", rej);
+    });
+    const msgs: any[] = [];
+    c.on("message", (d) => msgs.push(JSON.parse(String(d))));
+    const nextMsg = () =>
+      new Promise<any>((res, rej) => {
+        const timer = setTimeout(() => rej(new Error("timed out")), 4000);
+        const poll = () => {
+          const m = msgs.shift();
+          if (m) { clearTimeout(timer); res(m); } else setTimeout(poll, 10);
+        };
+        poll();
+      });
+    try {
+      const { room } = mgr.createRoom("Big");
+      c.send(JSON.stringify({ type: "ROOM_JOIN", roomId: room.id, displayName: "Sunny" }));
+      const joined = await nextMsg();
+      expect(joined.type).toBe("JOINED");
+      // Create the file through the store, then push it over the size cap.
+      const created = store.createFile(room.id, "big.txt", joined.you.id, "Sunny") as any;
+      const fileId = created.meta.id;
+      const d = new Y.Doc();
+      d.getText("content").insert(0, "x".repeat(MAX_FILE_CHARS + 1000));
+      store.applyClientUpdate(room.id, fileId, Y.encodeStateAsUpdate(d), joined.you.id, "Sunny");
+      expect(store.isOversized(room.id, fileId)).toBe(true);
+      // Normal file opens fine: server answers with the sync step1.
+      const okCreated = store.createFile(room.id, "small.txt", joined.you.id, "Sunny") as any;
+      c.send(JSON.stringify({ type: "FILE_OPEN", fileId: okCreated.meta.id }));
+      const step1 = await nextMsg();
+      expect(step1.type).toBe("YJS_SYNC");
+      // Oversized file: handshake refused, no sync payload follows.
+      c.send(JSON.stringify({ type: "FILE_OPEN", fileId }));
+      const err = await nextMsg();
+      expect(err).toMatchObject({ type: "ERROR", code: "FILE_TOO_LARGE", fileId });
+      expect(typeof err.message).toBe("string");
+    } finally {
+      c.close();
+      big.close();
+      await new Promise<void>((res) => srv.close(() => res()));
     }
   });
 });

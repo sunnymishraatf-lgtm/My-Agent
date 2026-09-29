@@ -309,6 +309,17 @@ export class CollabFileStore {
     return live ? Y.encodeStateVector(live.doc) : undefined;
   }
 
+  /**
+   * True when the file exceeds the shared-editing size cap. Used to refuse
+   * the open handshake with FILE_TOO_LARGE instead of syncing half a
+   * megabyte into a client's textarea (which would freeze mobile).
+   */
+  isOversized(roomCode: string, fileId: string): boolean {
+    const live = this.getFile(roomCode, fileId);
+    if (!live) return false;
+    return live.oversized || live.ytext.length > MAX_FILE_CHARS;
+  }
+
   /** Diff update bringing the client up to date (step 2 reply). */
   diffUpdate(roomCode: string, fileId: string, clientSv: Uint8Array): Uint8Array | undefined {
     const live = this.getFile(roomCode, fileId);

@@ -235,7 +235,7 @@ export type ServerMessage =
       truncated?: boolean;
       files?: { id: string; path: string }[];
     }
-  | { type: "ERROR"; code: string; message: string };
+  | { type: "ERROR"; code: string; message: string; fileId?: string };
 
 /** Voice-call participant as seen by the room (ephemeral, never persisted). */
 export interface VoiceMemberPublic {
@@ -1143,6 +1143,18 @@ export class CollabServer {
     const sv = this.files.stateVector(code, msg.fileId);
     if (!sv) {
       this.fail(ws, "FILE_NOT_FOUND");
+      return;
+    }
+    /* Refuse the handshake for oversized files: syncing 500K+ chars into
+       a client's editor would freeze it (especially mobile). The client
+       tears down its optimistic tab on this error. */
+    if (this.files.isOversized(code, msg.fileId)) {
+      this.send(ws, {
+        type: "ERROR",
+        code: "FILE_TOO_LARGE",
+        message: ERROR_TEXT.FILE_TOO_LARGE,
+        fileId: msg.fileId,
+      });
       return;
     }
     state.openFiles.add(msg.fileId);

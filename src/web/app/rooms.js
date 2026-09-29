@@ -432,6 +432,19 @@
     } else if (code === "VOICE_FULL") {
       showError("Voice is full in this room (6 max). Try again later.");
       abortVoiceJoin();
+    } else if (code === "FILE_TOO_LARGE" && msg.fileId) {
+      /* The server refused the open handshake: tear down the optimistic
+         editor tab instead of leaving a dead tab behind. */
+      var fid = msg.fileId;
+      S.openFileIds = S.openFileIds.filter(function (id) { return id !== fid; });
+      disposeEditor(fid);
+      if (S.activeFileId === fid) {
+        S.activeFileId = S.openFileIds.length ? S.openFileIds[S.openFileIds.length - 1] : null;
+      }
+      paintEdTabs();
+      paintEditor();
+      showError(msg.message || "That file is too large for shared editing.");
+      if (typeof announce === "function") announce("File too large to open.");
     } else {
       showError(msg.message || "The room server reported an error.");
     }

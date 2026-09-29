@@ -324,6 +324,17 @@ describe("CollabFileStore file ops", () => {
       error: "FILE_TOO_LARGE",
     });
   });
+  it("isOversized reflects the open-handshake gate", () => {
+    const { store } = newStore();
+    const room = "NEUTRON-EEEEEE";
+    const { meta } = store.createFile(room, "ok.txt", "m1", "Sunny") as any;
+    expect(store.isOversized(room, meta.id)).toBe(false);
+    expect(store.isOversized(room, "no-such-file")).toBe(false);
+    const d = new Y.Doc();
+    d.getText("content").insert(0, "x".repeat(MAX_FILE_CHARS + 1));
+    store.applyClientUpdate(room, meta.id, Y.encodeStateAsUpdate(d), "m1", "Sunny");
+    expect(store.isOversized(room, meta.id)).toBe(true);
+  });
 });
 
 describe("CollabFileStore snapshots", () => {
