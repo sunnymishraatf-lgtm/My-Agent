@@ -341,6 +341,34 @@ export declare function diffLineStats(
   newText: string | null | undefined
 ): { added: number; removed: number };
 
+export interface UnifiedDiffLine {
+  t: " " | "+" | "-";
+  text: string;
+}
+
+export interface UnifiedDiffHunk {
+  header: string;
+  lines: UnifiedDiffLine[];
+}
+
+export interface UnifiedDiffFile {
+  path: string;
+  hunks: UnifiedDiffHunk[];
+}
+
+export declare function parseUnifiedDiff(
+  text: string | null | undefined
+): { files: UnifiedDiffFile[] };
+
+export interface CompactDiffRow {
+  t: "add" | "del" | "ctx" | "note";
+  text: string;
+}
+
+export declare function parseCompactDiff(
+  text: string | null | undefined
+): CompactDiffRow[];
+
 export interface ModelOption {
   value: string;
   label: string;

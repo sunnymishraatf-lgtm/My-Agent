@@ -30,6 +30,17 @@ import {
   type AgentManager,
 } from "./agent/loop";
 import {
+  CHECKPOINT_ID_RE,
+  compareCheckpoints,
+  createManualCheckpoint,
+  deleteCheckpoint,
+  getCheckpoint,
+  listCheckpoints,
+  restoreCheckpointFile,
+  safeRestoreCheckpoint,
+} from "./agent/checkpoints";
+import { resolveSafePath, ToolError } from "./agent/tools";
+import {
   getDemoManager,
   prepareDemoRepo,
   getDemoStatus,
@@ -606,8 +617,131 @@ async function handleAgentApi(
   }
 }
 
-export function createRequestHandler(opts: ServeOptions): (req: IncomingMessage, res: ServerResponse) => void {  return (req, res) => {
-    void handle(opts, req, res).catch((err) => {
+/**
+ * Generalized checkpoint API (Node only — checkpoints live in the server
+ * workspace, which serverless hosting doesn't have).
+ *
+ *   POST   /api/checkpoints                      {repo, label} → create
+ *   GET    /api/checkpoints?repo=                → list (newest first)
+ *   GET    /api/checkpoints/:id?repo=            → detail + file list
+ *   DELETE /api/checkpoints/:id?repo=            → delete
+ *   POST   /api/checkpoints/:id/restore          {repo} → safe restore
+ *            (a "pre-restore" checkpoint is snapshotted first — nothing is
+ *            ever silently destroyed)
+ *   POST   /api/checkpoints/:id/restore-file     {repo, path} → revert one file
+ *   GET    /api/checkpoints/:id/compare/:other?repo= → real per-file diffs
+ *
+ * The repo name must be a known workspace repo; checkpoint ids are validated
+ * path segments. Per-IP rate limit, bounded.
+ */
+const cpBuckets = new Map<string, { count: number; reset: number }>();
+const CP_LIMIT = 60;
+const CP_WINDOW_MS = 60_000;
+function checkpointRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = cpBuckets.get(ip);
+  if (!entry || now > entry.reset) {
+    cpBuckets.set(ip, { count: 1, reset: now + CP_WINDOW_MS });
+    if (cpBuckets.size > 10_000) cpBuckets.clear();
+    return false;
+  }
+  entry.count++;
+  return entry.count > CP_LIMIT;
+}
+/** Test hook: clear all checkpoint buckets. */
+export function resetCheckpointRateLimit(): void {
+  cpBuckets.clear();
+}
+
+function resolveCheckpointRepo(workspace: string, repo: unknown): string {
+  const name = typeof repo === "string" ? repo : "";
+  const known = listWorkspaceRepos(workspace).some((r) => r.name === name);
+  if (!known) throw new AgentHttpError(400, "Unknown repository.");
+  return resolveSafePath(workspace, name);
+}
+
+function decodeId(seg: string | undefined): string {
+  let id = "";
+  try { id = decodeURIComponent(seg ?? ""); } catch { /* 400 below */ }
+  if (!id || !CHECKPOINT_ID_RE.test(id)) throw new AgentHttpError(400, "Invalid checkpoint id.");
+  return id;
+}
+
+async function handleCheckpointsApi(
+  workspace: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+): Promise<void> {
+  const ip = req.socket.remoteAddress ?? "unknown";
+  if (checkpointRateLimited(ip)) {
+    sendJson(res, 429, { ok: false, error: "Too many checkpoint requests. Please slow down." });
+    return;
+  }
+  const sub = url.pathname.slice("/api/checkpoints".length);
+  const seg = sub.split("/").filter((s) => s.length > 0);
+  try {
+    if (req.method === "POST" && seg.length === 0) {
+      const body = (await readJsonBody(req)) as { repo?: unknown; label?: unknown };
+      const root = resolveCheckpointRepo(workspace, body.repo);
+      const cp = createManualCheckpoint(root, typeof body.label === "string" ? body.label : "");
+      sendJson(res, 201, { ok: true, checkpoint: cp });
+      return;
+    }
+    if (req.method === "GET" && seg.length === 0) {
+      const root = resolveCheckpointRepo(workspace, url.searchParams.get("repo"));
+      sendJson(res, 200, { ok: true, checkpoints: listCheckpoints(root) });
+      return;
+    }
+    if (seg.length >= 1) {
+      const id = decodeId(seg[0]);
+      if (req.method === "GET" && seg.length === 1) {
+        const root = resolveCheckpointRepo(workspace, url.searchParams.get("repo"));
+        sendJson(res, 200, { ok: true, checkpoint: getCheckpoint(root, id) });
+        return;
+      }
+      if (req.method === "DELETE" && seg.length === 1) {
+        const root = resolveCheckpointRepo(workspace, url.searchParams.get("repo"));
+        sendJson(res, 200, { ok: true, ...deleteCheckpoint(root, id) });
+        return;
+      }
+      if (req.method === "POST" && seg.length === 2 && seg[1] === "restore") {
+        const body = (await readJsonBody(req)) as { repo?: unknown };
+        const root = resolveCheckpointRepo(workspace, body.repo);
+        sendJson(res, 200, { ok: true, ...safeRestoreCheckpoint(root, id) });
+        return;
+      }
+      if (req.method === "POST" && seg.length === 2 && seg[1] === "restore-file") {
+        const body = (await readJsonBody(req)) as { repo?: unknown; path?: unknown };
+        const root = resolveCheckpointRepo(workspace, body.repo);
+        const p = typeof body.path === "string" ? body.path : "";
+        if (!p) throw new AgentHttpError(400, "path is required.");
+        sendJson(res, 200, { ok: true, ...restoreCheckpointFile(root, id, p) });
+        return;
+      }
+      if (req.method === "GET" && seg.length === 3 && seg[1] === "compare") {
+        const other = decodeId(seg[2]);
+        const root = resolveCheckpointRepo(workspace, url.searchParams.get("repo"));
+        sendJson(res, 200, { ok: true, ...compareCheckpoints(root, id, other) });
+        return;
+      }
+    }
+    sendJson(res, 404, { ok: false, error: `Not found: ${req.method} ${url.pathname}` });
+  } catch (e) {
+    if (e instanceof ToolError) {
+      const status = e.code === "NO_CHECKPOINT" ? 404 : 400;
+      sendJson(res, status, { ok: false, error: e.message });
+      return;
+    }
+    if (e instanceof AgentHttpError) {
+      sendJson(res, e.status, { ok: false, error: e.message });
+      return;
+    }
+    throw e;
+  }
+}
+
+export function createRequestHandler(opts: ServeOptions): (req: IncomingMessage, res: ServerResponse) => void { return (req, res) => {    void handle(opts, req, res).catch((err) => {
       if (err instanceof BadRequestError) {
         sendJson(res, 400, { ok: false, error: err.message });
         return;
@@ -1147,6 +1281,13 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
 
   if (url.pathname.startsWith("/api/demo/")) {
     await handleDemoApi(getDemoManager(opts.demoWorkspace), req, res, url);
+    return;
+  }
+
+  /* Checkpoints (Node server only — snapshots live in the server workspace,
+     which serverless hosting doesn't have). */
+  if (url.pathname === "/api/checkpoints" || url.pathname.startsWith("/api/checkpoints/")) {
+    await handleCheckpointsApi(getAgentManager(opts.demoWorkspace).workspace, req, res, url);
     return;
   }
 

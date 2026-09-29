@@ -2249,3 +2249,38 @@ body.chat-full .view {
   .ag-row { flex-direction: column; }
   .ag-head { flex-direction: column; }
 }
+
+/* ---------- shared diff viewer (NeutronDiff) ---------- */
+.nd-file { border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; overflow: hidden; background: var(--panel, transparent); }
+.nd-file-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; flex-wrap: wrap; }
+.nd-file-head code { font-weight: 600; }
+.nd-hunk-head { padding: 6px 12px; color: var(--text-3); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; background: rgba(127, 140, 160, 0.08); }
+.nd-lines, .nd-rows { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; }
+.nd-line { padding: 1px 12px; white-space: pre-wrap; word-break: break-word; }
+.nd-add { background: rgba(46, 160, 67, 0.12); }
+.nd-del { background: rgba(220, 53, 69, 0.10); }
+.nd-del .nd-line, .nd-del { text-decoration: none; }
+.nd-ctx { color: var(--text-3); }
+.nd-note { color: var(--text-3); font-style: italic; padding: 2px 12px; }
+.nd-more { margin: 6px 12px 10px; }
+
+/* ---------- checkpoints panel ---------- */
+.cp-panel { margin-top: 18px; }
+.cp-top { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; align-items: center; }
+.cp-repo { min-width: 160px; flex: 1 1 160px; }
+.cp-label { flex: 2 1 200px; }
+.cp-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.cp-item { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.cp-main { margin-bottom: 8px; }
+.cp-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cp-kind { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.cp-kind-manual { color: var(--primary, #CC8066); border-color: var(--primary, #CC8066); }
+.cp-kind-added { color: #2ea043; border-color: #2ea043; }
+.cp-kind-removed { color: #da3633; border-color: #da3633; }
+.cp-kind-modified { color: #9e6a03; border-color: #9e6a03; }
+.cp-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.cp-armed { outline: 2px solid var(--primary, #CC8066); }
+.cp-files { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12.5px; display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow: auto; }
+.cp-files li { display: flex; gap: 8px; align-items: baseline; }
+.cp-note { padding: 8px 0; }
+.cp-loading { padding: 6px 0; }

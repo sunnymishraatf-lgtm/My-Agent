@@ -20,6 +20,7 @@
       deciding: {},       // approvalId -> true while the request is in flight
       restoring: false,
       showDiff: {},       // change idx -> true
+      verdicts: {},       // change idx -> "accepted" | "reverted"
     };
   }
 
@@ -73,6 +74,11 @@
     var runPanel = el("div", "ag-run");
     wrap.appendChild(runPanel);
     S.runPanel = runPanel;
+    if (window.NeutronCheckpoints) {
+      var cpWrap = el("div", "ag-checkpoints");
+      wrap.appendChild(cpWrap);
+      window.NeutronCheckpoints.renderPanel(cpWrap);
+    }
   }
 
   /* ---------- new run form ---------- */
@@ -441,14 +447,38 @@
         var line = el("div", "ag-file-line");
         line.appendChild(el("span", "ag-kind " + f.kind, f.kind));
         line.appendChild(el("code", null, f.path));
-        if (f.diff) {
+        var verdict = S.verdicts[i];
+        if (verdict) {
+          line.appendChild(el("span", "pill " + (verdict === "accepted" ? "ok" : "warn"),
+            verdict === "accepted" ? "Accepted" : "Reverted"));
+        }
+        if (f.diff && verdict !== "reverted") {
           var tgl = el("button", "btn ghost sm", S.showDiff[i] ? "Hide diff" : "Show diff");
           tgl.setAttribute("aria-expanded", S.showDiff[i] ? "true" : "false");
           tgl.onclick = function () { S.showDiff[i] = !S.showDiff[i]; paintRun(); };
           line.appendChild(tgl);
         }
+        if (rep.checkpointId && !verdict) {
+          var acc = el("button", "btn ghost sm", "Accept");
+          acc.setAttribute("aria-label", "Accept change to " + f.path);
+          acc.onclick = (function (idx) {
+            return function () { S.verdicts[idx] = "accepted"; paintRun(); toast("Change accepted."); };
+          })(i);
+          var rej = el("button", "btn ghost sm", "Reject");
+          rej.setAttribute("aria-label", "Reject change to " + f.path + " and revert it from the checkpoint");
+          rej.onclick = (function (idx, file) {
+            return function () { rejectFileChange(idx, file); };
+          })(i, f);
+          line.appendChild(acc);
+          line.appendChild(rej);
+        }
         li.appendChild(line);
-        if (f.diff && S.showDiff[i]) li.appendChild(el("pre", "ag-diff", f.diff));
+        if (f.diff && S.showDiff[i] && verdict !== "reverted" && window.NeutronDiff && UI.parseCompactDiff) {
+          var holder = el("div", "ag-diff");
+          window.NeutronDiff.renderRows(holder, UI.parseCompactDiff(f.diff),
+            { ariaLabel: "Diff for " + f.path });
+          li.appendChild(holder);
+        }
         ul.appendChild(li);
       });
       box.appendChild(ul);
@@ -494,13 +524,36 @@
     try {
       var r = await api("POST", "/api/agent/runs/" + encodeURIComponent(S.runId) + "/restore-checkpoint");
       S.run = r.run;
+      // Every changed file now matches the checkpoint — mark them reverted.
+      var n = (S.run && S.run.report && S.run.report.filesChanged) || [];
+      for (var i = 0; i < n.length; i++) S.verdicts[i] = "reverted";
       paintRun();
-      toast("Checkpoint restored (" + (r.restored || []).length + " files).");
+      var note = "Checkpoint restored (" + (r.restored || []).length + " files).";
+      if (r.preRestoreId) note += " (A pre-restore snapshot was saved first.)";
+      toast(note);
+      announce("Checkpoint restored.");
     } catch (e) {
       showError(e && e.message ? e.message : "Could not restore the checkpoint.");
     } finally {
       S.restoring = false;
       paintRun();
+    }
+  }
+
+  /** Reject one file's change: revert just that file from the checkpoint. */
+  async function rejectFileChange(idx, f) {
+    var cpId = S.run && S.run.report && S.run.report.checkpointId;
+    if (!cpId || !S.run) return;
+    if (!window.confirm("Reject the change to " + f.path + "?\n\nOnly this file is reverted to the pre-run checkpoint.")) return;
+    try {
+      await api("POST", "/api/checkpoints/" + encodeURIComponent(cpId) + "/restore-file",
+        { repo: S.run.repo, path: f.path });
+      S.verdicts[idx] = "reverted";
+      paintRun();
+      toast("Reverted " + f.path + " from the checkpoint.");
+      announce("Change to " + f.path + " reverted.");
+    } catch (e) {
+      showError(e && e.message ? e.message : "Could not revert the file.");
     }
   }
 

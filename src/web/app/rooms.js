@@ -825,20 +825,15 @@
 
     if (card.showDiff && meta && card.state === "pending") {
       var ed = S.editors[meta.id];
-      if (ed && UI.diffLineBlocks) {
+      if (ed && UI.diffLineBlocks && window.NeutronDiff) {
         var rows = UI.diffLineBlocks(ed.ytext.toString(), card.content);
-        var pre = el("pre", "rm-ai-diff");
-        pre.setAttribute("aria-label", "Proposed changes to " + card.path);
-        var capped = rows.slice(0, 400);
-        capped.forEach(function (r) {
-          var line = el("div", "rm-ai-diff-" + (r.t === " " ? "ctx" : r.t));
-          line.textContent = (r.t === " " ? "  " : r.t === "add" ? "+ " : "− ") + r.text;
-          pre.appendChild(line);
+        var holder = el("div", "rm-ai-diff");
+        window.NeutronDiff.renderRows(holder, rows, {
+          maxLines: 400,
+          ariaLabel: "Proposed changes to " + card.path,
+          classes: { add: "rm-ai-diff-add", del: "rm-ai-diff-del", ctx: "rm-ai-diff-ctx", note: "rm-ai-diff-ctx" },
         });
-        if (rows.length > capped.length) {
-          pre.appendChild(el("div", "rm-ai-diff-ctx", "… " + (rows.length - capped.length) + " more lines"));
-        }
-        wrap.appendChild(pre);
+        wrap.appendChild(holder);
       }
     }
     return wrap;

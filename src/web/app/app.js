@@ -1269,6 +1269,13 @@ async function renderRepos(view) {
   view.appendChild(el("h1", null, "Repositories"));
   try { renderProjectsSection(view); }
   catch (e) { /* projects are additive — never break the repos view */ }
+  try {
+    if (window.NeutronCheckpoints) {
+      var cpWrap = el("div", "repos-checkpoints");
+      view.appendChild(cpWrap);
+      window.NeutronCheckpoints.renderPanel(cpWrap);
+    }
+  } catch (e) { /* checkpoints are additive — never break the repos view */ }
   /* Skeleton while the status call is in flight — no blank screen. */
   var sk = el("section", "panel skeleton-card");
   sk.setAttribute("aria-busy", "true");

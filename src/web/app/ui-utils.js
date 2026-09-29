@@ -1207,6 +1207,67 @@
   }
 
   /**
+   * Parse a unified diff into structured files/hunks/lines.
+   * Tolerant: ignores index lines, ---/+++ headers (paths captured),
+   * truncation markers, and anything outside a hunk. A bare empty line
+   * inside a hunk is treated as an empty context line.
+   * Returns { files: [{ path, hunks: [{ header, lines: [{t, text}] }] }] }.
+   */
+  function parseUnifiedDiff(text) {
+    var files = [];
+    var cur = null;
+    var hunk = null;
+    function stripPrefix(p) {
+      return p.replace(/^[ab]\//, "");
+    }
+    var lines = String(text == null ? "" : text).split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      if (ln.indexOf("--- ") === 0) {
+        continue;
+      } else if (ln.indexOf("+++ ") === 0) {
+        var p = ln.slice(4).trim();
+        var q = p.indexOf("\t");
+        if (q !== -1) p = p.slice(0, q);
+        cur = { path: stripPrefix(p) || "(unknown)", hunks: [] };
+        files.push(cur);
+        hunk = null;
+      } else if (ln.indexOf("@@ ") === 0) {
+        if (!cur) { cur = { path: "(unknown)", hunks: [] }; files.push(cur); }
+        hunk = { header: ln, lines: [] };
+        cur.hunks.push(hunk);
+      } else if (hunk) {
+        var sig = ln.charAt(0);
+        if (sig === " " || sig === "+" || sig === "-") {
+          hunk.lines.push({ t: sig, text: ln.slice(1) });
+        } else if (ln === "") {
+          hunk.lines.push({ t: " ", text: "" });
+        }
+        /* anything else (truncation markers, "\ No newline…") is ignored */
+      }
+    }
+    return { files: files };
+  }
+
+  /**
+   * Parse the compact diff format produced by the agent's compactDiff
+   * ("- line" / "+ line" / "(no changes)" / "… (+N more lines)") into
+   * review rows [{t: "add"|"del"|"ctx"|"note", text}].
+   */
+  function parseCompactDiff(text) {
+    var rows = [];
+    var lines = String(text == null ? "" : text).split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      if (ln.indexOf("- ") === 0) rows.push({ t: "del", text: ln.slice(2) });
+      else if (ln.indexOf("+ ") === 0) rows.push({ t: "add", text: ln.slice(2) });
+      else if (ln === "(no changes)" || ln.charAt(0) === "…") rows.push({ t: "note", text: ln });
+      else if (ln !== "") rows.push({ t: "ctx", text: ln });
+    }
+    return rows;
+  }
+
+  /**
    * Build the model <select> options for the Settings provider/model picker.
    * Pure — the DOM wiring lives in app.js so this stays unit-testable.
    *
@@ -1944,6 +2005,8 @@
     parseRoomEditBlocks: parseRoomEditBlocks,
     diffLineBlocks: diffLineBlocks,
     diffLineStats: diffLineStats,
+    parseUnifiedDiff: parseUnifiedDiff,
+    parseCompactDiff: parseCompactDiff,
     /* settings model picker */
     buildModelOptions: buildModelOptions,
     /* voice output */

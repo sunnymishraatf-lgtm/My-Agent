@@ -39,7 +39,7 @@ import {
   checkpointFiles,
   listCheckpoint,
   pruneCheckpoint,
-  restoreCheckpoint,
+  safeRestoreCheckpoint,
   snapshotFiles,
 } from "./checkpoints";
 
@@ -850,13 +850,18 @@ function finishRun(run: AgentRun, summary: string): void {
 /* Checkpoint restore endpoint helper                                  */
 /* ------------------------------------------------------------------ */
 
-export function restoreRunCheckpoint(runId: string, workspace: string): { restored: string[]; deleted: string[] } {
+export function restoreRunCheckpoint(
+  runId: string,
+  workspace: string,
+): { restored: string[]; deleted: string[]; preRestoreId: string; preRestoreLabel: string } {
   const mgr = getAgentManager(workspace);
   const run = mgr.get(runId);
   if (run.status !== "completed" && run.status !== "failed" && run.status !== "stopped") {
     throw new AgentHttpError(409, "Checkpoint can only be restored after the run ends.");
   }
-  const res = restoreCheckpoint(run.repoRoot, runId);
-  pushStep(run, { phase: run.phase, thought: `Checkpoint restored (${res.restored.length} files, ${res.deleted.length} created files removed).` });
+  // Safe restore: a pre-restore snapshot is taken first, so the agent's
+  // work is never silently destroyed by the restore itself.
+  const res = safeRestoreCheckpoint(run.repoRoot, runId);
+  pushStep(run, { phase: run.phase, thought: `Checkpoint restored (${res.restored.length} files, ${res.deleted.length} created files removed). Pre-restore snapshot: ${res.preRestoreId}.` });
   return res;
 }

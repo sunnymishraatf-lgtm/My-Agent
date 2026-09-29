@@ -44,7 +44,7 @@ export function resolveSafePath(root: string, rel: string): string {
   return abs;
 }
 
-const SKIP_DIRS = new Set([
+export const SKIP_DIRS = new Set([
   "node_modules", ".git", "dist", "build", ".next", ".nuxt", "coverage",
   ".coverage", "vendor", ".venv", "venv", "__pycache__", ".idea", ".vscode",
   "target", "out", ".turbo", ".parcel-cache", ".agent",
