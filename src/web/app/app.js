@@ -270,7 +270,9 @@ async function refreshServerPill() {
   var pill = document.getElementById("server-pill");
   try {
     var h = await api("GET", "/api/health");
-    pill.textContent = "ONLINE · " + versionLabel(h.version);
+    /* Compact and professional: app version only (server version lives
+       on the Dashboard Server card). */
+    pill.textContent = "ONLINE · v" + (apkVersion() || h.version || "?");
     pill.className = "pill ok";
   } catch (e) {
     pill.textContent = "OFFLINE";
@@ -959,6 +961,11 @@ async function renderChat(view) {
 
   /* ----- header: title + provider/model pickers + toggles ----- */
   var head = el("div", "chat-head");
+  var backBtn = el("button", "btn ghost sm", "←");
+  backBtn.setAttribute("aria-label", "Back to dashboard");
+  backBtn.title = "Back to dashboard";
+  backBtn.onclick = function () { location.hash = "#/dashboard"; };
+  head.appendChild(backBtn);
   head.appendChild(el("div", "chat-title", "Chat"));
 
   var provSel = el("select", "input chat-pick");
