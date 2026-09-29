@@ -404,6 +404,8 @@ var ROUTES = {
   repos: renderRepos,
   reports: renderReports,
   chat: renderChat,
+  tasks: function (view) { return window.NeutronTasks.renderTasks(view); },
+  timeline: function (view) { return window.NeutronTasks.renderTimeline(view); },
   rooms: function (view) { return window.NeutronRooms.renderRooms(view); },
   agent: function (view) { return window.NeutronAgent.renderAgent(view); },
   terminal: function (view) { return window.NeutronTerminal.renderTerminal(view); },
@@ -430,6 +432,8 @@ async function render() {
   /* Tear down chat overlays: menus/dialogs/drawer live on document.body,
      outside the cleared view. */
   try { if (ChatHooks.closeOverlays) ChatHooks.closeOverlays(); } catch (e) {}
+  /* Close the notification panel on navigation. */
+  try { if (window.NeutronTasks && window.NeutronTasks.closePanel) window.NeutronTasks.closePanel(); } catch (e) {}
   /* Tear down the rooms WebSocket when navigating away from the rooms route. */
   try {
     if (currentRoute() !== "rooms" && window.NeutronRooms && window.NeutronRooms.teardown) {
@@ -2893,6 +2897,21 @@ async function renderChat(view) {
   head.appendChild(histBtn);
   var chatTitleEl = el("div", "chat-title", "Chat");
   head.appendChild(chatTitleEl);
+  /* Create a task from this conversation (linked, prefilled with the title). */
+  var chatTaskBtn = el("button", "btn ghost sm", "+ Task");
+  chatTaskBtn.type = "button";
+  chatTaskBtn.title = "Create a task from this conversation";
+  chatTaskBtn.setAttribute("aria-label", "Create a task from this conversation");
+  chatTaskBtn.onclick = function () {
+    if (!window.NeutronTasks) return;
+    var c = activeConv();
+    window.NeutronTasks.openTaskDialog({
+      title: (window.NeutronUI && window.NeutronUI.convDisplayTitle(c)) || "Chat task",
+      conversationId: c.id,
+      projectId: c.projectId || "",
+    });
+  };
+  head.appendChild(chatTaskBtn);
 
   var provSel = el("select", "input chat-pick");
   provSel.setAttribute("aria-label", "Provider");

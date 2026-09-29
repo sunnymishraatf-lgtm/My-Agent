@@ -2526,3 +2526,95 @@ label.fld-label { display: block; font-size: 12px; font-weight: 600; color: var(
   .pal { max-height: 80vh; }
   .pal-foot { display: none; }
 }
+
+/* ==========================================================================
+   Tasks + notification center + activity timeline (Phases 16/27/28).
+   Theme variables only — works across all themes including glass.
+   ========================================================================== */
+
+/* --- notification bell + panel --- */
+.notif-wrap { position: relative; }
+.notif-badge {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; background: var(--red); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.notif-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 200;
+  width: min(360px, 86vw); max-height: min(480px, 70vh);
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.18);
+  overflow: hidden;
+}
+.notif-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 14px; border-bottom: 1px solid var(--border);
+}
+.notif-acts { display: flex; gap: 12px; }
+.notif-prefs {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  padding: 8px 14px; border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--text-2);
+}
+.notif-pref { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.notif-list { overflow-y: auto; padding: 6px; }
+.notif-empty { padding: 16px 12px; text-align: center; }
+.notif-item {
+  display: block; width: 100%; text-align: left;
+  padding: 10px 12px; border-radius: 8px; border: 1px solid transparent;
+  background: transparent; cursor: pointer; color: var(--text);
+}
+.notif-item:hover { background: var(--panel-2, var(--panel)); border-color: var(--border); }
+.notif-item.unread { border-left: 3px solid var(--primary); background: var(--panel-2, var(--panel)); }
+.notif-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.notif-title { font-weight: 600; font-size: 13px; }
+
+/* --- task board --- */
+.task-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+.task-q { max-width: 240px; }
+.task-board {
+  display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr));
+  gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: start;
+}
+.task-col {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px; min-height: 120px;
+}
+.task-col-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.task-card {
+  display: block; width: 100%; text-align: left; margin-bottom: 8px;
+  padding: 10px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--panel-2, var(--panel)); border: 1px solid var(--border); color: var(--text);
+}
+.task-card:hover { border-color: var(--primary); }
+.task-card-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.task-card-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.prio-high { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+.prio-medium { color: var(--amber, var(--primary)); border-color: var(--amber-border, var(--border)); background: var(--amber-soft, transparent); }
+.prio-low { color: var(--text-2); }
+.task-form .fld-label { display: block; margin: 12px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.task-fld { flex: 1; min-width: 140px; }
+.task-conv-link { margin-top: 10px; }
+.pill.tiny { font-size: 11px; padding: 1px 8px; }
+
+/* --- activity timeline --- */
+.timeline { max-width: 760px; }
+.tl-day { margin: 20px 0 8px; font-size: 14px; }
+.tl-events { list-style: none; margin: 0 0 8px; padding: 0; }
+.tl-event {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); margin-bottom: 8px;
+}
+.tl-event[role="link"] { cursor: pointer; }
+.tl-event[role="link"]:hover { border-color: var(--primary); }
+.tl-ico { font-size: 16px; line-height: 1.4; flex: none; }
+.tl-body { min-width: 0; }
+.tl-title { font-weight: 600; font-size: 13px; }
+
+@media (max-width: 640px) {
+  .task-board { grid-template-columns: repeat(5, 78vw); }
+  .notif-panel { position: fixed; top: 56px; right: 8px; left: 8px; width: auto; }
+}

@@ -65,6 +65,8 @@
     "join-room": function (ctx) { ctx.go("#/rooms"); },
     "open-terminal": function (ctx) { ctx.go("#/terminal"); },
     "run-tests": function (ctx) { ctx.go("#/testlab"); },
+    "new-task": function (ctx) { ctx.go("#/tasks/new"); },
+    "open-timeline": function (ctx) { ctx.go("#/timeline"); },
     "start-maintain": function (ctx) { ctx.go("#/maintain"); },
     "open-dashboard": function (ctx) { ctx.go("#/dashboard"); },
     "open-reports": function (ctx) { ctx.go("#/reports"); },

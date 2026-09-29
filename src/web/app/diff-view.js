@@ -235,6 +235,8 @@
           : "";
         toast("Checkpoint created (" + r.checkpoint.fileCount + " files" + extra + ").");
         announce("Checkpoint created.");
+        if (window.NeutronNotify) window.NeutronNotify("system", "Checkpoint created",
+          label + " · " + S.repo + " (" + r.checkpoint.fileCount + " files)", "#/repos");
         loadList();
       } catch (e) {
         showError(e && e.message ? e.message : "Could not create the checkpoint.");

@@ -593,6 +593,22 @@
     S.activity.push(msg.event);
     if (S.activity.length > 50) S.activity.splice(0, S.activity.length - 50);
     paintActivity();
+    /* Real events → device-local activity log (timeline) + notifications.
+       Never for keystrokes — activity events are coarse-grained by design. */
+    try {
+      if (window.NeutronTasks && window.NeutronTasks.logRoomActivity) {
+        window.NeutronTasks.logRoomActivity(S.code, S.roomName, msg.event);
+      }
+      var k = msg.event.kind;
+      if ((k === "member_join" || k === "member_leave") && window.NeutronNotify) {
+        var who = msg.event.byName || "Someone";
+        if (who !== S.displayName) {
+          window.NeutronNotify("rooms",
+            who + (k === "member_join" ? " joined " : " left ") + (S.roomName || "the room"),
+            "", S.code ? "#room=" + S.code : "#/rooms");
+        }
+      }
+    } catch (e) { /* best effort — never break the room */ }
   }
 
   function activityIcon(kind) {

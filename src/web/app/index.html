@@ -32,6 +32,11 @@
   <div class="topbar-right">
     <button id="pal-open-btn" class="btn ghost pal-open-btn" type="button"
       aria-label="Search or run a command (Ctrl+K)" title="Search or command (Ctrl+K)">&#x2315;</button>
+    <div class="notif-wrap">
+      <button id="notif-bell" class="btn ghost" type="button"
+        aria-label="Notifications" aria-haspopup="true" aria-expanded="false" title="Notifications">&#x1F514;<span id="notif-badge" class="notif-badge hidden"></span></button>
+      <div id="notif-panel" class="notif-panel hidden" role="dialog" aria-label="Notifications"></div>
+    </div>
     <span id="server-pill" class="pill">checking…</span>
     <a class="btn ghost" href="/demo">Guided demo</a>
   </div>
@@ -47,6 +52,8 @@
     <a href="#/repos" data-route="repos">Repositories</a>
     <a href="#/reports" data-route="reports">Reports</a>
     <a href="#/chat" data-route="chat">Chat</a>
+    <a href="#/tasks" data-route="tasks">Tasks</a>
+    <a href="#/timeline" data-route="timeline">Timeline</a>
     <a href="#/rooms" data-route="rooms">Rooms</a>
     <a href="#/agent" data-route="agent">Agent</a>
     <a href="#/terminal" data-route="terminal">Terminal</a>
@@ -71,6 +78,7 @@
 
 <script src="/src/web/app/zip.js"></script>
 <script src="/src/web/app/ui-utils.js"></script>
+<script src="/src/web/app/tasks.js"></script>
 <script src="/src/web/app/diff-view.js"></script>
 <script src="/src/web/app/git.js"></script>
 <script src="/src/web/app/github.js"></script>

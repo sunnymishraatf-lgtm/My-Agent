@@ -244,6 +244,8 @@
       /* Safety net: snapshot a checkpoint first so nothing is silently lost. */
       try {
         await api("POST", "/api/checkpoints", { repo: state.repo, label: "Before discarding " + path });
+        if (window.NeutronNotify) window.NeutronNotify("system", "Checkpoint created",
+          "Before discarding " + path + " · " + state.repo, "#/repos");
       } catch (e) { /* checkpoints are best-effort — the discard still needs its confirm */ }
       await api("POST", "/api/git/discard", { repo: state.repo, path: path });
       clearError();

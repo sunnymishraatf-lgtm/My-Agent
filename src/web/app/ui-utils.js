@@ -1050,6 +1050,8 @@
     { id: "join-room", title: "Join Room", hint: "", keywords: "room join collaborate code invite" },
     { id: "open-terminal", title: "Open Terminal", hint: "", keywords: "terminal shell command console" },
     { id: "run-tests", title: "Run Tests", hint: "", keywords: "test lab run tests verify" },
+    { id: "new-task", title: "New Task", hint: "", keywords: "task todo create track work kanban" },
+    { id: "open-timeline", title: "Open Activity Timeline", hint: "", keywords: "timeline activity history events feed" },
     { id: "start-maintain", title: "Start Maintenance", hint: "", keywords: "maintain maintenance analyze plan" },
     { id: "open-dashboard", title: "Open Dashboard", hint: "", keywords: "dashboard home overview" },
     { id: "open-reports", title: "Open Reports", hint: "", keywords: "reports jobs history results" },
@@ -2512,6 +2514,303 @@
     return out;
   }
 
+  /* ========================================================================
+     Task management + notification center + activity timeline (Phases 16/27/28).
+     Device-local stores (same BYOK trust boundary as everything else):
+     "neutron_tasks" and "neutron_notifications". This module only shapes the
+     data; tasks.js owns storage and the DOM. No fake entries are ever
+     invented — every event comes from a real app action.
+     ======================================================================== */
+
+  var TASK_STORE_VERSION = 1;
+  var TASK_STORE_KEY = "neutron_tasks";
+  var NOTIF_STORE_KEY = "neutron_notifications";
+  var ROOM_ACTIVITY_KEY = "neutron_room_activity";
+
+  var TASK_STATUSES = ["backlog", "todo", "in_progress", "review", "done"];
+  var TASK_STATUS_LABELS = {
+    backlog: "Backlog", todo: "To Do", in_progress: "In Progress",
+    review: "Review", done: "Done",
+  };
+  var TASK_PRIORITIES = ["low", "medium", "high"];
+  var TASK_PRIORITY_LABELS = { low: "Low", medium: "Medium", high: "High" };
+
+  var NOTIF_CAP = 100;
+  var NOTIF_TYPES = ["agent", "tests", "rooms", "tasks", "system"];
+  var NOTIF_TYPE_LABELS = {
+    agent: "Agent", tests: "Tests", rooms: "Rooms", tasks: "Tasks", system: "System",
+  };
+
+  function newTask(id, nowMs) {
+    return {
+      id: String(id),
+      title: "",
+      description: "",
+      status: "todo",
+      priority: "medium",
+      assignee: "",
+      projectId: "",
+      conversationId: "",
+      createdAt: nowMs,
+      updatedAt: nowMs,
+      completedAt: 0,
+    };
+  }
+
+  function sanitizeTask(t) {
+    if (!t || typeof t !== "object" || !t.id) return null;
+    var st = TASK_STATUSES.indexOf(t.status) !== -1 ? t.status : "todo";
+    var pr = TASK_PRIORITIES.indexOf(t.priority) !== -1 ? t.priority : "medium";
+    return {
+      id: String(t.id).slice(0, 100),
+      title: String(t.title || "").slice(0, 200),
+      description: String(t.description || "").slice(0, 5000),
+      status: st,
+      priority: pr,
+      assignee: String(t.assignee || "").slice(0, 100),
+      projectId: String(t.projectId || "").slice(0, 100),
+      conversationId: String(t.conversationId || "").slice(0, 100),
+      createdAt: Number(t.createdAt) || 0,
+      updatedAt: Number(t.updatedAt) || 0,
+      completedAt: st === "done" ? (Number(t.completedAt) || Number(t.updatedAt) || 0) : 0,
+    };
+  }
+
+  function taskGet(store, id) {
+    if (!store || !store.items || !id) return null;
+    return store.items[id] || null;
+  }
+
+  function taskCreate(store, id, nowMs) {
+    if (!store || !store.items || !id || store.items[id]) return null;
+    var t = newTask(id, nowMs);
+    store.items[id] = t;
+    return t;
+  }
+
+  /**
+   * Patch title/description/priority/assignee/projectId/conversationId.
+   * Trims strings; an explicitly empty title keeps the old one.
+   * Returns true only when something actually changed.
+   */
+  function taskUpdate(store, id, patch, nowMs) {
+    var t = taskGet(store, id);
+    if (!t || !patch || typeof patch !== "object") return false;
+    var changed = false;
+    if (patch.title !== undefined) {
+      var nt = String(patch.title).replace(/\s+/g, " ").trim().slice(0, 200);
+      if (nt && nt !== t.title) { t.title = nt; changed = true; }
+    }
+    if (patch.description !== undefined) {
+      var nd = String(patch.description).slice(0, 5000);
+      if (nd !== t.description) { t.description = nd; changed = true; }
+    }
+    if (patch.priority !== undefined && TASK_PRIORITIES.indexOf(patch.priority) !== -1 &&
+        patch.priority !== t.priority) {
+      t.priority = patch.priority; changed = true;
+    }
+    if (patch.assignee !== undefined) {
+      var na = String(patch.assignee).replace(/\s+/g, " ").trim().slice(0, 100);
+      if (na !== t.assignee) { t.assignee = na; changed = true; }
+    }
+    if (patch.projectId !== undefined) {
+      var np = String(patch.projectId).slice(0, 100);
+      if (np !== t.projectId) { t.projectId = np; changed = true; }
+    }
+    if (patch.conversationId !== undefined) {
+      var nc = String(patch.conversationId).slice(0, 100);
+      if (nc !== t.conversationId) { t.conversationId = nc; changed = true; }
+    }
+    if (changed) t.updatedAt = nowMs;
+    return changed;
+  }
+
+  /**
+   * Status transition: sets completedAt on entering done, clears it when
+   * leaving done, always bumps updatedAt. Returns false for bad input.
+   */
+  function taskSetStatus(store, id, status, nowMs) {
+    var t = taskGet(store, id);
+    if (!t || TASK_STATUSES.indexOf(status) === -1) return false;
+    if (t.status === status) return true;
+    t.status = status;
+    t.updatedAt = nowMs;
+    t.completedAt = status === "done" ? nowMs : 0;
+    return true;
+  }
+
+  function taskDelete(store, id) {
+    if (!store || !store.items || !store.items[id]) return false;
+    delete store.items[id];
+    return true;
+  }
+
+  /** List tasks newest-first. filter: { status?, projectId?, q? }. */
+  function taskList(store, filter) {
+    var out = [];
+    if (!store || !store.items) return out;
+    var f = filter || {};
+    var q = f.q ? String(f.q).toLowerCase() : "";
+    Object.keys(store.items).forEach(function (id) {
+      var t = store.items[id];
+      if (!t) return;
+      if (f.status && t.status !== f.status) return;
+      if (f.projectId && t.projectId !== f.projectId) return;
+      if (q) {
+        var hay = (t.title + " " + t.description).toLowerCase();
+        if (hay.indexOf(q) === -1) return;
+      }
+      out.push(t);
+    });
+    out.sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
+    return out;
+  }
+
+  function taskCounts(store) {
+    var c = { backlog: 0, todo: 0, in_progress: 0, review: 0, done: 0 };
+    if (!store || !store.items) return c;
+    Object.keys(store.items).forEach(function (id) {
+      var t = store.items[id];
+      if (t && c[t.status] !== undefined) c[t.status]++;
+    });
+    return c;
+  }
+
+  function newTaskId() {
+    return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  /* ---------------- notification center ---------------- */
+
+  function newNotification(id, type, title, body, link, nowMs) {
+    return {
+      id: String(id),
+      type: NOTIF_TYPES.indexOf(type) !== -1 ? type : "system",
+      title: String(title || "").slice(0, 200),
+      body: String(body || "").slice(0, 500),
+      link: String(link || "").slice(0, 300),
+      ts: nowMs,
+      read: false,
+    };
+  }
+
+  function sanitizeNotification(n) {
+    if (!n || typeof n !== "object" || !n.id) return null;
+    return {
+      id: String(n.id).slice(0, 100),
+      type: NOTIF_TYPES.indexOf(n.type) !== -1 ? n.type : "system",
+      title: String(n.title || "").slice(0, 200),
+      body: String(n.body || "").slice(0, 500),
+      link: String(n.link || "").slice(0, 300),
+      ts: Number(n.ts) || 0,
+      read: n.read === true,
+    };
+  }
+
+  /** Prepend; cap at NOTIF_CAP newest. Mutates and returns the list. */
+  function notifAdd(list, n) {
+    if (!Array.isArray(list) || !n) return list;
+    list.unshift(n);
+    if (list.length > NOTIF_CAP) list.length = NOTIF_CAP;
+    return list;
+  }
+
+  function notifMarkRead(list, id) {
+    if (!Array.isArray(list)) return false;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id === id) { list[i].read = true; return true; }
+    }
+    return false;
+  }
+
+  function notifMarkAllRead(list) {
+    if (!Array.isArray(list)) return;
+    list.forEach(function (n) { if (n) n.read = true; });
+  }
+
+  function notifUnreadCount(list) {
+    if (!Array.isArray(list)) return 0;
+    var c = 0;
+    list.forEach(function (n) { if (n && !n.read) c++; });
+    return c;
+  }
+
+  function defaultNotifPrefs() {
+    return { agent: true, tests: true, rooms: true, tasks: true, system: true };
+  }
+
+  function sanitizeNotifPrefs(p) {
+    var d = defaultNotifPrefs();
+    if (!p || typeof p !== "object") return d;
+    NOTIF_TYPES.forEach(function (t) {
+      if (p[t] === false) d[t] = false;
+    });
+    return d;
+  }
+
+  function notifShouldShow(prefs, type) {
+    if (!prefs || typeof prefs !== "object") return true;
+    return prefs[type] !== false;
+  }
+
+  function newNotifId() {
+    return "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  /* ---------------- activity timeline ---------------- */
+
+  function timelineEvent(source, kind, title, detail, ts, link) {
+    return {
+      source: String(source || ""),
+      kind: String(kind || ""),
+      title: String(title || "").slice(0, 300),
+      detail: String(detail || "").slice(0, 500),
+      ts: Number(ts) || 0,
+      link: String(link || "").slice(0, 300),
+    };
+  }
+
+  /** Merge events from multiple sources, newest first. Drops invalid entries. */
+  function timelineMerge(lists) {
+    var out = [];
+    (lists || []).forEach(function (l) {
+      (l || []).forEach(function (e) {
+        if (e && isFinite(e.ts) && e.ts > 0) out.push(e);
+      });
+    });
+    out.sort(function (a, b) { return b.ts - a.ts; });
+    return out;
+  }
+
+  /** Day label for a day-start timestamp: Today / Yesterday / "Sep 12" … */
+  function timelineDayLabel(dayStartMs, nowMs) {
+    var d0 = startOfDayMs(nowMs);
+    var diff = Math.round((d0 - startOfDayMs(dayStartMs)) / 86400000);
+    if (diff <= 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var dt = new Date(dayStartMs);
+    var label = months[dt.getMonth()] + " " + dt.getDate();
+    if (dt.getFullYear() !== new Date(nowMs).getFullYear()) label += ", " + dt.getFullYear();
+    return label;
+  }
+
+  /** Group sorted events by calendar day: [{ dayStart, label, events }]. */
+  function timelineGroupByDay(events, nowMs) {
+    var groups = [];
+    var byDay = {};
+    (events || []).forEach(function (e) {
+      var d = startOfDayMs(e.ts);
+      if (!byDay[d]) { byDay[d] = []; groups.push(d); }
+      byDay[d].push(e);
+    });
+    groups.sort(function (a, b) { return b - a; });
+    return groups.map(function (d) {
+      return { dayStart: d, label: timelineDayLabel(d, nowMs), events: byDay[d] };
+    });
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -2647,5 +2946,41 @@
     computeHealth: computeHealth,
     /* terminal: minimal ANSI SGR → HTML (Phases 8+13) */
     ansiToHtml: ansiToHtml,
+    /* task management + notification center + activity timeline (Phases 16/27/28) */
+    TASK_STORE_VERSION: TASK_STORE_VERSION,
+    TASK_STORE_KEY: TASK_STORE_KEY,
+    NOTIF_STORE_KEY: NOTIF_STORE_KEY,
+    ROOM_ACTIVITY_KEY: ROOM_ACTIVITY_KEY,
+    TASK_STATUSES: TASK_STATUSES,
+    TASK_STATUS_LABELS: TASK_STATUS_LABELS,
+    TASK_PRIORITIES: TASK_PRIORITIES,
+    TASK_PRIORITY_LABELS: TASK_PRIORITY_LABELS,
+    NOTIF_CAP: NOTIF_CAP,
+    NOTIF_TYPES: NOTIF_TYPES,
+    NOTIF_TYPE_LABELS: NOTIF_TYPE_LABELS,
+    newTask: newTask,
+    sanitizeTask: sanitizeTask,
+    taskGet: taskGet,
+    taskCreate: taskCreate,
+    taskUpdate: taskUpdate,
+    taskSetStatus: taskSetStatus,
+    taskDelete: taskDelete,
+    taskList: taskList,
+    taskCounts: taskCounts,
+    newTaskId: newTaskId,
+    newNotification: newNotification,
+    sanitizeNotification: sanitizeNotification,
+    notifAdd: notifAdd,
+    notifMarkRead: notifMarkRead,
+    notifMarkAllRead: notifMarkAllRead,
+    notifUnreadCount: notifUnreadCount,
+    defaultNotifPrefs: defaultNotifPrefs,
+    sanitizeNotifPrefs: sanitizeNotifPrefs,
+    notifShouldShow: notifShouldShow,
+    newNotifId: newNotifId,
+    timelineEvent: timelineEvent,
+    timelineMerge: timelineMerge,
+    timelineDayLabel: timelineDayLabel,
+    timelineGroupByDay: timelineGroupByDay,
   };
 });

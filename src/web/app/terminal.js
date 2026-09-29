@@ -627,6 +627,13 @@
       resultBox.appendChild(list);
     }
     announce(title + ". " + sub);
+    /* Real event → notification center (respects user prefs). */
+    if (window.NeutronNotify) {
+      window.NeutronNotify("tests",
+        res.verdict === "pass" ? "Tests passed" :
+        res.verdict === "fail" ? "Tests failed" : "Test run finished",
+        String(sub || ""), "#/testlab");
+    }
     // Keep the session around for inspection; the user can close tabs in Terminal.
   }
 

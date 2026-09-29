@@ -296,7 +296,14 @@
       paintRun();
       if (isTerminal(r.run.status)) {
         stopPolling();
-        if (prevStatus !== r.run.status) announce("Agent run " + r.run.status + ".");
+        if (prevStatus !== r.run.status) {
+          announce("Agent run " + r.run.status + ".");
+          /* Real event → notification center (respects user prefs). */
+          if (window.NeutronNotify) {
+            window.NeutronNotify("agent", "Agent run " + r.run.status,
+              String(r.run.goal || "").slice(0, 140), "#/agent");
+          }
+        }
       }
     } catch (e) { /* transient poll failure — keep the last state, retry next tick */ }
   }
@@ -472,6 +479,26 @@
     var box = el("div", "panel ag-report");
     box.appendChild(el("h3", null, "Final report"));
     if (rep.summary) box.appendChild(el("p", null, rep.summary));
+    /* Track remaining work as a task (prefilled from the run). */
+    var trackRow = el("div", "row");
+    var trackBtn = el("button", "btn sm", "Track remaining work");
+    trackBtn.type = "button";
+    trackBtn.title = "Create a task from this run";
+    trackBtn.setAttribute("aria-label", "Create a task from this agent run");
+    trackBtn.onclick = function () {
+      if (!window.NeutronTasks) { showError("Tasks UI not loaded."); return; }
+      var desc = rep.summary || "";
+      try {
+        var files = (rep.filesChanged || []).map(function (f) { return f.path; }).filter(Boolean);
+        if (files.length) desc += "\n\nFiles changed: " + files.join(", ");
+      } catch (e) {}
+      window.NeutronTasks.openTaskDialog({
+        title: "Follow-up: " + String(run.goal || "agent run").slice(0, 80),
+        description: desc,
+      });
+    };
+    trackRow.appendChild(trackBtn);
+    box.appendChild(trackRow);
 
     var files = rep.filesChanged || [];
     if (files.length) {
@@ -585,6 +612,7 @@
       if (r.preRestoreId) note += " (A pre-restore snapshot was saved first.)";
       toast(note);
       announce("Checkpoint restored.");
+      if (window.NeutronNotify) window.NeutronNotify("system", "Checkpoint restored", note, "#/agent");
     } catch (e) {
       showError(e && e.message ? e.message : "Could not restore the checkpoint.");
     } finally {

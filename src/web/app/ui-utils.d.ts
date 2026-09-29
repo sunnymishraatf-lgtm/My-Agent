@@ -492,3 +492,98 @@ export declare function computeHealth(signals: HealthSignals): {
 };
 /* terminal: minimal ANSI SGR → HTML (Phases 8+13) */
 export declare function ansiToHtml(src: string | null | undefined): string;
+
+/* task management + notification center + activity timeline (Phases 16/27/28) */
+export declare const TASK_STORE_VERSION: number;
+export declare const TASK_STORE_KEY: string;
+export declare const NOTIF_STORE_KEY: string;
+export declare const ROOM_ACTIVITY_KEY: string;
+export declare const TASK_STATUSES: string[];
+export declare const TASK_STATUS_LABELS: Record<string, string>;
+export declare const TASK_PRIORITIES: string[];
+export declare const TASK_PRIORITY_LABELS: Record<string, string>;
+export declare const NOTIF_CAP: number;
+export declare const NOTIF_TYPES: string[];
+export declare const NOTIF_TYPE_LABELS: Record<string, string>;
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  assignee: string;
+  projectId: string;
+  conversationId: string;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number;
+}
+export interface TaskStore {
+  version: number;
+  items: Record<string, Task>;
+}
+export interface TaskPatch {
+  title?: string;
+  description?: string;
+  priority?: string;
+  assignee?: string;
+  projectId?: string;
+  conversationId?: string;
+}
+export interface TaskFilter {
+  status?: string;
+  projectId?: string;
+  q?: string;
+}
+export declare function newTask(id: string, nowMs: number): Task;
+export declare function sanitizeTask(t: any): Task | null;
+export declare function taskGet(store: TaskStore | null | undefined, id: string): Task | null;
+export declare function taskCreate(store: TaskStore, id: string, nowMs: number): Task | null;
+export declare function taskUpdate(store: TaskStore, id: string, patch: TaskPatch, nowMs: number): boolean;
+export declare function taskSetStatus(store: TaskStore, id: string, status: string, nowMs: number): boolean;
+export declare function taskDelete(store: TaskStore, id: string): boolean;
+export declare function taskList(store: TaskStore | null | undefined, filter?: TaskFilter): Task[];
+export declare function taskCounts(store: TaskStore | null | undefined): Record<string, number>;
+export declare function newTaskId(): string;
+
+export interface NotificationItem {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  link: string;
+  ts: number;
+  read: boolean;
+}
+export declare function newNotification(
+  id: string, type: string, title: string | null | undefined,
+  body: string | null | undefined, link: string | null | undefined, nowMs: number
+): NotificationItem;
+export declare function sanitizeNotification(n: any): NotificationItem | null;
+export declare function notifAdd(list: NotificationItem[], n: NotificationItem): NotificationItem[];
+export declare function notifMarkRead(list: NotificationItem[], id: string): boolean;
+export declare function notifMarkAllRead(list: NotificationItem[]): void;
+export declare function notifUnreadCount(list: NotificationItem[] | null | undefined): number;
+export declare function defaultNotifPrefs(): Record<string, boolean>;
+export declare function sanitizeNotifPrefs(p: any): Record<string, boolean>;
+export declare function notifShouldShow(prefs: any, type: string): boolean;
+export declare function newNotifId(): string;
+
+export interface TimelineEvent {
+  source: string;
+  kind: string;
+  title: string;
+  detail: string;
+  ts: number;
+  link: string;
+}
+export declare function timelineEvent(
+  source: string, kind: string, title: string | null | undefined,
+  detail: string | null | undefined, ts: number, link: string | null | undefined
+): TimelineEvent;
+export declare function timelineMerge(lists: Array<Array<TimelineEvent> | null | undefined> | null | undefined): TimelineEvent[];
+export declare function timelineDayLabel(dayStartMs: number, nowMs: number): string;
+export declare function timelineGroupByDay(
+  events: TimelineEvent[] | null | undefined, nowMs: number
+): Array<{ dayStart: number; label: string; events: TimelineEvent[] }>;
