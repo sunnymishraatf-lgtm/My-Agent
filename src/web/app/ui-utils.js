@@ -251,6 +251,52 @@
     }).filter(Boolean);
   }
 
+          /**
+   * Minimal safe markdown renderer for assistant messages.
+   * Escapes ALL HTML first, then applies a small subset: fenced code
+   * blocks, inline code, bold, italic, links (http/https only), and
+   * line breaks. Anything else renders as plain text. Returns an HTML
+   * string safe for innerHTML. Pure — safe to test.
+   */
+  function renderMarkdown(src) {
+    var s = String(src == null ? "" : src);
+    // 1. Escape HTML.
+    s = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // 2. Extract fenced code blocks first (protect their contents).
+    var blocks = [];
+    s = s.replace(/```(\w*)\n?([\s\S]*?)(```|$)/g, function (m, lang, code) {
+      blocks.push({ lang: lang || "", code: code.replace(/\n$/, "") });
+      return "\u0000BLOCK" + (blocks.length - 1) + "\u0000";
+    });
+    // 3. Extract inline code.
+    var inlines = [];
+    s = s.replace(/`([^`\n]+)`/g, function (m, code) {
+      inlines.push(code);
+      return "\u0000INLINE" + (inlines.length - 1) + "\u0000";
+    });
+    // 4. Links [text](http/https URL) — escape quotes in URL.
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function (m, text, url) {
+      var safeUrl = url.replace(/"/g, "&quot;");
+      return '<a href="' + safeUrl + '" target="_blank" rel="noopener">' + text + "</a>";
+    });
+    // 5. Bold and italic (after links so link text isn't mangled).
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/(^|[^*\w])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+    // 6. Line breaks.
+    s = s.replace(/\n/g, "<br>");
+    // 7. Restore inline code, then blocks.
+    s = s.replace(/\u0000INLINE(\d+)\u0000/g, function (m, i) {
+      return "<code>" + inlines[Number(i)] + "</code>";
+    });
+    s = s.replace(/\u0000BLOCK(\d+)\u0000/g, function (m, i) {
+      var b = blocks[Number(i)];
+      var cls = b.lang ? ' class="lang-' + b.lang.replace(/[^a-z0-9-]/gi, "") + '"' : "";
+      return "<pre" + cls + "><code>" + b.code + "</code></pre>";
+    });
+    return s;
+  }
+
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -263,5 +309,6 @@
     sanitizeWizard: sanitizeWizard,
     isValidWizardState: isValidWizardState,
     sanitizeChatHistory: sanitizeChatHistory,
+    renderMarkdown: renderMarkdown,
   };
 });

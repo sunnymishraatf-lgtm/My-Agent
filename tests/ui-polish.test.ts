@@ -341,3 +341,50 @@ describe("sanitizeChatHistory", () => {
     expect(sanitizeChatHistory("x" as any)).toEqual([]);
   });
 });
+
+describe("renderMarkdown", () => {
+  const { renderMarkdown } = uiUtils;
+
+  it("escapes HTML before anything else (XSS safe)", () => {
+    const out = renderMarkdown('<script>alert(1)</script><img src=x onerror=y>');
+    expect(out).not.toContain("<script>");
+    expect(out).toContain("&lt;script&gt;");
+    expect(out).not.toContain("onerror=y>");
+  });
+
+  it("renders bold and italic", () => {
+    expect(renderMarkdown("a **bold** word")).toBe("a <strong>bold</strong> word");
+    expect(renderMarkdown("a *italic* word")).toBe("a <em>italic</em> word");
+  });
+
+  it("renders fenced code blocks without touching their content", () => {
+    const out = renderMarkdown("```js\nconst a = **not bold**;\n```");
+    expect(out).toContain("<pre");
+    expect(out).toContain("const a = **not bold**;");
+    expect(out).not.toContain("<strong>");
+  });
+
+  it("renders inline code", () => {
+    expect(renderMarkdown("use `x < y` here")).toBe("use <code>x &lt; y</code> here");
+  });
+
+  it("renders http/https links, rejects javascript: URLs", () => {
+    const out = renderMarkdown("[docs](https://example.com/a)");
+    expect(out).toContain('<a href="https://example.com/a" target="_blank" rel="noopener">docs</a>');
+    const evil = renderMarkdown("[x](javascript:alert(1))");
+    expect(evil).not.toContain("<a href=");
+    expect(evil).toContain("[x](javascript:alert(1))");
+  });
+
+  it("converts newlines to <br> and handles empty input", () => {
+    expect(renderMarkdown("a\nb")).toBe("a<br>b");
+    expect(renderMarkdown("")).toBe("");
+    expect(renderMarkdown(null as any)).toBe("");
+  });
+
+  it("does not let markdown inside code spans leak", () => {
+    const out = renderMarkdown("`<b>` and **bold**");
+    expect(out).toContain("<code>&lt;b&gt;</code>");
+    expect(out).toContain("<strong>bold</strong>");
+  });
+});

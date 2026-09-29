@@ -1306,7 +1306,14 @@ async function renderChat(view) {
     var tstr = (UI && UI.fmtTime) ? UI.fmtTime(m.ts) : "";
     if (tstr) whoRow.appendChild(el("span", "msg-ts", tstr));
     wrap.appendChild(whoRow);
-    var bubble = el("div", "bubble", m.text);
+    var bubble = el("div", "bubble");
+    /* Assistant messages render safe markdown (escaped first, tiny subset);
+       user messages stay plain text. Copy always uses the raw text. */
+    if (m.role === "assistant" && UI && UI.renderMarkdown) {
+      bubble.innerHTML = UI.renderMarkdown(m.text);
+    } else {
+      bubble.textContent = m.text;
+    }
     if (m.role === "user" && m.files && m.files.length) {
       m.files.forEach(function (f) {
         bubble.appendChild(el("div", "attach-line mono small", "file: " + f.name + " (" + fmtSize(f.size) + ")"));
