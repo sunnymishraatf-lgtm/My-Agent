@@ -521,6 +521,37 @@ var WIZARD_STEPS = ["REQUEST", "ANALYSIS", "IMPACT", "PLAN", "APPROVAL", "EXECUT
 
 var mz = null; // wizard state, reset on each entry to #/maintain
 
+var WIZARD_STORAGE = "neutron_maintain_wizard";
+
+/* Persist the wizard after every step so a reload or accidental
+   navigation never loses analysis/plan/approval progress.
+   Quota errors are swallowed — persistence is best-effort. */
+function persistWizard() {
+  try {
+    var UI = window.NeutronUI;
+    if (!UI || !mz) return;
+    var clean = UI.sanitizeWizard(mz);
+    if (!clean) return;
+    localStorage.setItem(WIZARD_STORAGE, JSON.stringify(clean));
+  } catch (e) { /* private mode or quota — not fatal */ }
+}
+
+function restoreWizard() {
+  try {
+    var UI = window.NeutronUI;
+    if (!UI) return null;
+    var raw = localStorage.getItem(WIZARD_STORAGE);
+    if (!raw) return null;
+    var obj = JSON.parse(raw);
+    if (!UI.isValidWizardState(obj, WIZARD_STEPS)) return null;
+    return obj;
+  } catch (e) { return null; }
+}
+
+function clearWizard() {
+  try { localStorage.removeItem(WIZARD_STORAGE); } catch (e) {}
+}
+
 function stepsBar(current) {
   var bar = el("div", "steps");
   WIZARD_STEPS.forEach(function (s) {
@@ -533,8 +564,8 @@ function stepsBar(current) {
   return bar;
 }
 
-async function renderMaintain(view) {
-  mz = {
+function freshWizard() {
+  return {
     step: "REQUEST",
     form: { repo: "demo", request: "", riskTolerance: "balanced" },
     analysisId: null, approvalToken: null,
@@ -542,13 +573,37 @@ async function renderMaintain(view) {
     approved: false, rejected: false,
     jobId: null, job: null, result: null, unsupported: null,
   };
+}
+
+async function renderMaintain(view) {
+  var saved = restoreWizard();
   view.appendChild(el("h1", null, "Maintain"));
   var body = el("div", null);
   view.appendChild(body);
+  if (saved && saved.step && saved.step !== "REQUEST") {
+    /* Offer to resume where the user left off. */
+    var p = el("section", "panel");
+    p.appendChild(el("h2", null, "Resume maintenance?"));
+    p.appendChild(el("p", "muted",
+      "You left off at step " + saved.step + " (repository: " +
+      ((saved.form && saved.form.repo) || "demo") + "). Resume, or start over."));
+    var row = el("div", "row");
+    var resume = el("button", "btn primary", "Resume");
+    resume.onclick = function () { mz = saved; persistWizard(); maintainRender(body); };
+    var over = el("button", "btn ghost", "Start over");
+    over.onclick = function () { clearWizard(); mz = freshWizard(); maintainRender(body); };
+    row.appendChild(resume);
+    row.appendChild(over);
+    p.appendChild(row);
+    body.appendChild(p);
+    return;
+  }
+  mz = freshWizard();
   await maintainRender(body);
 }
 
 async function maintainRender(body) {
+  persistWizard();
   body.innerHTML = "";
   body.appendChild(stepsBar(mz.step));
   var fn = {
@@ -565,7 +620,7 @@ async function maintainRender(body) {
 function mzStartOver(body) {
   var row = el("div", "row");
   var b = el("button", "btn ghost", "Start over");
-  b.onclick = function () { renderMaintain(document.getElementById("view")); };
+  b.onclick = function () { clearWizard(); renderMaintain(document.getElementById("view")); };
   row.appendChild(b);
   body.appendChild(row);
 }

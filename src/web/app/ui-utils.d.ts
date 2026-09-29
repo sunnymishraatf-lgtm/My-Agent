@@ -34,3 +34,7 @@ export declare function copyText(
 ): Promise<boolean>;
 
 export declare function fmtTime(ts: number | string | null | undefined): string;
+
+export declare function sanitizeWizard(mz: any): any | null;
+
+export declare function isValidWizardState(obj: any, validSteps: string[]): boolean;

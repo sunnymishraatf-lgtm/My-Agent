@@ -264,3 +264,39 @@ describe("fmtTime", () => {
     expect(fmtTime("garbage")).toBe("");
   });
 });
+
+describe("wizard persistence helpers", () => {
+  const { sanitizeWizard, isValidWizardState } = uiUtils;
+  const STEPS = ["REQUEST", "ANALYSIS", "IMPACT", "PLAN", "APPROVAL", "EXECUTE", "RESULT"];
+
+  it("picks the persistable subset and deep-copies", () => {
+    const analysis = { files: ["a.ts"] };
+    const mz = {
+      step: "PLAN", form: { repo: "demo", request: "fix", riskTolerance: "safe", extra: 1 },
+      analysisId: "abc", approvalToken: "tok", approved: true, rejected: false,
+      analysis, plan: { tasks: [] }, junk: () => {},
+    };
+    const out: any = sanitizeWizard(mz);
+    expect(out.step).toBe("PLAN");
+    expect(out.form).toEqual({ repo: "demo", request: "fix", riskTolerance: "safe" });
+    expect(out.analysisId).toBe("abc");
+    expect(out.approved).toBe(true);
+    expect(out.analysis).toEqual({ files: ["a.ts"] });
+    expect(out.analysis).not.toBe(analysis); // deep copy
+    expect(out.junk).toBeUndefined();
+    expect(out.unsupported).toBeUndefined();
+  });
+
+  it("returns null for non-objects", () => {
+    expect(sanitizeWizard(null)).toBe(null);
+    expect(sanitizeWizard("x" as any)).toBe(null);
+  });
+
+  it("validates restored state against known steps", () => {
+    expect(isValidWizardState({ step: "PLAN" }, STEPS)).toBe(true);
+    expect(isValidWizardState({ step: "NOPE" }, STEPS)).toBe(false);
+    expect(isValidWizardState({}, STEPS)).toBe(false);
+    expect(isValidWizardState(null, STEPS)).toBe(false);
+    expect(isValidWizardState({ step: "PLAN" }, [])).toBe(false);
+  });
+});

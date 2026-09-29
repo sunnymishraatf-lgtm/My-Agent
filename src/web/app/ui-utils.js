@@ -179,6 +179,47 @@
     } catch (e) { return ""; }
   }
 
+  /**
+   * Pick the persistable subset of a maintain-wizard state object.
+   * Returns a JSON-safe copy, or null when the input is not an object.
+   * Keeps localStorage writes small and forward-compatible.
+   */
+  function sanitizeWizard(mz) {
+    if (!mz || typeof mz !== "object") return null;
+    var out = {};
+    if (typeof mz.step === "string") out.step = mz.step;
+    if (mz.form && typeof mz.form === "object") {
+      out.form = {
+        repo: String(mz.form.repo || ""),
+        request: String(mz.form.request || ""),
+        riskTolerance: String(mz.form.riskTolerance || ""),
+      };
+    }
+    ["analysisId", "approvalToken", "jobId"].forEach(function (k) {
+      if (typeof mz[k] === "string") out[k] = mz[k];
+    });
+    ["analysis", "impact", "plan", "job", "result"].forEach(function (k) {
+      if (mz[k] !== undefined) {
+        try { out[k] = JSON.parse(JSON.stringify(mz[k])); } catch (e) { /* skip */ }
+      }
+    });
+    ["approved", "rejected"].forEach(function (k) {
+      if (typeof mz[k] === "boolean") out[k] = mz[k];
+    });
+    if (typeof mz.unsupported === "string") out.unsupported = mz.unsupported;
+    return out;
+  }
+
+  /**
+   * Validate a restored wizard state: must have a known step.
+   * Returns true only for objects whose step is in validSteps.
+   */
+  function isValidWizardState(obj, validSteps) {
+    if (!obj || typeof obj !== "object") return false;
+    if (typeof obj.step !== "string") return false;
+    return Array.isArray(validSteps) && validSteps.indexOf(obj.step) !== -1;
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -188,5 +229,7 @@
     stripAttachmentData: stripAttachmentData,
     copyText: copyText,
     fmtTime: fmtTime,
+    sanitizeWizard: sanitizeWizard,
+    isValidWizardState: isValidWizardState,
   };
 });
