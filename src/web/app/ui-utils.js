@@ -2811,6 +2811,274 @@
     });
   }
 
+  /* ================================================================
+     Model router + usage dashboard + cost control (Phases 21/23/31).
+     All pure — safe to test. Heuristics operate only over the user's own
+     configured providers/models; they never invent model ids.
+     ================================================================ */
+
+  var ROUTER_MODE_KEY = "neutron_router_mode";
+  var ROUTER_MODES = ["auto", "manual", "locked"];
+  var USAGE_STORE_KEY = "neutron_usage";
+  var USAGE_CAP = 2000;
+  var RATES_STORE_KEY = "neutron_rates";
+  var BUDGET_STORE_KEY = "neutron_budget";
+  var MAXTOK_STORE_KEY = "neutron_max_tokens";
+  var LONG_INPUT_CHARS = 8000;
+
+  /** Normalize a stored router mode; default is "auto". */
+  function sanitizeRouterMode(m) {
+    var v = String(m == null ? "" : m).toLowerCase();
+    return ROUTER_MODES.indexOf(v) !== -1 ? v : "auto";
+  }
+
+  /**
+   * Classify a chat task for routing. Pure heuristic over the user's own
+   * input — never calls out, never invents models.
+   * Returns { kind: "vision"|"code"|"long"|"chat", reason }.
+   */
+  function classifyTask(input) {
+    var text = String((input && input.text) == null ? "" : input.text);
+    var hasImages = !!(input && input.hasImages);
+    if (hasImages) {
+      return { kind: "vision", reason: "images attached — needs a vision-capable model" };
+    }
+    if (text.length > LONG_INPUT_CHARS) {
+      return {
+        kind: "long",
+        reason: "long input (" + text.length + " chars) — needs a long-context model",
+      };
+    }
+    if (/```/.test(text) ||
+        /\b(function|class|import\s|export\s|def\s|const\s|let\s|var\s|=>|async\s|await\s|bug|error|stack\s?trace|refactor|debug|compile|syntax|typescript|python|rust|golang)\b/i.test(text)) {
+      return { kind: "code", reason: "looks like a coding task — coding-strong model preferred" };
+    }
+    return { kind: "chat", reason: "general question — fast model preferred" };
+  }
+
+  /**
+   * Tag a model id with capability hints from its name. Explicitly
+   * heuristic — the UI labels router reasons as heuristic-based.
+   */
+  function tagModelCapabilities(modelId) {
+    var id = String(modelId == null ? "" : modelId).toLowerCase();
+    return {
+      vision: /vision|multimodal|llava/i.test(id),
+      longContext: /128k|200k|32k|long/i.test(id),
+      code: /code|coder|deepseek|starcoder/i.test(id),
+      fast: /mini|flash|haiku|turbo|[.\/-]7b|[.\/-]8b/i.test(id),
+    };
+  }
+
+  /**
+   * Pick a model for a classified task from the user's own model list.
+   * opts: { kind, models: [{ id, providerId }] }.
+   * Returns { modelId, providerId, reason, want, usedFallback } or null when empty.
+   * Never invents ids — falls back to the first available model honestly.
+   */
+  function routeModel(opts) {
+    var kind = opts && opts.kind;
+    var models = (opts && Array.isArray(opts.models) ? opts.models : [])
+      .filter(function (m) { return m && m.id; });
+    if (!models.length) return null;
+    function firstWith(pred) {
+      for (var i = 0; i < models.length; i++) {
+        if (pred(tagModelCapabilities(models[i].id))) return models[i];
+      }
+      return null;
+    }
+    var pick = null;
+    var why = "";
+    var want = "";
+    if (kind === "vision") {
+      want = "vision-capable model";
+      pick = firstWith(function (t) { return t.vision; });
+      why = pick ? "vision-capable model for attached images"
+                 : "no vision-tagged model in your list — using first available";
+    } else if (kind === "long") {
+      want = "long-context model";
+      pick = firstWith(function (t) { return t.longContext; });
+      why = pick ? "long-context model for a long input"
+                 : "no long-context-tagged model in your list — using first available";
+    } else if (kind === "code") {
+      want = "coding-strong model";
+      pick = firstWith(function (t) { return t.code; });
+      why = pick ? "coding-strong model for a code task"
+                 : "no coding-tagged model in your list — using first available";
+    } else {
+      want = "fast model";
+      pick = firstWith(function (t) { return t.fast; });
+      why = pick ? "fast model for a general question"
+                 : "no fast-tagged model in your list — using first available";
+    }
+    var fallback = !pick;
+    if (!pick) pick = models[0];
+    return {
+      modelId: pick.id,
+      providerId: pick.providerId || "",
+      reason: why,
+      want: want,
+      usedFallback: fallback,
+    };
+  }
+
+  /**
+   * Normalize one usage entry. Token counts stay null when the provider
+   * did not report them — never zero-filled, never invented.
+   */
+  function sanitizeUsageEntry(e) {
+    if (!e || typeof e !== "object") return null;
+    function numOrNull(v) {
+      if (v === null || v === undefined || v === "") return null;
+      var n = Number(v);
+      return isFinite(n) && n >= 0 ? n : null;
+    }
+    return {
+      ts: typeof e.ts === "number" && isFinite(e.ts) ? e.ts : Date.now(),
+      provider: String(e.provider == null ? "" : e.provider),
+      model: String(e.model == null ? "" : e.model),
+      inTok: numOrNull(e.inTok != null ? e.inTok : e.input_tokens),
+      outTok: numOrNull(e.outTok != null ? e.outTok : e.output_tokens),
+      latencyMs: numOrNull(e.latencyMs),
+      ok: e.ok !== false,
+    };
+  }
+
+  /** Append an entry to the usage log, newest last, capped. Pure. */
+  function usageAdd(log, entry, cap) {
+    var list = Array.isArray(log) ? log.slice() : [];
+    var clean = sanitizeUsageEntry(entry);
+    if (clean) list.push(clean);
+    var c = typeof cap === "number" && cap > 0 ? Math.floor(cap) : USAGE_CAP;
+    return list.length > c ? list.slice(list.length - c) : list;
+  }
+
+  /** Start-of-day (local) for a timestamp. */
+  function dayStartLocal(ts) {
+    var d = new Date(ts);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  /**
+   * Roll up the usage log over the last `days` days (days=1 → today).
+   * nowMs injectable for tests.
+   */
+  function usageRollup(log, days, nowMs) {
+    var now = typeof nowMs === "number" ? nowMs : Date.now();
+    var d = typeof days === "number" && days > 0 ? Math.floor(days) : 1;
+    var cutoff = dayStartLocal(now) - (d - 1) * 86400000;
+    var list = Array.isArray(log) ? log : [];
+    var out = {
+      requests: 0, succeeded: 0, failed: 0,
+      inTok: 0, outTok: 0, unreported: 0,
+      perModel: {}, perProvider: {}, perDay: [],
+    };
+    var dayMap = {};
+    list.forEach(function (raw) {
+      var e = sanitizeUsageEntry(raw);
+      if (!e || e.ts < cutoff) return;
+      out.requests++;
+      if (e.ok) out.succeeded++; else out.failed++;
+      var hasTok = e.inTok != null || e.outTok != null;
+      if (hasTok) {
+        out.inTok += e.inTok || 0;
+        out.outTok += e.outTok || 0;
+      } else {
+        out.unreported++;
+      }
+      function bump(bucket, key, label) {
+        var b = bucket[key] || (bucket[key] = { key: key, label: label, requests: 0, inTok: 0, outTok: 0, unreported: 0 });
+        b.requests++;
+        if (hasTok) { b.inTok += e.inTok || 0; b.outTok += e.outTok || 0; }
+        else b.unreported++;
+      }
+      bump(out.perModel, e.model || "(unknown model)", e.model || "(unknown model)");
+      bump(out.perProvider, e.provider || "(unknown provider)", e.provider || "(unknown provider)");
+      var ds = dayStartLocal(e.ts);
+      if (!dayMap[ds]) dayMap[ds] = { dayStart: ds, requests: 0, inTok: 0, outTok: 0 };
+      dayMap[ds].requests++;
+      if (hasTok) { dayMap[ds].inTok += e.inTok || 0; dayMap[ds].outTok += e.outTok || 0; }
+    });
+    out.perDay = Object.keys(dayMap).map(function (k) { return dayMap[k]; })
+      .sort(function (a, b) { return a.dayStart - b.dayStart; });
+    return out;
+  }
+
+  /**
+   * Validate a $/1M-tokens rate. Returns the number, or null for
+   * empty/invalid. Never negative, never absurd.
+   */
+  function validateRate(v) {
+    if (v === null || v === undefined || v === "") return null;
+    var n = Number(v);
+    if (!isFinite(n) || n < 0 || n > 1000000) return null;
+    return n;
+  }
+
+  /**
+   * Estimate cost in dollars from token counts and a {in,out} $/1M rate.
+   * Returns null when anything needed is missing — never a guessed price.
+   */
+  function estimateCost(inTok, outTok, rate) {
+    if (inTok == null && outTok == null) return null;
+    if (!rate || rate.in == null || rate.out == null) return null;
+    return ((inTok || 0) * rate.in + (outTok || 0) * rate.out) / 1000000;
+  }
+
+  /**
+   * Budget state for one period. spent/limit in dollars.
+   * "unset" when no limit configured; "warn" at >=80%; "over" at >=100%.
+   */
+  function budgetStatus(spent, limit) {
+    var lim = Number(limit);
+    if (!isFinite(lim) || lim <= 0) return "unset";
+    var s = Number(spent);
+    if (!isFinite(s) || s < 0) s = 0;
+    if (s >= lim) return "over";
+    if (s >= lim * 0.8) return "warn";
+    return "ok";
+  }
+
+  /**
+   * Sum estimated spend over entries, using a rates map keyed by model id:
+   * { modelId: { in, out } }. Entries without rates or tokens are skipped.
+   * Returns { dollars, costed, skipped }.
+   */
+  function sumEstimatedSpend(entries, rates) {
+    var dollars = 0, costed = 0, skipped = 0;
+    (Array.isArray(entries) ? entries : []).forEach(function (raw) {
+      var e = sanitizeUsageEntry(raw);
+      if (!e || !e.ok) return;
+      var r = rates && e.model ? rates[e.model] : null;
+      var c = estimateCost(e.inTok, e.outTok, r);
+      if (c == null) { skipped++; return; }
+      dollars += c;
+      costed++;
+    });
+    return { dollars: dollars, costed: costed, skipped: skipped };
+  }
+
+  /** Validate a budget object {daily, monthly} from settings inputs. */
+  function sanitizeBudget(b) {
+    function one(v) {
+      if (v === null || v === "") return null;
+      if (v === undefined) return null;
+      var n = Number(v);
+      return isFinite(n) && n > 0 && n <= 1000000 ? n : null;
+    }
+    b = b && typeof b === "object" ? b : {};
+    return { daily: one(b.daily), monthly: one(b.monthly) };
+  }
+
+  /** Validate max output tokens setting. */
+  function sanitizeMaxTokens(v) {
+    if (v === null || v === undefined || v === "") return null;
+    var n = Math.floor(Number(v));
+    return isFinite(n) && n >= 16 && n <= 128000 ? n : null;
+  }
+
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -2922,6 +3190,27 @@
     parseCompactDiff: parseCompactDiff,
     /* settings model picker */
     buildModelOptions: buildModelOptions,
+    /* model router + usage dashboard + cost control (Phases 21/23/31) */
+    ROUTER_MODE_KEY: ROUTER_MODE_KEY,
+    ROUTER_MODES: ROUTER_MODES,
+    USAGE_STORE_KEY: USAGE_STORE_KEY,
+    USAGE_CAP: USAGE_CAP,
+    RATES_STORE_KEY: RATES_STORE_KEY,
+    BUDGET_STORE_KEY: BUDGET_STORE_KEY,
+    MAXTOK_STORE_KEY: MAXTOK_STORE_KEY,
+    sanitizeRouterMode: sanitizeRouterMode,
+    classifyTask: classifyTask,
+    tagModelCapabilities: tagModelCapabilities,
+    routeModel: routeModel,
+    sanitizeUsageEntry: sanitizeUsageEntry,
+    usageAdd: usageAdd,
+    usageRollup: usageRollup,
+    validateRate: validateRate,
+    estimateCost: estimateCost,
+    budgetStatus: budgetStatus,
+    sumEstimatedSpend: sumEstimatedSpend,
+    sanitizeBudget: sanitizeBudget,
+    sanitizeMaxTokens: sanitizeMaxTokens,
     /* voice output */
     stopSpeechSynthesis: stopSpeechSynthesis,
     /* secret scrubbing for logs */

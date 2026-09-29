@@ -66,6 +66,111 @@ function setStoredModel(m) {
     else localStorage.removeItem(MODEL_STORAGE);
   } catch (e) { /* private mode */ }
 }
+/* ----- Model router / usage / cost-control storage (Phases 21/23/31).
+   All device-local. Rates are the USER's own $/1M-token figures; usage
+   token counts come only from provider API responses. ----- */
+function lsGet(k) {
+  try { return localStorage.getItem(k); } catch (e) { return null; }
+}
+function lsSet(k, v) {
+  try {
+    if (v === null || v === undefined) localStorage.removeItem(k);
+    else localStorage.setItem(k, v);
+  } catch (e) { /* private mode */ }
+}
+function routerMode() {
+  var UI = window.NeutronUI;
+  return UI ? UI.sanitizeRouterMode(lsGet(UI.ROUTER_MODE_KEY)) : "auto";
+}
+function loadRates() {
+  var UI = window.NeutronUI;
+  try {
+    var raw = UI ? lsGet(UI.RATES_STORE_KEY) : null;
+    var r = raw ? JSON.parse(raw) : {};
+    if (!r || typeof r !== "object") return {};
+    /* Scrub to { modelId: { in, out } } with validated numbers only. */
+    var out = {};
+    Object.keys(r).forEach(function (k) {
+      var v = r[k];
+      if (v && typeof v === "object") {
+        var ri = UI.validateRate(v.in), ro = UI.validateRate(v.out);
+        if (ri != null && ro != null && k) out[k] = { in: ri, out: ro };
+      }
+    });
+    return out;
+  } catch (e) { return {}; }
+}
+function saveRates(rates) { var UI = window.NeutronUI; if (UI) lsSet(UI.RATES_STORE_KEY, JSON.stringify(rates || {})); }
+function loadBudget() {
+  var UI = window.NeutronUI;
+  if (!UI) return { daily: null, monthly: null };
+  try { return UI.sanitizeBudget(JSON.parse(lsGet(UI.BUDGET_STORE_KEY) || "{}")); }
+  catch (e) { return { daily: null, monthly: null }; }
+}
+function loadMaxTokens() {
+  var UI = window.NeutronUI;
+  return UI ? UI.sanitizeMaxTokens(lsGet(UI.MAXTOK_STORE_KEY)) : null;
+}
+function loadUsageLog() {
+  var UI = window.NeutronUI;
+  if (!UI) return [];
+  try {
+    var raw = lsGet(UI.USAGE_STORE_KEY);
+    var log = raw ? JSON.parse(raw) : [];
+    return Array.isArray(log) ? log.filter(function (e) { return UI.sanitizeUsageEntry(e); }) : [];
+  } catch (e) { return []; }
+}
+/** Append one usage entry to the device-local log (capped). Never throws. */
+function recordUsage(entry) {
+  var UI = window.NeutronUI;
+  if (!UI) return;
+  try {
+    var log = loadUsageLog();
+    lsSet(UI.USAGE_STORE_KEY, JSON.stringify(UI.usageAdd(log, entry)));
+  } catch (e) { /* best-effort */ }
+}
+/** Estimated spend (dollars) over the last `days` days, from user rates. */
+function periodSpend(log, rates, days) {
+  var UI = window.NeutronUI;
+  if (!UI) return { dollars: 0, costed: 0, skipped: 0 };
+  var now = Date.now();
+  var d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+  var cutoff = d0.getTime() - (days - 1) * 86400000;
+  var entries = (Array.isArray(log) ? log : []).filter(function (e) { return e && e.ts >= cutoff; });
+  return UI.sumEstimatedSpend(entries, rates);
+}
+/** Budget gate for a chat send. True = proceed. Warns at 80%, confirms at 100%. */
+function budgetCheck() {
+  var UI = window.NeutronUI;
+  if (!UI) return true;
+  var b = loadBudget();
+  if (!b.daily && !b.monthly) return true;
+  var log = loadUsageLog();
+  var rates = loadRates();
+  function money(n) { return "$" + n.toFixed(2); }
+  if (b.daily) {
+    var s = periodSpend(log, rates, 1);
+    var st = UI.budgetStatus(s.dollars, b.daily);
+    if (st === "over") {
+      return window.confirm(
+        "Over daily budget (" + money(s.dollars) + " of " + money(b.daily) +
+        " estimated from your rates). Send anyway?");
+    }
+    if (st === "warn") toast("Approaching daily budget: " + money(s.dollars) + " of " + money(b.daily) + " estimated.");
+  }
+  if (b.monthly) {
+    var m = periodSpend(log, rates, 30);
+    var mst = UI.budgetStatus(m.dollars, b.monthly);
+    if (mst === "over") {
+      return window.confirm(
+        "Over monthly budget (" + money(m.dollars) + " of " + money(b.monthly) +
+        " estimated from your rates). Send anyway?");
+    }
+    if (mst === "warn") toast("Approaching monthly budget: " + money(m.dollars) + " of " + money(b.monthly) + " estimated.");
+  }
+  return true;
+}
+
 /* ----- Developer Mode storage (all client-side) ----- */
 function storedBackendUrl() {
   try { return (localStorage.getItem(BACKEND_URL_STORAGE) || "").trim(); } catch (e) { return ""; }
@@ -414,6 +519,7 @@ var ROUTES = {
   deps: function (view) { return window.NeutronInsights.renderDeps(view); },
   health: function (view) { return window.NeutronInsights.renderHealth(view); },
   settings: renderSettings,
+  usage: renderUsage,
 };
 
 function currentRoute() {
@@ -2985,6 +3091,77 @@ async function renderChat(view) {
     saveConvStore();
   };
 
+  /* ---------- model router (Phase 21) ---------- */
+  function paintRouterBar(info) {
+    routerBar.innerHTML = "";
+    var mode = routerMode();
+    var tag = el("span", "router-tag", "Router: " + mode);
+    routerBar.appendChild(tag);
+    function note(t) { routerBar.appendChild(el("span", "router-note", t)); }
+    if (!info) {
+      note(mode === "locked" ? "your model choice is never changed"
+        : mode === "manual" ? "suggests a model per message — you apply it"
+        : "picks a model per message and shows why");
+      return;
+    }
+    if (info.suggestion) {
+      note("Suggestion: " + info.suggestion.modelId + " — " + info.suggestion.reason + " ");
+      var applyBtn = el("button", "btn ghost sm", "Apply");
+      applyBtn.type = "button";
+      applyBtn.onclick = function () {
+        setStoredModel(info.suggestion.modelId);
+        activeConv().model = info.suggestion.modelId;
+        paintModelOptions();
+        paintPanel();
+        clearError();
+        saveConvStore();
+        paintRouterBar({ applied: info.suggestion.modelId });
+        toast("Model set to " + info.suggestion.modelId + ".");
+      };
+      routerBar.appendChild(applyBtn);
+      return;
+    }
+    if (info.applied) { note("now using " + info.applied + " — " + (info.reason || "")); return; }
+    note(info.note || "");
+  }
+  paintRouterBar(null);
+
+  /**
+   * Maybe route the model for this send. Auto: applies the routed model
+   * only when the user left the picker on "auto" — an explicit model choice
+   * is never overridden (Locked additionally never even suggests).
+   */
+  function applyRouter(text, files) {
+    var UI = window.NeutronUI;
+    var mode = routerMode();
+    if (!UI || mode === "locked") { paintRouterBar({ note: "your model choice is never changed" }); return; }
+    var prov = storedProvider();
+    if (!prov || !byId[prov]) return; /* no-default policy: router needs a provider */
+    var defs = (byId[prov].defaultModels || []).slice();
+    var models = defs.map(function (id) { return { id: id, providerId: prov }; });
+    var hasImages = files.some(function (f) { return f && f.kind === "image"; });
+    var cls = UI.classifyTask({ text: text, hasImages: hasImages });
+    var res = UI.routeModel({ kind: cls.kind, models: models });
+    if (!res) { paintRouterBar({ note: "no models listed for this provider" }); return; }
+    var explicit = storedModel();
+    if (mode === "auto") {
+      if (!explicit) {
+        setStoredModel(res.modelId);
+        activeConv().model = res.modelId;
+        paintModelOptions();
+        try { modelSel.value = res.modelId; } catch (e) {}
+        paintPanel();
+        saveConvStore();
+        paintRouterBar({ applied: res.modelId, reason: res.reason + " (heuristic)" });
+      } else {
+        paintRouterBar({ note: "keeping your explicit model choice (" + explicit + ")" });
+      }
+    } else {
+      if (res.modelId !== explicit) paintRouterBar({ suggestion: res });
+      else paintRouterBar({ note: "current model matches the router suggestion" });
+    }
+  }
+
   var detailsBtn = el("button", "btn ghost sm", "Provider info");
   var voiceBtn = el("button", "btn ghost sm", voiceSpeakEnabled() ? "Voice: on" : "Voice: off");
   var histBtn = el("button", "icon-btn hist-toggle", "\u2630");
@@ -3115,6 +3292,10 @@ async function renderChat(view) {
     openProjModal("Project context sent", wrap, [{ label: "Close", kind: "primary" }], invoker);
   }
   main.appendChild(head);
+  /* Model router status bar (Phase 21): visible routing reasoning. */
+  var routerBar = el("div", "router-bar");
+  routerBar.setAttribute("aria-live", "polite");
+  main.appendChild(routerBar);
 
   /* ----- provider details panel ----- */
   var panel = el("div", "prov-panel hidden");
@@ -3563,6 +3744,10 @@ async function renderChat(view) {
       showError(hint);
       return;
     }
+    /* Cost control: warn at 80% of budget, confirm every send at 100%. */
+    if (!budgetCheck()) return;
+    /* Model router: classify + maybe pick a model before the send. */
+    try { applyRouter(text, files); } catch (e) { /* router never breaks a send */ }
     var umsg = { role: "user", text: text, ts: Date.now() };
     if (files.length) {
       /* Keep bytes only for small text files; anything larger restores
@@ -3603,6 +3788,11 @@ async function renderChat(view) {
     };
     var cm = storedModel();
     if (cm) chatBody.model = cm;
+    /* Cost control: user-configured max output tokens, when supported. */
+    try {
+      var mt = loadMaxTokens();
+      if (mt) chatBody.maxTokens = mt;
+    } catch (e) { /* never break a send */ }
     /* Project brain: condensed project memory rides along as system
        context (server merges it with the artifact nudge). Additive —
        a failure here must never break the send. */
@@ -3634,8 +3824,21 @@ async function renderChat(view) {
     sendBtn.disabled = true;
     sendBtn.classList.add("sending");
     showTyping();
+    var t0 = Date.now();
     try {
       var res = await api("POST", "/api/chat", chatBody);
+      /* Usage dashboard: log provider-reported tokens only — never invented. */
+      try {
+        recordUsage({
+          ts: Date.now(),
+          provider: res.provider || storedProvider(),
+          model: res.model || chatBody.model || "",
+          inTok: res.usage ? res.usage.input_tokens : null,
+          outTok: res.usage ? res.usage.output_tokens : null,
+          latencyMs: Date.now() - t0,
+          ok: true,
+        });
+      } catch (e) { /* logging never breaks chat */ }
       var amsg = { role: "assistant", text: res.text || "(empty reply)", ts: Date.now() };
       if (res.artifacts && res.artifacts.length) amsg.artifacts = res.artifacts;
       chatState.messages.push(amsg);
@@ -3647,6 +3850,16 @@ async function renderChat(view) {
     } catch (e) {
       /* Friendly message for the user; the raw detail stays in the API
          inspector and verbose log via api(). */
+      try {
+        recordUsage({
+          ts: Date.now(),
+          provider: storedProvider(),
+          model: chatBody.model || "",
+          inTok: null, outTok: null,
+          latencyMs: Date.now() - t0,
+          ok: false,
+        });
+      } catch (e2) { /* logging never breaks chat */ }
       var UI5 = window.NeutronUI;
       var msg = (UI5 && UI5.friendlyChatError) ? UI5.friendlyChatError(e)
         : (e && e.message ? e.message : String(e));
@@ -3704,6 +3917,157 @@ async function renderChat(view) {
   newBtn.onclick = function () { newTask(); };
 }
 
+
+/* ---------- usage dashboard (Phase 23) ----------
+   Device-local request log. Token counts come only from provider API
+   responses; entries without them are marked "not reported", never estimated. */
+async function renderUsage(view) {
+  var UI = window.NeutronUI;
+  view.appendChild(el("h1", null, "Usage"));
+  view.appendChild(el("p", "muted small",
+    "Requests from this browser only. Costs are estimated from YOUR rates in Settings — " +
+    "models without a rate show \u2014, never a guessed price."));
+  if (!UI) { view.appendChild(el("p", "muted", "UI helpers unavailable.")); return; }
+
+  var log = loadUsageLog();
+  var rates = loadRates();
+  var days = 1;
+  var tabs = el("div", "tabs");
+  var body = el("div");
+  function fmtN(n) { return Number(n || 0).toLocaleString("en-US"); }
+  function fmtMoney(n) { return "$" + n.toFixed(2); }
+  function dayLabel(ts) { var d = new Date(ts); return (d.getMonth() + 1) + "/" + d.getDate(); }
+
+  [["Today", 1], ["7 days", 7], ["30 days", 30]].forEach(function (pair) {
+    var b = el("button", "tab" + (pair[1] === days ? " active" : ""));
+    b.type = "button";
+    b.textContent = pair[0];
+    b.setAttribute("aria-pressed", pair[1] === days ? "true" : "false");
+    b.onclick = function () {
+      days = pair[1];
+      Array.prototype.forEach.call(tabs.children, function (t, i) {
+        t.classList.toggle("active", i === [["Today", 1], ["7 days", 7], ["30 days", 30]][i][1] === days);
+        t.setAttribute("aria-pressed", t.classList.contains("active") ? "true" : "false");
+      });
+      paint();
+    };
+    tabs.appendChild(b);
+  });
+  view.appendChild(tabs);
+  view.appendChild(body);
+
+  function spendInPeriod() {
+    var now = Date.now();
+    var d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+    var cutoff = d0.getTime() - (days - 1) * 86400000;
+    return UI.sumEstimatedSpend(log.filter(function (e) { return e && e.ts >= cutoff; }), rates);
+  }
+
+  function statCard(title, big, sub) {
+    var c = el("section", "panel");
+    c.appendChild(el("h2", null, title));
+    var n = el("div", "stat-num", big);
+    c.appendChild(n);
+    if (sub) c.appendChild(el("p", "muted small", sub));
+    return c;
+  }
+
+  function paint() {
+    body.innerHTML = "";
+    if (!log.length) {
+      var empty = el("section", "panel");
+      empty.appendChild(el("p", null, "No requests logged yet."));
+      empty.appendChild(el("p", "muted small", "Send a chat message and it will appear here with token usage when your provider reports it."));
+      body.appendChild(empty);
+      return;
+    }
+    var r = UI.usageRollup(log, days, Date.now());
+    var spend = spendInPeriod();
+    var grid = el("div", "grid cols-3");
+    grid.appendChild(statCard("Requests", fmtN(r.requests), r.succeeded + " ok · " + r.failed + " failed"));
+    grid.appendChild(statCard("Input tokens", fmtN(r.inTok), null));
+    grid.appendChild(statCard("Output tokens", fmtN(r.outTok), null));
+    body.appendChild(grid);
+    var grid2 = el("div", "grid cols-3");
+    grid2.appendChild(statCard("Est. cost",
+      spend.costed ? fmtMoney(spend.dollars) : "\u2014",
+      spend.costed ? "estimated from your rates (" + spend.costed + " requests)" : "set rates in Settings to estimate"));
+    grid2.appendChild(statCard("Unreported", fmtN(r.unreported),
+      r.unreported ? "provider did not return token usage" : "all requests reported tokens"));
+    var b = loadBudget();
+    var btxt = (!b.daily && !b.monthly) ? "no budget set"
+      : "daily " + (b.daily == null ? "\u2014" : fmtMoney(b.daily)) +
+        " · monthly " + (b.monthly == null ? "\u2014" : fmtMoney(b.monthly));
+    grid2.appendChild(statCard("Budget", btxt, "manage in Settings → Budget"));
+    body.appendChild(grid2);
+
+    /* per-day bars (CSS only) */
+    if (r.perDay.length > 1 || (r.perDay.length === 1 && days > 1)) {
+      var chartP = el("section", "panel");
+      chartP.appendChild(el("h2", null, "Requests per day"));
+      var chart = el("div", "usage-bars");
+      var max = 0;
+      r.perDay.forEach(function (dy) { if (dy.requests > max) max = dy.requests; });
+      r.perDay.forEach(function (dy) {
+        var wrap = el("div", "usage-bar");
+        var fill = el("div", "usage-bar-fill");
+        fill.style.height = (max ? Math.max(4, Math.round(dy.requests / max * 100)) : 0) + "%";
+        fill.title = dayLabel(dy.dayStart) + ": " + dy.requests + " requests";
+        wrap.appendChild(fill);
+        wrap.appendChild(el("div", "usage-bar-label", dayLabel(dy.dayStart)));
+        chart.appendChild(wrap);
+      });
+      chartP.appendChild(chart);
+      body.appendChild(chartP);
+    }
+
+    function costForModel(bkt) {
+      if (bkt.unreported === bkt.requests) return null;
+      return UI.estimateCost(bkt.inTok || null, bkt.outTok || null, rates[bkt.label]);
+    }
+    function costForProvider(bkt) {
+      var now = Date.now();
+      var d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+      var cutoff = d0.getTime() - (days - 1) * 86400000;
+      var entries = log.filter(function (e) { return e && e.ts >= cutoff && e.provider === bkt.label; });
+      var ssum = UI.sumEstimatedSpend(entries, rates);
+      return ssum.costed ? ssum.dollars : null;
+    }
+    function bucketTable(title, buckets, costFor) {
+      var keys = Object.keys(buckets).sort(function (a, k) { return buckets[k].requests - buckets[a].requests; });
+      if (!keys.length) return;
+      var psec = el("section", "panel");
+      psec.appendChild(el("h2", null, title));
+      var t = document.createElement("table");
+      t.className = "tbl";
+      var thead = document.createElement("thead");
+      var hr = document.createElement("tr");
+      ["Name", "Requests", "In", "Out", "Est. cost"].forEach(function (h) {
+        var th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
+      });
+      thead.appendChild(hr); t.appendChild(thead);
+      var tb = document.createElement("tbody");
+      keys.slice(0, 20).forEach(function (k) {
+        var bkt = buckets[k];
+        var tr = document.createElement("tr");
+        function td(txt) { var c = document.createElement("td"); c.textContent = txt; tr.appendChild(c); }
+        td(bkt.label);
+        td(String(bkt.requests));
+        td(bkt.unreported === bkt.requests ? "not reported" : fmtN(bkt.inTok));
+        td(bkt.unreported === bkt.requests ? "not reported" : fmtN(bkt.outTok));
+        var c = costFor(bkt);
+        td(c == null ? "\u2014" : fmtMoney(c));
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      psec.appendChild(t);
+      body.appendChild(psec);
+    }
+    bucketTable("By model", r.perModel, costForModel);
+    bucketTable("By provider", r.perProvider, costForProvider);
+  }
+  paint();
+}
 
 /* ---------- settings (BYOK + provider/model choice) ---------- */
 
@@ -3843,6 +4207,137 @@ async function renderSettings(view) {
   pp.appendChild(mrow);
   pp.appendChild(modelStatus);
   view.appendChild(pp);
+
+  /* ----- Model router (Phase 21) ----- */
+  var rp = el("section", "panel");
+  rp.appendChild(el("h2", null, "Model router"));
+  rp.appendChild(el("p", "muted small",
+    "Heuristic auto-selection over YOUR configured models only — it never invents model ids. " +
+    "Auto picks per message and shows why. Manual suggests and lets you apply. " +
+    "Locked never changes your choice, even when the heuristics disagree."));
+  var UIm = window.NeutronUI;
+  var modeSel = el("select", "input");
+  modeSel.setAttribute("aria-label", "Router mode");
+  [["auto", "Auto — pick per message"], ["manual", "Manual — suggest only"], ["locked", "Locked — never change my model"]]
+    .forEach(function (pair) {
+      var o = document.createElement("option");
+      o.value = pair[0];
+      o.textContent = pair[1];
+      modeSel.appendChild(o);
+    });
+  modeSel.value = routerMode();
+  modeSel.onchange = function () {
+    if (UIm) lsSet(UIm.ROUTER_MODE_KEY, modeSel.value);
+    clearError();
+    toast("Router mode: " + modeSel.value + ".");
+  };
+  rp.appendChild(field("ROUTER MODE", modeSel));
+  view.appendChild(rp);
+
+  /* ----- Usage rates (Phase 31) ----- */
+  var rt = el("section", "panel");
+  rt.appendChild(el("h2", null, "Usage rates"));
+  rt.appendChild(el("p", "muted small",
+    "What YOU pay per 1M tokens, per model id. Used only to estimate spend on the Usage dashboard. " +
+    "Models without a rate show \u2014 for cost — never a guessed price. Check your provider's pricing page."));
+  var rateRows = el("div", "rate-rows");
+  function rateRow(modelId, rin, rout) {
+    var row = el("div", "rate-row");
+    var mid = el("input", "input");
+    mid.type = "text"; mid.placeholder = "model id (e.g. meta/llama-3.1-70b-instruct)";
+    mid.setAttribute("aria-label", "Model id"); mid.autocomplete = "off"; mid.value = modelId || "";
+    var rinI = el("input", "input");
+    rinI.type = "number"; rinI.min = "0"; rinI.step = "any"; rinI.placeholder = "$/1M in";
+    rinI.setAttribute("aria-label", "Dollars per million input tokens"); rinI.value = rin == null ? "" : String(rin);
+    var routI = el("input", "input");
+    routI.type = "number"; routI.min = "0"; routI.step = "any"; routI.placeholder = "$/1M out";
+    routI.setAttribute("aria-label", "Dollars per million output tokens"); routI.value = rout == null ? "" : String(rout);
+    var del = el("button", "btn ghost sm", "\u2715");
+    del.type = "button"; del.setAttribute("aria-label", "Remove rate row");
+    del.onclick = function () { row.parentNode.removeChild(row); };
+    row.appendChild(mid); row.appendChild(rinI); row.appendChild(routI); row.appendChild(del);
+    return row;
+  }
+  function paintRateRows() {
+    rateRows.innerHTML = "";
+    var rates = loadRates();
+    Object.keys(rates).forEach(function (k) {
+      rateRows.appendChild(rateRow(k, rates[k].in, rates[k].out));
+    });
+    if (!Object.keys(rates).length) rateRows.appendChild(rateRow("", "", ""));
+  }
+  paintRateRows();
+  rt.appendChild(rateRows);
+  var rateBtns = el("div", "row");
+  var addRate = el("button", "btn ghost sm", "+ Add rate");
+  addRate.type = "button";
+  addRate.onclick = function () { rateRows.appendChild(rateRow("", "", "")); };
+  var saveRatesBtn = el("button", "btn primary", "Save rates");
+  saveRatesBtn.onclick = function () {
+    var UIv = window.NeutronUI;
+    var out = {};
+    var bad = 0;
+    Array.prototype.forEach.call(rateRows.children, function (row) {
+      var ins = row.querySelectorAll("input");
+      var mid = ins[0].value.trim();
+      var ri = UIv ? UIv.validateRate(ins[1].value) : null;
+      var ro = UIv ? UIv.validateRate(ins[2].value) : null;
+      if (!mid && ri == null && ro == null) return; /* empty row */
+      if (!mid || ri == null || ro == null) { bad++; return; }
+      out[mid] = { in: ri, out: ro };
+    });
+    if (bad) { showError(bad + " rate row(s) invalid — need a model id and two non-negative numbers."); return; }
+    saveRates(out);
+    clearError();
+    toast("Usage rates saved.");
+  };
+  rateBtns.appendChild(addRate); rateBtns.appendChild(saveRatesBtn);
+  rt.appendChild(rateBtns);
+  view.appendChild(rt);
+
+  /* ----- Budget & cost control (Phase 31) ----- */
+  var bcp = el("section", "panel");
+  bcp.appendChild(el("h2", null, "Budget & cost control"));
+  bcp.appendChild(el("p", "muted small",
+    "Optional spending guardrails, estimated from your rates above. At 80% of a budget you get a warning; " +
+    "at 100% every send asks for confirmation. Max output tokens is passed to the provider when supported."));
+  var curB = loadBudget();
+  var dailyIn = el("input", "input");
+  dailyIn.type = "number"; dailyIn.min = "0"; dailyIn.step = "any"; dailyIn.placeholder = "e.g. 5";
+  dailyIn.setAttribute("aria-label", "Daily budget in dollars");
+  dailyIn.value = curB.daily == null ? "" : String(curB.daily);
+  var monthlyIn = el("input", "input");
+  monthlyIn.type = "number"; monthlyIn.min = "0"; monthlyIn.step = "any"; monthlyIn.placeholder = "e.g. 50";
+  monthlyIn.setAttribute("aria-label", "Monthly budget in dollars");
+  monthlyIn.value = curB.monthly == null ? "" : String(curB.monthly);
+  var mtIn = el("input", "input");
+  mtIn.type = "number"; mtIn.min = "16"; mtIn.step = "1"; mtIn.placeholder = "e.g. 4096";
+  mtIn.setAttribute("aria-label", "Max output tokens");
+  var curMt = loadMaxTokens();
+  mtIn.value = curMt == null ? "" : String(curMt);
+  bcp.appendChild(field("DAILY BUDGET ($)", dailyIn));
+  bcp.appendChild(field("MONTHLY BUDGET ($)", monthlyIn));
+  bcp.appendChild(field("MAX OUTPUT TOKENS", mtIn));
+  var saveB = el("button", "btn primary", "Save budget & limits");
+  saveB.onclick = function () {
+    var UIb = window.NeutronUI;
+    if (!UIb) return;
+    var b = UIb.sanitizeBudget({ daily: dailyIn.value, monthly: monthlyIn.value });
+    if ((dailyIn.value.trim() || monthlyIn.value.trim()) && !b.daily && !b.monthly) {
+      showError("Budgets must be positive numbers (or left empty).");
+      return;
+    }
+    lsSet(UIb.BUDGET_STORE_KEY, JSON.stringify(b));
+    var mt = UIb.sanitizeMaxTokens(mtIn.value);
+    if (mtIn.value.trim() && mt == null) { showError("Max output tokens must be 16–128000 (or empty)."); return; }
+    lsSet(UIb.MAXTOK_STORE_KEY, mt == null ? null : String(mt));
+    clearError();
+    toast("Budget & limits saved.");
+  };
+  var brow = el("div", "row");
+  brow.appendChild(saveB);
+  bcp.appendChild(brow);
+  view.appendChild(bcp);
 
   /* ----- API key ----- */
   var p = el("section", "panel");

@@ -587,3 +587,40 @@ export declare function timelineDayLabel(dayStartMs: number, nowMs: number): str
 export declare function timelineGroupByDay(
   events: TimelineEvent[] | null | undefined, nowMs: number
 ): Array<{ dayStart: number; label: string; events: TimelineEvent[] }>;
+
+/* Model router + usage dashboard + cost control (Phases 21/23/31) */
+export declare const ROUTER_MODE_KEY: string;
+export declare const ROUTER_MODES: string[];
+export declare const USAGE_STORE_KEY: string;
+export declare const USAGE_CAP: number;
+export declare const RATES_STORE_KEY: string;
+export declare const BUDGET_STORE_KEY: string;
+export declare const MAXTOK_STORE_KEY: string;
+export declare function sanitizeRouterMode(m: any): "auto" | "manual" | "locked";
+export interface TaskClassification { kind: "vision" | "code" | "long" | "chat"; reason: string }
+export declare function classifyTask(input: { text?: string | null; hasImages?: boolean } | null | undefined): TaskClassification;
+export interface ModelCapabilities { vision: boolean; longContext: boolean; code: boolean; fast: boolean }
+export declare function tagModelCapabilities(modelId: string | null | undefined): ModelCapabilities;
+export interface RouteCandidate { id: string; providerId?: string }
+export interface RouteResult { modelId: string; providerId: string; reason: string; want: string; usedFallback: boolean }
+export declare function routeModel(opts: { kind: string; models: RouteCandidate[] } | null | undefined): RouteResult | null;
+export interface UsageEntry { ts: number; provider: string; model: string; inTok: number | null; outTok: number | null; latencyMs: number | null; ok: boolean }
+export declare function sanitizeUsageEntry(e: any): UsageEntry | null;
+export declare function usageAdd(log: any, entry: any, cap?: number): UsageEntry[];
+export interface UsageBucket { key: string; label: string; requests: number; inTok: number; outTok: number; unreported: number }
+export interface UsageDay { dayStart: number; requests: number; inTok: number; outTok: number }
+export interface UsageRollupResult {
+  requests: number; succeeded: number; failed: number;
+  inTok: number; outTok: number; unreported: number;
+  perModel: { [key: string]: UsageBucket };
+  perProvider: { [key: string]: UsageBucket };
+  perDay: UsageDay[];
+}
+export declare function usageRollup(log: any, days: number, nowMs?: number): UsageRollupResult;
+export declare function validateRate(v: any): number | null;
+export interface ModelRate { in: number; out: number }
+export declare function estimateCost(inTok: number | null, outTok: number | null, rate: { in?: number | null; out?: number | null } | null | undefined): number | null;
+export declare function budgetStatus(spent: any, limit: any): "unset" | "ok" | "warn" | "over";
+export declare function sumEstimatedSpend(entries: any, rates: { [modelId: string]: { in: number; out: number } } | null | undefined): { dollars: number; costed: number; skipped: number };
+export declare function sanitizeBudget(b: any): { daily: number | null; monthly: number | null };
+export declare function sanitizeMaxTokens(v: any): number | null;

@@ -1409,6 +1409,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
         apiKey?: string;
         attachments?: unknown;
         projectContext?: unknown;
+        maxTokens?: unknown;
       };
       const apiKey = extractRequestKey(req, body);
       const providerId = extractRequestProvider(req, body);
@@ -1448,9 +1449,13 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
       const config = configForRequest(apiKey, providerId);
       const api = new ApiSystem({ config, logger: silentLogger });
       try {
-        const chatOpts: { model?: string; provider?: string } = {};
+        const chatOpts: { model?: string; provider?: string; maxTokens?: number } = {};
         if (body.model) chatOpts.model = body.model;
         if (providerId) chatOpts.provider = providerId;
+        /* Cost control: client-supplied max output tokens, sanity-capped. */
+        if (typeof body.maxTokens === "number" && isFinite(body.maxTokens) && body.maxTokens > 0) {
+          chatOpts.maxTokens = Math.min(Math.floor(body.maxTokens), 128000);
+        }
         const reply = await api.chat("general", outgoing, chatOpts);
         const parsed = extractArtifacts(reply.text);
         sendJson(res, 200, {
@@ -1459,6 +1464,15 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
           artifacts: parsed.artifacts,
           provider: reply.provider,
           model: reply.model,
+          /* Token usage is provider-reported; absent when the provider
+             does not report it — the client shows "not reported" honestly. */
+          usage:
+            reply.inputTokens != null || reply.outputTokens != null
+              ? {
+                  input_tokens: reply.inputTokens ?? null,
+                  output_tokens: reply.outputTokens ?? null,
+                }
+              : undefined,
         });
       } catch (err) {
         sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });

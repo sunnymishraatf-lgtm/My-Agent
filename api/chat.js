@@ -6474,6 +6474,9 @@ async function handler(req, res) {
       const chatOpts = {};
       if (typeof body.model === "string" && body.model) chatOpts.model = body.model;
       if (providerId) chatOpts.provider = providerId;
+      if (typeof body.maxTokens === "number" && isFinite(body.maxTokens) && body.maxTokens > 0) {
+        chatOpts.maxTokens = Math.min(Math.floor(body.maxTokens), 128e3);
+      }
       const reply = await api.chat("general", outgoing, chatOpts);
       const parsed = extractArtifacts(reply.text);
       sendJson(res, 200, {
@@ -6481,7 +6484,13 @@ async function handler(req, res) {
         text: parsed.text,
         artifacts: parsed.artifacts,
         provider: reply.provider,
-        model: reply.model
+        model: reply.model,
+        /* Token usage is provider-reported; absent when the provider
+           does not report it — the client shows "not reported" honestly. */
+        usage: reply.inputTokens != null || reply.outputTokens != null ? {
+          input_tokens: reply.inputTokens ?? null,
+          output_tokens: reply.outputTokens ?? null
+        } : void 0
       });
     } catch (err) {
       sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
