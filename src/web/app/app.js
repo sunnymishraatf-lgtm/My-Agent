@@ -531,6 +531,7 @@ var ROUTES = {
   tasks: function (view) { return window.NeutronTasks.renderTasks(view); },
   timeline: function (view) { return window.NeutronTasks.renderTimeline(view); },
   rooms: function (view) { return window.NeutronRooms.renderRooms(view); },
+  games: function (view) { return window.NeutronGames.renderGames(view); },
   agent: function (view) { return window.NeutronAgent.renderAgent(view); },
   terminal: function (view) { return window.NeutronTerminal.renderTerminal(view); },
   testlab: function (view) { return window.NeutronTerminal.renderTestLab(view); },
@@ -569,6 +570,12 @@ async function render() {
   try {
     if (currentRoute() !== "compare" && window.NeutronCompare && window.NeutronCompare.teardown) {
       window.NeutronCompare.teardown();
+    }
+  } catch (e) {}
+  /* Tear down the games module (animation loops, sockets) on navigation. */
+  try {
+    if (currentRoute() !== "games" && window.NeutronGames && window.NeutronGames.teardown) {
+      window.NeutronGames.teardown();
     }
   } catch (e) {}
   /* Stop agent polling when navigating away from the agent route. */
