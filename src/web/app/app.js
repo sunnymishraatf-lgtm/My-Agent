@@ -820,12 +820,20 @@ async function mzExecute(body) {
   mzStartOver(body);
 }
 
-async function pollJob(jobId, onUpdate) {
+async function pollJob(jobId, onUpdate, maxWaitMs) {
+  /* A stuck job must never poll forever (battery/data on mobile).
+     10 minutes comfortably covers real runs; the api() timeout also
+     breaks the loop on network stalls. */
+  var maxWait = (typeof maxWaitMs === "number" && maxWaitMs > 0) ? maxWaitMs : 10 * 60 * 1000;
+  var start = Date.now();
   for (;;) {
     var r = await api("GET", "/api/demo/jobs/" + encodeURIComponent(jobId));
     var job = r.job;
     onUpdate(job);
     if (job.status === "completed" || job.status === "failed" || job.status === "denied") return job;
+    if (Date.now() - start >= maxWait) {
+      throw new Error("Timed out waiting for the job to finish — check Reports for its latest state.");
+    }
     await sleep(2500);
   }
 }
