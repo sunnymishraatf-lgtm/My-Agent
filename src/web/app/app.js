@@ -151,10 +151,8 @@ var API_LOG = [];
 var API_LOG_MAX = 50;
 
 function redactSecrets(s) {
-  return String(s)
-    .replace(/("apiKey"\s*:\s*")[^"]*(")/g, "$1***$2")
-    .replace(/("x-api-key"\s*:\s*")[^"]*(")/g, "$1***$2")
-    .replace(/("ownerToken"\s*:\s*")[^"]*(")/g, "$1***$2");
+  var NU = window.NeutronUI;
+  return (NU && NU.redactSecrets) ? NU.redactSecrets(s) : String(s);
 }
 
 function pushApiLog(entry) {
@@ -180,7 +178,7 @@ async function api(method, path, body) {
   if (prov) opts.headers["x-provider"] = prov;
   if (body !== undefined) opts.body = JSON.stringify(body);
 
-  var entry = { method: method, path: path, url: url, ts: new Date().toISOString(), status: 0, ms: 0 };
+  var entry = { method: method, path: path, url: redactSecrets(url), ts: new Date().toISOString(), status: 0, ms: 0 };
   if (body !== undefined) {
     /* Strip base64 attachment blobs before logging — the inspector shows
        name/mime/kind/size, not megabytes of noise. */
@@ -193,7 +191,7 @@ async function api(method, path, body) {
     entry.ms = Date.now() - t0;
     pushApiLog(entry);
     if (isVerbose()) {
-      try { console.log("[neutron api]", method, url, entry.status || "ERR", entry.ms + "ms"); }
+      try { console.log("[neutron api]", method, entry.url, entry.status || "ERR", entry.ms + "ms"); }
       catch (e) { /* console unavailable */ }
     }
   }
@@ -216,7 +214,7 @@ async function api(method, path, body) {
     text = await res.text();
     try { json = text ? JSON.parse(text) : {}; } catch (e) { json = {}; }
   } catch (e) {
-    entry.error = String((e && e.message) || e).slice(0, 500);
+    entry.error = redactSecrets(String((e && e.message) || e)).slice(0, 500);
     finish();
     throw e;
   }

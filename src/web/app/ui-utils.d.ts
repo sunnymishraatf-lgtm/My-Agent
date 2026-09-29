@@ -252,3 +252,5 @@ export declare function buildModelOptions(
 export declare function stopSpeechSynthesis(deps?: {
   window?: unknown;
 }): boolean;
+
+export declare function redactSecrets(s: unknown): string;

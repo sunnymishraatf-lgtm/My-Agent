@@ -1234,6 +1234,21 @@
   }
 
   /**
+   * Scrub secrets from a string before it is stored for display (API
+   * inspector, error text). Handles JSON-quoted key fields and URL
+   * userinfo: https://user:secret@host → https://***@host. The userinfo
+   * pattern only matches before the first "/" so "@" in URL paths is safe.
+   * Pure — safe to test.
+   */
+  function redactSecrets(s) {
+    return String(s)
+      .replace(/("apiKey"\s*:\s*")[^"]*(")/g, "$1***$2")
+      .replace(/("x-api-key"\s*:\s*")[^"]*(")/g, "$1***$2")
+      .replace(/("ownerToken"\s*:\s*")[^"]*(")/g, "$1***$2")
+      .replace(/(\bhttps?:\/\/)[^\/\s@]*@/g, "$1***@");
+  }
+
+  /**
    * Stop any in-progress speech synthesis. `deps.window` lets tests inject
    * a fake; defaults to the real window. Returns true when cancel() ran,
    * false when speech isn't available or cancel threw. Never throws.
@@ -1323,5 +1338,7 @@
     buildModelOptions: buildModelOptions,
     /* voice output */
     stopSpeechSynthesis: stopSpeechSynthesis,
+    /* secret scrubbing for logs */
+    redactSecrets: redactSecrets,
   };
 });
