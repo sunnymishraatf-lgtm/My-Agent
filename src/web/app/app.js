@@ -175,6 +175,34 @@ function clearError() {
   bar.classList.add("hidden");
 }
 
+/* ----- toast: transient confirmation for successful actions (errors keep
+   using the error bar). GPU-friendly entrance via transform/opacity. ----- */
+var toastTimers = [];
+function toast(msg) {
+  var host = document.getElementById("toast-host");
+  if (!host) {
+    host = el("div", "toast-host");
+    host.id = "toast-host";
+    host.setAttribute("aria-live", "polite");
+    document.body.appendChild(host);
+  }
+  var t = el("div", "toast", msg);
+  host.appendChild(t);
+  /* Single forced reflow outside any loop to trigger the entrance transition. */
+  void t.offsetWidth;
+  t.classList.add("show");
+  var hide = setTimeout(function () {
+    t.classList.remove("show");
+    var drop = setTimeout(function () {
+      if (t.parentNode) t.parentNode.removeChild(t);
+    }, 320);
+    toastTimers.push(drop);
+  }, 2600);
+  toastTimers.push(hide);
+  /* Keep the stack small on rapid-fire toasts. */
+  while (host.children.length > 3) host.removeChild(host.firstChild);
+}
+
 function kvGrid(pairs) {
   var g = el("div", "kv-grid");
   pairs.forEach(function (p) {
@@ -266,9 +294,17 @@ function versionLabel(serverVersion) {
   return parts.join(" · ");
 }
 
-async function refreshServerPill() {
+/* Throttle the /api/health call: it otherwise fires on every route change. */
+var PILL_REFRESH_MS = 30000;
+var lastPillRefresh = 0;
+
+async function refreshServerPill(force) {
   var pill = document.getElementById("server-pill");
   try {
+    var now = Date.now();
+    var UI = window.NeutronUI;
+    if (!force && UI && !UI.shouldRefreshPill(lastPillRefresh, now, PILL_REFRESH_MS)) return;
+    lastPillRefresh = now;
     var h = await api("GET", "/api/health");
     /* Compact and professional: app version only (server version lives
        on the Dashboard Server card). */
@@ -311,6 +347,11 @@ async function render() {
   } catch (e) {
     showError(e && e.message ? e.message : String(e));
   }
+  /* Subtle route transition (GPU-friendly fade+rise; disabled under
+     prefers-reduced-motion via CSS). */
+  view.classList.remove("view-enter");
+  void view.offsetWidth;
+  view.classList.add("view-enter");
   refreshServerPill();
 }
 
@@ -321,6 +362,19 @@ window.addEventListener("hashchange", render);
 async function renderDashboard(view) {
   view.appendChild(el("h1", null, "Dashboard"));
 
+  /* Skeleton placeholders while the two status calls are in flight. */
+  var stats = el("div", "grid cols-3");
+  function skeletonCard() {
+    var p = el("section", "panel skeleton-card");
+    p.setAttribute("aria-busy", "true");
+    p.appendChild(el("div", "skeleton sk-line sk-w40"));
+    p.appendChild(el("div", "skeleton sk-num"));
+    p.appendChild(el("div", "skeleton sk-line"));
+    return p;
+  }
+  for (var i = 0; i < 3; i++) stats.appendChild(skeletonCard());
+  view.appendChild(stats);
+
   var results = await Promise.allSettled([
     api("GET", "/api/health"),
     api("GET", "/api/demo/status"),
@@ -329,7 +383,7 @@ async function renderDashboard(view) {
   var demo = results[1].status === "fulfilled" ? results[1].value : null;
   var keySet = !!storedApiKey();
 
-  var stats = el("div", "grid cols-3");
+  stats.innerHTML = "";
   function statCard(title, big, sub) {
     var p = el("section", "panel");
     p.appendChild(el("h2", null, title));
@@ -343,7 +397,6 @@ async function renderDashboard(view) {
     demo ? demo.demoDescription : "could not reach /api/demo/status"));
   stats.appendChild(statCard("API key", keySet ? "SET" : "NOT SET",
     keySet ? "sent with your requests only" : "add one in Settings"));
-  view.appendChild(stats);
 
   var mid = el("div", "grid cols-2");
 
@@ -388,7 +441,23 @@ async function renderDashboard(view) {
 
 async function renderRepos(view) {
   view.appendChild(el("h1", null, "Repositories"));
-  var st = await api("GET", "/api/demo/status");
+  /* Skeleton while the status call is in flight — no blank screen. */
+  var sk = el("section", "panel skeleton-card");
+  sk.setAttribute("aria-busy", "true");
+  sk.appendChild(el("div", "skeleton sk-line sk-w40"));
+  sk.appendChild(el("div", "skeleton sk-line"));
+  sk.appendChild(el("div", "skeleton sk-line sk-w60"));
+  view.appendChild(sk);
+
+  var st;
+  try {
+    st = await api("GET", "/api/demo/status");
+  } catch (e) {
+    sk.innerHTML = "";
+    sk.appendChild(el("p", "muted", "Could not reach the server. Check your connection and try again."));
+    return;
+  }
+  sk.parentNode.removeChild(sk);
 
   var p = el("section", "panel");
   p.appendChild(el("h2", null, "Demo repository"));
@@ -1114,29 +1183,97 @@ async function renderChat(view) {
     return wrap;
   }
 
+  /* ----- message rendering: buildMsgEl constructs one message element;
+     appendMsg adds just the new one (no full re-render per message);
+     paint() does a full render with a cap for very long histories. ----- */
+  function buildMsgEl(m) {
+    var wrap = el("div", "msg " + m.role);
+    wrap.appendChild(el("div", "who", m.role === "user" ? "YOU" : "NEUTRON"));
+    var bubble = el("div", "bubble", m.text);
+    if (m.role === "user" && m.files && m.files.length) {
+      m.files.forEach(function (f) {
+        bubble.appendChild(el("div", "attach-line mono small", "file: " + f.name + " (" + fmtSize(f.size) + ")"));
+      });
+    }
+    wrap.appendChild(bubble);
+    if (m.role === "assistant" && m.artifacts && m.artifacts.length) {
+      wrap.appendChild(artifactCards(m.artifacts));
+    }
+    return wrap;
+  }
+
+  function reducedMotion() {
+    try {
+      return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    } catch (e) { return false; }
+  }
+
+  function scrollLog() {
+    try {
+      log.scrollTo({ top: log.scrollHeight, behavior: reducedMotion() ? "auto" : "smooth" });
+    } catch (e) {
+      log.scrollTop = log.scrollHeight;
+    }
+  }
+
+  var renderAll = false;
   function paint() {
     log.innerHTML = "";
+    var UI = window.NeutronUI;
+    var cap = UI ? UI.CHAT_RENDER_CAP : 120;
+    var msgs = chatState.messages;
+    if (!renderAll && UI && msgs.length > cap) {
+      var hidden = msgs.length - cap;
+      var more = el("button", "btn ghost sm load-more",
+        "Show earlier messages (" + hidden + " more)");
+      more.onclick = function () { renderAll = true; paint(); };
+      log.appendChild(more);
+      msgs = UI.cappedSlice(msgs, cap);
+    }
     if (!chatState.messages.length) {
       log.appendChild(el("p", "muted",
         "No messages yet. Ask about your codebase, attach files, or ask the assistant to generate files for download."));
     }
-    chatState.messages.forEach(function (m) {
-      var wrap = el("div", "msg " + m.role);
-      wrap.appendChild(el("div", "who", m.role === "user" ? "YOU" : "NEUTRON"));
-      var bubble = el("div", "bubble", m.text);
-      if (m.role === "user" && m.files && m.files.length) {
-        m.files.forEach(function (f) {
-          bubble.appendChild(el("div", "attach-line mono small", "file: " + f.name + " (" + fmtSize(f.size) + ")"));
-        });
-      }
-      wrap.appendChild(bubble);
-      if (m.role === "assistant" && m.artifacts && m.artifacts.length) {
-        wrap.appendChild(artifactCards(m.artifacts));
-      }
-      log.appendChild(wrap);
+    msgs.forEach(function (m) {
+      log.appendChild(buildMsgEl(m));
     });
-    log.scrollTop = log.scrollHeight;
+    scrollLog();
   }
+
+  /** Append a single message efficiently; animates entry via .msg-enter. */
+  function appendMsg(m) {
+    var UI = window.NeutronUI;
+    var cap = UI ? UI.CHAT_RENDER_CAP : 120;
+    if (chatState.messages.length === 1 ||
+        (!renderAll && chatState.messages.length > cap)) {
+      /* First message (drops the empty state) or over the render cap:
+         do a full paint to keep the log consistent. */
+      paint();
+      return;
+    }
+    var w = buildMsgEl(m);
+    w.classList.add("msg-enter");
+    log.appendChild(w);
+    scrollLog();
+  }
+
+  /* ----- typing indicator while the reply is in flight ----- */
+  var typingEl = null;
+  function showTyping() {
+    hideTyping();
+    typingEl = el("div", "msg assistant typing");
+    var bubble = el("div", "bubble typing-dots");
+    bubble.setAttribute("aria-label", "NEUTRON is typing");
+    for (var i = 0; i < 3; i++) bubble.appendChild(el("span", "dot"));
+    typingEl.appendChild(bubble);
+    log.appendChild(typingEl);
+    scrollLog();
+  }
+  function hideTyping() {
+    if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
+    typingEl = null;
+  }
+
   paint();
 
   /* ----- attachments ----- */
@@ -1293,6 +1430,7 @@ async function renderChat(view) {
     if (!next) { try { window.speechSynthesis.cancel(); } catch (e) {} }
     paintVoiceBtn();
     clearError();
+    toast(next ? "Voice output on — replies will be read aloud." : "Voice output off.");
   };
   function speak(text) {
     if (!voiceSpeakEnabled() || !synthSupported) return;
@@ -1311,9 +1449,10 @@ async function renderChat(view) {
     if (!storedProvider()) {
       var hint = "Please select a provider in Settings first — NEUTRON never picks one for you.";
       chatState.messages.push({ role: "user", text: text || "(attachment)" });
+      appendMsg(chatState.messages[chatState.messages.length - 1]);
       chatState.messages.push({ role: "assistant", text: hint });
+      appendMsg(chatState.messages[chatState.messages.length - 1]);
       showError(hint);
-      paint();
       return;
     }
     var umsg = { role: "user", text: text || "(sent with attachments)" };
@@ -1321,6 +1460,7 @@ async function renderChat(view) {
       umsg.files = files.map(function (f) { return { name: f.name, size: f.size }; });
     }
     chatState.messages.push(umsg);
+    appendMsg(umsg);
     var chatBody = {
       messages: chatState.messages.map(function (m) { return { role: m.role, content: m.text }; }),
     };
@@ -1336,7 +1476,8 @@ async function renderChat(view) {
     input.value = "";
     autoGrow();
     sendBtn.disabled = true;
-    paint();
+    sendBtn.classList.add("sending");
+    showTyping();
     try {
       var res = await api("POST", "/api/chat", chatBody);
       var amsg = { role: "assistant", text: res.text || "(empty reply)" };
@@ -1349,8 +1490,10 @@ async function renderChat(view) {
       chatState.messages.push({ role: "assistant", text: "Error: " + msg });
       showError(msg);
     }
+    hideTyping();
+    appendMsg(chatState.messages[chatState.messages.length - 1]);
     sendBtn.disabled = false;
-    paint();
+    sendBtn.classList.remove("sending");
   }
   sendBtn.onclick = doSend;
   input.addEventListener("keydown", function (ev) {
@@ -1379,6 +1522,7 @@ async function renderChat(view) {
     try { if (synthSupported) window.speechSynthesis.cancel(); } catch (e) {}
     clearError();
     paint();
+    toast("Conversation cleared.");
   };
 }
 
@@ -1491,22 +1635,31 @@ async function renderSettings(view) {
     paintModels();
     paintModelStatus();
     clearError();
+    toast("Provider & model saved.");
   }
   provSel.onchange = persistChoice;
   modelSel.onchange = function () { modelCustom.value = ""; persistChoice(); };
   /* Auto-save the custom model as it is typed (debounced) so it can never
      be silently dropped — the STATUS line below always shows the truth. */
-  var modelSaveT = null;
-  modelCustom.oninput = function () {
-    if (modelSaveT) clearTimeout(modelSaveT);
-    modelSaveT = setTimeout(function () {
-      setStoredModel(modelCustom.value.trim() || modelSel.value);
-      paintModelStatus();
-      clearError();
-    }, 600);
-  };
+  function localDebounce(fn, wait) {
+    var t = null;
+    function d() {
+      var a = arguments, s = this;
+      if (t) clearTimeout(t);
+      t = setTimeout(function () { t = null; fn.apply(s, a); }, wait);
+    }
+    d.cancel = function () { if (t) { clearTimeout(t); t = null; } };
+    return d;
+  }
+  var debounceFn = window.NeutronUI ? window.NeutronUI.debounce : localDebounce;
+  var saveModelSoon = debounceFn(function () {
+    setStoredModel(modelCustom.value.trim() || modelSel.value);
+    paintModelStatus();
+    clearError();
+  }, 600);
+  modelCustom.oninput = function () { saveModelSoon(); };
   modelCustom.onblur = function () {
-    if (modelSaveT) { clearTimeout(modelSaveT); modelSaveT = null; }
+    saveModelSoon.cancel();
     setStoredModel(modelCustom.value.trim() || modelSel.value);
     paintModelStatus();
   };
@@ -1550,12 +1703,14 @@ async function renderSettings(view) {
     keyIn.value = "";
     clearError();
     paintStatus();
+    toast("API key saved — stored only in this browser.");
   };
   clear.onclick = function () {
     clearStoredApiKey();
     keyIn.value = "";
     clearError();
     paintStatus();
+    toast("API key cleared.");
   };
   row.appendChild(save);
   row.appendChild(clear);

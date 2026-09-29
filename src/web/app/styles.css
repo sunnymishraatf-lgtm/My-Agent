@@ -714,3 +714,128 @@ body.chat-full .view {
   .chat-pick { max-width: 140px; }
   .chat-root { padding: 8px 10px 12px; }
 }
+
+/* ==========================================================================
+   UI polish pass — performance-friendly motion, toasts, skeletons.
+   All animation is transform/opacity only (GPU-composited, no layout work).
+   Same NeuroSync tokens; no retheme.
+   ========================================================================== */
+
+/* ---- route transition: subtle fade+rise on the view container ---- */
+.view-enter { animation: viewIn 0.22s var(--ease); }
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- chat message entry (applied only to newly appended messages) ---- */
+.msg-enter { animation: msgIn 0.28s var(--ease); }
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- typing indicator: three bouncing dots (transform only) ---- */
+.typing-dots { display: inline-flex; gap: 6px; align-items: center; padding: 14px 18px; }
+.typing-dots .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  animation: dotBounce 1.2s ease-in-out infinite;
+}
+.typing-dots .dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots .dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dotBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ---- press feedback (transform only) ---- */
+.btn:active:not(:disabled) { transform: scale(0.96); }
+.icon-btn:active:not(:disabled) { transform: scale(0.9); }
+.btn.sending { position: relative; }
+
+/* ---- toast: transient confirmations, bottom-center stack ---- */
+.toast-host {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+}
+.toast {
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--surface);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--r-pill);
+  padding: 10px 20px;
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  transform: translateY(12px) scale(0.97);
+  transition: opacity 0.28s var(--ease), transform 0.28s var(--ease);
+  max-width: 100%;
+  text-align: center;
+}
+.toast.show { opacity: 1; transform: translateY(0) scale(1); }
+
+/* ---- skeleton shimmer: transform-only sweep on a pseudo-element ---- */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-soft);
+  border-radius: var(--r-card);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  animation: skSweep 1.4s ease-in-out infinite;
+}
+@keyframes skSweep {
+  to { transform: translateX(100%); }
+}
+.skeleton-card { min-height: 148px; display: flex; flex-direction: column; gap: 12px; justify-content: center; }
+.sk-line { height: 14px; }
+.sk-num { height: 38px; width: 55%; }
+.sk-w40 { width: 40%; }
+.sk-w60 { width: 60%; }
+
+/* ---- "show earlier messages" affordance ---- */
+.load-more { align-self: center; margin: 4px 0 12px; }
+
+/* ---- mobile: 44px touch targets ---- */
+@media (max-width: 640px) {
+  .btn { min-height: 44px; }
+  .btn.sm { min-height: 40px; padding: 8px 14px; }
+  .sidebar a { padding: 12px 16px; }
+  .chip-x {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 4px 8px;
+    font-size: 18px;
+  }
+  details.dump summary { min-height: 44px; display: flex; align-items: center; }
+  .toast-host { bottom: 16px; }
+}
+
+/* ---- accessibility: honor reduced-motion preferences ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
