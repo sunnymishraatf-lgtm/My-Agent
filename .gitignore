@@ -40,3 +40,6 @@ Thumbs.db
 # Test coverage
 coverage/public/
 neutron-demo-workspace/
+
+# signing keys must never be committed
+apk/keystore/

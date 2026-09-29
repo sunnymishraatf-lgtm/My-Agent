@@ -57,14 +57,19 @@ echo "== zipalign =="
 $BT/zipalign -f 4 build/neutron-unaligned.apk build/neutron-aligned.apk
 
 echo "== keystore =="
-if [ ! -f build/debug.keystore ]; then
-  keytool -genkeypair -keystore build/debug.keystore -alias neutron \
+# The release keystore lives OUTSIDE build/ on purpose: build/ is wiped on
+# every build, and losing this key would break all future updates
+# (Android + IzzyOnDroid pin the signing certificate).
+KS="$APK_DIR/keystore/neutron-release.keystore"
+if [ ! -f "$KS" ]; then
+  mkdir -p "$APK_DIR/keystore"
+  keytool -genkeypair -keystore "$KS" -alias neutron \
     -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
     -dname "CN=NEUTRON, OU=App, O=NEUTRON, C=IN" 2>/dev/null
 fi
 
 echo "== apksigner =="
-$BT/apksigner sign --ks build/debug.keystore --ks-pass pass:android --key-pass pass:android \
+$BT/apksigner sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
   --out "$OUT" build/neutron-aligned.apk
 
 echo "== verify =="
