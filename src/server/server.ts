@@ -23,6 +23,13 @@ import { fileURLToPath } from "node:url";
 import { RoomManager } from "./collab/room-manager";
 import { CollabServer, COLLAB_WS_PATH, type IceServerConfig } from "./collab/collab-server";
 import {
+  getAgentManager,
+  serializeRun,
+  restoreRunCheckpoint,
+  AgentHttpError,
+  type AgentManager,
+} from "./agent/loop";
+import {
   getDemoManager,
   prepareDemoRepo,
   getDemoStatus,
@@ -501,8 +508,105 @@ async function handleDemoApi(manager: DemoManager, req: IncomingMessage, res: Se
   }
 }
 
-export function createRequestHandler(opts: ServeOptions): (req: IncomingMessage, res: ServerResponse) => void {
-  return (req, res) => {
+/**
+ * Autonomous AI agent API (Node only). Per-IP rate limit, bounded runs.
+ * The request key is request-scoped — runs hold it in memory only.
+ */
+const agentBuckets = new Map<string, { count: number; reset: number }>();
+const AGENT_CREATE_LIMIT = 10;
+const AGENT_CREATE_WINDOW_MS = 3_600_000;
+function agentCreateRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = agentBuckets.get(ip);
+  if (!entry || now > entry.reset) {
+    agentBuckets.set(ip, { count: 1, reset: now + AGENT_CREATE_WINDOW_MS });
+    if (agentBuckets.size > 10_000) agentBuckets.clear();
+    return false;
+  }
+  entry.count++;
+  return entry.count > AGENT_CREATE_LIMIT;
+}
+
+async function handleAgentApi(
+  manager: AgentManager,
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+): Promise<void> {
+  const path = url.pathname;
+  const sub = path.slice("/api/agent/".length);
+  const seg = sub.split("/");
+  try {
+    if (req.method === "POST" && sub === "runs") {
+      const ip = req.socket.remoteAddress ?? "unknown";
+      if (agentCreateRateLimited(ip)) {
+        sendJson(res, 429, { ok: false, error: "Too many agent runs created. Please slow down." });
+        return;
+      }
+      const body = (await readJsonBody(req)) as {
+        goal?: unknown; repo?: unknown; provider?: unknown; model?: unknown;
+        apiKey?: unknown; projectContext?: unknown; autoApproveEdits?: unknown;
+      };
+      const run = manager.create({
+        goal: typeof body.goal === "string" ? body.goal : "",
+        repo: typeof body.repo === "string" ? body.repo : "",
+        workspace: manager.workspace,
+        apiKey: extractRequestKey(req, body),
+        provider: extractRequestProvider(req, body) || (typeof body.provider === "string" ? body.provider : undefined),
+        model: typeof body.model === "string" ? body.model : undefined,
+        projectContext: typeof body.projectContext === "string" ? body.projectContext : undefined,
+        autoApproveEdits: body.autoApproveEdits === true,
+      });
+      sendJson(res, 202, { ok: true, run: serializeRun(run) });
+      return;
+    }
+    if (seg[0] === "runs" && seg[1]) {
+      let id = "";
+      try { id = decodeURIComponent(seg[1] as string); } catch { /* 400 below */ }
+      if (!id || !SESSION_ID_RE.test(id)) throw new AgentHttpError(400, "Invalid run id.");
+      if (req.method === "GET" && seg.length === 2) {
+        sendJson(res, 200, { ok: true, run: serializeRun(manager.get(id)) });
+        return;
+      }
+      if (req.method === "GET" && seg.length === 3 && seg[2] === "result") {
+        const run = manager.get(id);
+        if (!["completed", "failed", "stopped", "denied"].includes(run.status)) {
+          sendJson(res, 409, { ok: false, error: "Run is still active.", status: run.status });
+          return;
+        }
+        sendJson(res, 200, { ok: true, run: serializeRun(run) });
+        return;
+      }
+      if (req.method === "POST" && seg.length === 3 && seg[2] === "stop") {
+        sendJson(res, 200, { ok: true, run: serializeRun(manager.stop(id)) });
+        return;
+      }
+      if (req.method === "POST" && seg.length === 4 && seg[2] === "approvals") {
+        let approvalId = "";
+        try { approvalId = decodeURIComponent(seg[3] as string); } catch { /* 400 below */ }
+        if (!approvalId || !SESSION_ID_RE.test(approvalId)) throw new AgentHttpError(400, "Invalid approval id.");
+        const body = (await readJsonBody(req)) as { approved?: unknown };
+        const run = manager.decide(id, approvalId, body.approved === true);
+        sendJson(res, 200, { ok: true, run: serializeRun(run) });
+        return;
+      }
+      if (req.method === "POST" && seg.length === 3 && seg[2] === "restore-checkpoint") {
+        const out = restoreRunCheckpoint(id, manager.workspace);
+        sendJson(res, 200, { ok: true, ...out, run: serializeRun(manager.get(id)) });
+        return;
+      }
+    }
+    sendJson(res, 404, { ok: false, error: `Not found: ${req.method} ${path}` });
+  } catch (e) {
+    if (e instanceof AgentHttpError) {
+      sendJson(res, e.status, { ok: false, error: e.message });
+      return;
+    }
+    throw e;
+  }
+}
+
+export function createRequestHandler(opts: ServeOptions): (req: IncomingMessage, res: ServerResponse) => void {  return (req, res) => {
     void handle(opts, req, res).catch((err) => {
       if (err instanceof BadRequestError) {
         sendJson(res, 400, { ok: false, error: err.message });
@@ -1043,6 +1147,14 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
 
   if (url.pathname.startsWith("/api/demo/")) {
     await handleDemoApi(getDemoManager(opts.demoWorkspace), req, res, url);
+    return;
+  }
+
+  /* Autonomous AI agent (Node server only — serverless has no workspace or
+     process execution). The request key (x-api-key header or apiKey body
+     field) is passed to the run in memory only, never stored. */
+  if (url.pathname.startsWith("/api/agent/")) {
+    await handleAgentApi(getAgentManager(opts.demoWorkspace), req, res, url);
     return;
   }
 

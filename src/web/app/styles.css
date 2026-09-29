@@ -2201,3 +2201,51 @@ body.chat-full .view {
 }
 .linklike:disabled { color: var(--text-2); cursor: default; text-decoration: none; }
 [data-theme^="glass-"] .proj-context-pre { background: var(--glass-bg); }
+
+/* ---------- autonomous agent (Phase 2) ---------- */
+.ag-wrap { display: flex; flex-direction: column; gap: 16px; }
+.ag-form .ag-goal { width: 100%; min-height: 76px; resize: vertical; }
+.ag-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.ag-field { flex: 1 1 200px; display: flex; flex-direction: column; gap: 4px; }
+.ag-check { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: 14px; cursor: pointer; }
+.ag-check input { width: 18px; height: 18px; accent-color: var(--primary); }
+.ag-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.ag-head h2 { margin: 0; }
+.ag-goal-line { margin: 4px 0 0; }
+.ag-side { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pill.warn { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+.pill.warn::before { background: var(--amber); }
+.pill.run { color: var(--blue); border-color: var(--blue-border); background: var(--blue-soft); }
+.pill.run::before { background: var(--blue); animation: pulse 1.2s ease-in-out infinite; }
+.ag-error { background: var(--red-soft); border: 1px solid var(--red-border); color: var(--red); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.ag-approvals { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.ag-card { border-left: 3px solid var(--amber); }
+.ag-card h3 { margin: 0 0 8px; }
+.ag-detail { background: var(--code-bg, #0f1420); color: var(--code-fg, #e8edf5); border-radius: 8px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
+.ag-btns { display: flex; gap: 8px; margin-top: 10px; }
+.ag-phases { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 12px; }
+.ag-phase { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-2); }
+.ag-phase.done { color: var(--green); border-color: var(--green-border); }
+.ag-phase.cur { color: var(--primary); border-color: var(--primary); font-weight: 600; }
+.ag-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; }
+.ag-step { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
+.ag-step-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ag-step-n { font-size: 12px; color: var(--text-2); font-family: var(--mono, monospace); }
+.ag-tool { font-size: 12px; background: var(--primary-soft); color: var(--primary); padding: 2px 8px; border-radius: 6px; }
+.ag-thought { margin: 6px 0 0; font-size: 14px; }
+.ag-error-line { margin: 6px 0 0; font-size: 13px; color: var(--red); }
+.ag-result { margin-top: 6px; }
+.ag-result summary { cursor: pointer; font-size: 13px; color: var(--primary); }
+.ag-files { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ag-file-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ag-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
+.ag-kind.created { color: var(--green); border-color: var(--green-border); }
+.ag-kind.modified { color: var(--blue); border-color: var(--blue-border); }
+.ag-kind.deleted { color: var(--red); border-color: var(--red-border); }
+.ag-diff { background: var(--code-bg, #0f1420); color: var(--code-fg, #e8edf5); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto; margin: 6px 0 0; }
+.ag-checkpoint { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+[data-theme^="glass-"] .ag-step { background: var(--glass-bg); }
+@media (max-width: 560px) {
+  .ag-row { flex-direction: column; }
+  .ag-head { flex-direction: column; }
+}

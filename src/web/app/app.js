@@ -405,6 +405,7 @@ var ROUTES = {
   reports: renderReports,
   chat: renderChat,
   rooms: function (view) { return window.NeutronRooms.renderRooms(view); },
+  agent: function (view) { return window.NeutronAgent.renderAgent(view); },
   settings: renderSettings,
 };
 
@@ -428,6 +429,12 @@ async function render() {
   try {
     if (currentRoute() !== "rooms" && window.NeutronRooms && window.NeutronRooms.teardown) {
       window.NeutronRooms.teardown();
+    }
+  } catch (e) {}
+  /* Stop agent polling when navigating away from the agent route. */
+  try {
+    if (currentRoute() !== "agent" && window.NeutronAgent && window.NeutronAgent.teardown) {
+      window.NeutronAgent.teardown();
     }
   } catch (e) {}
   ChatHooks.newTask = null;
