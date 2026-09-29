@@ -3001,7 +3001,16 @@ label.fld-label { display: block; font-size: 12px; font-weight: 600; color: var(
 
 @media (max-width: 640px) {
   .task-board { grid-template-columns: repeat(5, 78vw); }
-  .notif-panel { position: fixed; top: 56px; right: 8px; left: 8px; width: auto; }
+  /* Anchor the panel below the bell (relative to .notif-wrap) instead of a
+     magic top: 56px — the compact topbar height varies, which made the
+     panel overlap the header. */
+  .notif-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: -4px;
+    left: auto;
+    width: min(360px, calc(100vw - 16px));
+  }
 }
 
 /* ---------- Model router / usage dashboard / cost control (Phases 21/23/31) ---------- */
