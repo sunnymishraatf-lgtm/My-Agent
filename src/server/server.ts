@@ -61,6 +61,7 @@ import {
   cloneWithToken,
 } from "./git/git-service";
 import { handleInsightsApi } from "./insights";
+import { handleTerminalApi } from "./terminal/api";
 import {
   getDemoManager,
   prepareDemoRepo,
@@ -1533,6 +1534,13 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
      field) is passed to the run in memory only, never stored. */
   if (url.pathname.startsWith("/api/agent/")) {
     await handleAgentApi(getAgentManager(opts.demoWorkspace), req, res, url);
+    return;
+  }
+
+  /* Terminal sessions + Test Lab (Node server only — process execution,
+     which serverless hosting doesn't have). */
+  if (url.pathname === "/api/terminal" || url.pathname.startsWith("/api/terminal/")) {
+    await handleTerminalApi(getAgentManager(opts.demoWorkspace).workspace, req, res, url);
     return;
   }
 

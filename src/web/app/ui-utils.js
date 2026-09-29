@@ -2178,6 +2178,76 @@
     return { overall: overall, items: items };
   }
 
+  /* ---------------------------------------------------------------- */
+  /* Terminal rendering helpers (Phases 8+13)                          */
+  /* ---------------------------------------------------------------- */
+
+  /*
+   * Minimal ANSI SGR → HTML converter for terminal output. HTML is escaped
+   * FIRST, then a small subset of SGR codes is honored: reset (0), bold (1),
+   * faint/dim (2), foreground 30–37/90–97, background 40–47/100–107.
+   * Everything else (cursor movement, clears, 256-color, etc.) is dropped —
+   * this is a scrolling log renderer, not a full terminal emulator, and the
+   * Terminal view says so honestly.
+   */
+  var ANSI_FG = {
+    30: "#9aa4b2", 31: "#f87171", 32: "#4ade80", 33: "#facc15",
+    34: "#60a5fa", 35: "#e879f9", 36: "#22d3ee", 37: "#e5e7eb",
+    90: "#6b7280", 91: "#fca5a5", 92: "#86efac", 93: "#fde047",
+    94: "#93c5fd", 95: "#f0abfc", 96: "#67e8f9", 97: "#ffffff",
+  };
+  var ANSI_BG = {
+    40: "#1f2937", 41: "#7f1d1d", 42: "#14532d", 43: "#713f12",
+    44: "#1e3a8a", 45: "#701a75", 46: "#155e75", 47: "#374151",
+    100: "#111827", 101: "#991b1b", 102: "#166534", 103: "#854d0e",
+    104: "#1e40af", 105: "#86198f", 106: "#0e7490", 107: "#4b5563",
+  };
+
+  function ansiToHtml(src) {
+    var s = String(src == null ? "" : src);
+    // 1. Strip carriage returns (progress-bar overwrites) and escape HTML.
+    s = s.replace(/\r/g, "");
+    s = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // 2. Walk SGR sequences, emitting styled spans.
+    var out = "";
+    var fg = null, bg = null, bold = false, dim = false;
+    function openTag() {
+      var style = "";
+      if (fg) style += "color:" + fg + ";";
+      if (bg) style += "background:" + bg + ";";
+      if (bold) style += "font-weight:700;";
+      if (dim) style += "opacity:.65;";
+      return style ? '<span style="' + style + '">' : "";
+    }
+    var re = /\x1b\[([0-9;]*)m/g;
+    var last = 0, m, open = false;
+    while ((m = re.exec(s)) !== null) {
+      out += s.slice(last, m.index);
+      if (open) { out += "</span>"; open = false; }
+      var codes = (m[1] || "0").split(";").map(function (c) { return parseInt(c, 10) || 0; });
+      for (var i = 0; i < codes.length; i++) {
+        var c = codes[i];
+        if (c === 0) { fg = null; bg = null; bold = false; dim = false; }
+        else if (c === 1) bold = true;
+        else if (c === 2) dim = true;
+        else if (c === 22) { bold = false; dim = false; }
+        else if (ANSI_FG[c]) fg = ANSI_FG[c];
+        else if (ANSI_BG[c]) bg = ANSI_BG[c];
+        else if (c === 39) fg = null;
+        else if (c === 49) bg = null;
+        /* Unknown SGR codes are ignored (dropped, not rendered). */
+      }
+      var tag = openTag();
+      if (tag) { out += tag; open = true; }
+      last = m.index + m[0].length;
+    }
+    out += s.slice(last);
+    if (open) out += "</span>";
+    // 3. Drop any other escape sequences (cursor moves, clears, …).
+    out = out.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\x1b[()][0-9A-B]/g, "");
+    return out;
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -2300,5 +2370,7 @@
     parseReviewFindings: parseReviewFindings,
     compactDiffsToUnified: compactDiffsToUnified,
     computeHealth: computeHealth,
+    /* terminal: minimal ANSI SGR → HTML (Phases 8+13) */
+    ansiToHtml: ansiToHtml,
   };
 });

@@ -189,6 +189,16 @@
           o.textContent = rp.name + (rp.files != null ? " (" + rp.files + " files)" : "");
           repoSel.appendChild(o);
         });
+        /* Preselect from another view (e.g. Terminal's "Ask AI to fix"). */
+        try {
+          var pendingRepo = sessionStorage.getItem("neutron_pending_repo");
+          if (pendingRepo) {
+            sessionStorage.removeItem("neutron_pending_repo");
+            for (var i = 0; i < repoSel.options.length; i++) {
+              if (repoSel.options[i].value === pendingRepo) { repoSel.selectedIndex = i; break; }
+            }
+          }
+        } catch (e) { /* private mode — selection stays default */ }
       }
     } catch (e) {
       repoSel.innerHTML = "";

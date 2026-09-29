@@ -455,3 +455,5 @@ export declare function computeHealth(signals: HealthSignals): {
   overall: "healthy" | "attention" | "unknown";
   items: Array<{ key: string; state: "good" | "attention" | "unknown"; label: string }>;
 };
+/* terminal: minimal ANSI SGR → HTML (Phases 8+13) */
+export declare function ansiToHtml(src: string | null | undefined): string;

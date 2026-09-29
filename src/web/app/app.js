@@ -406,6 +406,8 @@ var ROUTES = {
   chat: renderChat,
   rooms: function (view) { return window.NeutronRooms.renderRooms(view); },
   agent: function (view) { return window.NeutronAgent.renderAgent(view); },
+  terminal: function (view) { return window.NeutronTerminal.renderTerminal(view); },
+  testlab: function (view) { return window.NeutronTerminal.renderTestLab(view); },
   security: function (view) { return window.NeutronInsights.renderSecurity(view); },
   deps: function (view) { return window.NeutronInsights.renderDeps(view); },
   health: function (view) { return window.NeutronInsights.renderHealth(view); },
@@ -438,6 +440,13 @@ async function render() {
   try {
     if (currentRoute() !== "agent" && window.NeutronAgent && window.NeutronAgent.teardown) {
       window.NeutronAgent.teardown();
+    }
+  } catch (e) {}
+  /* Stop terminal/test-lab polling when navigating away from those routes. */
+  try {
+    var cr = currentRoute();
+    if (cr !== "terminal" && cr !== "testlab" && window.NeutronTerminal && window.NeutronTerminal.teardown) {
+      window.NeutronTerminal.teardown();
     }
   } catch (e) {}
   ChatHooks.newTask = null;
