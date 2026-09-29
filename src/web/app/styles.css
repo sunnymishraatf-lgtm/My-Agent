@@ -795,6 +795,11 @@ ul.list li.warn { border-color: var(--amber-border); background: var(--amber-sof
   background: var(--bg-soft);
   color: var(--text-2);
 }
+.chip-more {
+  border-style: dashed;
+  color: var(--text-3);
+  background: transparent;
+}
 
 /* ---- notices / gates ---- */
 .notice {

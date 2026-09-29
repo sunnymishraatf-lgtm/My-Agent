@@ -334,10 +334,15 @@ function selectInput(options, value) {
   return s;
 }
 
-function chips(parent, items) {
+function chips(parent, items, limit) {
   var c = el("div", "chips");
-  (items || []).forEach(function (x) { c.appendChild(el("span", "chip", x)); });
-  if (!items || !items.length) c.appendChild(el("span", "muted small", "none detected"));
+  var list = items || [];
+  var shown = (typeof limit === "number" && limit >= 0) ? list.slice(0, limit) : list;
+  shown.forEach(function (x) { c.appendChild(el("span", "chip", x)); });
+  if (list.length > shown.length) {
+    c.appendChild(el("span", "chip chip-more", "+" + (list.length - shown.length) + " more"));
+  }
+  if (!list.length) c.appendChild(el("span", "muted small", "none detected"));
   parent.appendChild(c);
 }
 
@@ -900,9 +905,13 @@ async function mzPlan(body) {
     plan.tasks.forEach(function (t, i) {
       var li = el("li");
       li.appendChild(el("div", "mono", (i + 1) + ". " + t.label));
+      var fileBits = "";
+      if (t.files && t.files.length) {
+        fileBits = " · files: " + t.files.slice(0, 4).join(", ") +
+          (t.files.length > 4 ? " (+" + (t.files.length - 4) + " more)" : "");
+      }
       li.appendChild(el("div", "muted small",
-        "agent: " + (t.agent || "—") + " · risk: " + (t.risk || "—") +
-        ((t.files && t.files.length) ? " · files: " + t.files.slice(0, 4).join(", ") : "")));
+        "agent: " + (t.agent || "—") + " · risk: " + (t.risk || "—") + fileBits));
       ul.appendChild(li);
     });
     p.appendChild(ul);
@@ -910,7 +919,7 @@ async function mzPlan(body) {
   ["affectedFiles", "affectedServices", "affectedTests"].forEach(function (k) {
     if (plan[k] && plan[k].length) {
       p.appendChild(el("h3", null, k.replace(/([A-Z])/g, " $1").toUpperCase()));
-      chips(p, plan[k].slice(0, 12));
+      chips(p, plan[k], 12);
     }
   });
   var row = el("div", "row");
