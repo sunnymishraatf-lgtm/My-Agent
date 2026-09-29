@@ -131,6 +131,20 @@ a:hover { text-decoration: underline; }
 .pill.bad { color: var(--red); border-color: #F5C2C2; background: var(--red-soft); }
 .pill.bad::before { background: var(--red); }
 
+/* ---- offline bar ---- */
+.offline-bar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  background: #1F2937;
+  color: #fff;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+.offline-bar.hidden { display: none; }
+
 /* ---- error bar ---- */
 .error-bar {
   margin: 16px 24px 0;

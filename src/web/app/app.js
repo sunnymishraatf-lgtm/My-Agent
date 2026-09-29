@@ -149,6 +149,11 @@ async function api(method, path, body) {
 
   var res, text = "", json = {};
   try {
+    /* Fail fast when the browser knows it's offline — no point burning
+       the 90s timeout in a dead zone. */
+    if (typeof navigator !== "undefined" && "onLine" in navigator && !navigator.onLine) {
+      throw new Error("You appear to be offline — check your connection and try again.");
+    }
     /* 90s cap: serverless functions top out at 60s, so anything slower is
        a stall. Timeouts surface through the normal error paths (and the
        chat Retry button from the message log). */
@@ -1870,7 +1875,18 @@ async function renderSettings(view) {
 
 /* ---------- boot ---------- */
 
+function paintOfflineBar() {
+  var bar = document.getElementById("offline-bar");
+  if (!bar) return;
+  var offline = (typeof navigator !== "undefined" && "onLine" in navigator)
+    ? !navigator.onLine : false;
+  bar.classList.toggle("hidden", !offline);
+}
+window.addEventListener("online", paintOfflineBar);
+window.addEventListener("offline", paintOfflineBar);
+
 document.addEventListener("DOMContentLoaded", function () {
   if (!location.hash) location.hash = "#/dashboard";
+  paintOfflineBar();
   render();
 });
