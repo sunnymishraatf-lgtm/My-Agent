@@ -1,16 +1,8 @@
 import { serializeAnalysis } from "../../src/server/demo";
-import {
-  handleApiError,
-  newDemoManager,
-  parseRiskTolerance,
-  readJsonBody,
-  requireMethod,
-  sendJson,
-  type VercelRequest,
-  type VercelResponse,
-} from "../_lib";
+import { handleApiError, newDemoManager, parseRiskTolerance, readJsonBody, requireMethod, sendJson, type VercelRequest, type VercelResponse, handlePreflight } from "../_lib";
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (handlePreflight(req, res)) return;
   if (!requireMethod(req, res, "POST")) return;
   try {
     const body = readJsonBody(req);

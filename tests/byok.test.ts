@@ -8,7 +8,7 @@
  * - produce honest provider errors (never 500s, never fabricated replies).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IncomingMessage } from "node:http";
@@ -20,7 +20,9 @@ import {
   extractRequestProvider,
   providerFromRequestKey,
 } from "../src/server/byok";
+import * as byokModule from "../src/server/byok";
 import { defaultModelsFor, getCatalogEntry } from "../src/providers/catalog";
+import { handlePreflight } from "../api-src/_lib";
 import { loadConfig } from "../src/config";
 import { DemoManager } from "../src/server/demo";
 import { startServer, type RunningServer } from "../src/server/server";
@@ -32,13 +34,27 @@ function fakeReq(headers: Record<string, string | string[]> = {}): IncomingMessa
 }
 
 describe("providerFromRequestKey", () => {
-  it("builds an AgentRouter provider from a valid key", () => {
-    const p = providerFromRequestKey(KEY);
+  it("builds an explicit NVIDIA provider when requested", () => {
+    const p = providerFromRequestKey(KEY, "nvidia");
+    expect(p).toBeDefined();
+    expect(p!.id).toBe("nvidia");
+    expect(p!.baseUrl).toBe("https://integrate.api.nvidia.com/v1");
+    expect(p!.apiKey).toBe(KEY);
+    expect(p!.enabled).toBe(true);
+  });
+
+  it("builds an explicit AgentRouter provider when requested", () => {
+    const p = providerFromRequestKey(KEY, "agentrouter");
     expect(p).toBeDefined();
     expect(p!.id).toBe("agentrouter");
     expect(p!.baseUrl).toBe("https://agentrouter.org/v1");
     expect(p!.apiKey).toBe(KEY);
-    expect(p!.enabled).toBe(true);
+  });
+
+  it("returns undefined when no provider id is given — no silent default", () => {
+    expect(providerFromRequestKey(KEY)).toBeUndefined();
+    expect(providerFromRequestKey(KEY, "")).toBeUndefined();
+    expect(providerFromRequestKey(KEY, "   ")).toBeUndefined();
   });
 
   it("rejects empty, short, and whitespace-containing input", () => {
@@ -64,10 +80,8 @@ describe("providerFromRequestKey", () => {
     expect(p!.apiKey).toBe(KEY);
   });
 
-  it("falls back to agentrouter for unknown provider ids", () => {
-    const p = providerFromRequestKey(KEY, "definitely-not-a-provider");
-    expect(p).toBeDefined();
-    expect(p!.id).toBe("agentrouter");
+  it("returns undefined for unknown provider ids — no silent fallback", () => {
+    expect(providerFromRequestKey(KEY, "definitely-not-a-provider")).toBeUndefined();
   });
 
   it("returns undefined for providers without a base URL", () => {
@@ -110,17 +124,18 @@ describe("extractRequestKey", () => {
 });
 
 describe("configForRequest", () => {
-  it("builds a single-provider config from a request key", () => {
-    const cfg = configForRequest(KEY);
-    expect(cfg.providers).toHaveLength(1);
-    const only = cfg.providers[0]!;
-    expect(only.id).toBe("agentrouter");
-    expect(only.apiKey).toBe(KEY);
+  it("falls back to the server config when a key is given without a provider choice", () => {
+    // No silent provider assignment: the key alone picks nothing.
+    expect(configForRequest(KEY)).toEqual(loadConfig());
   });
 
   it("falls back to the server config when no key is given", () => {
     expect(configForRequest(undefined)).toEqual(loadConfig());
     expect(configForRequest("")).toEqual(loadConfig());
+  });
+
+  it("does not silently pick a provider for an unknown provider id", () => {
+    expect(configForRequest(KEY, "definitely-not-a-provider")).toEqual(loadConfig());
   });
 
   it("builds a single-provider config for the requested provider", () => {
@@ -130,10 +145,86 @@ describe("configForRequest", () => {
     expect(cfg.providers[0]!.apiKey).toBe(KEY);
   });
 
-  it("keeps the agentrouter default when no provider is requested", () => {
-    const cfg = configForRequest(KEY);
+  it("honors an explicit agentrouter choice", () => {
+    const cfg = configForRequest(KEY, "agentrouter");
     expect(cfg.providers).toHaveLength(1);
     expect(cfg.providers[0]!.id).toBe("agentrouter");
+  });
+
+  it("honors an explicit nvidia choice", () => {
+    const cfg = configForRequest(KEY, "nvidia");
+    expect(cfg.providers).toHaveLength(1);
+    expect(cfg.providers[0]!.id).toBe("nvidia");
+    expect(cfg.providers[0]!.apiKey).toBe(KEY);
+  });
+});
+
+describe("NVIDIA catalog wiring", () => {
+  it("has a verified nvidia entry pointing at the real NIM endpoint", () => {
+    const e = getCatalogEntry("nvidia");
+    expect(e).toBeDefined();
+    expect(e!.baseUrl).toBe("https://integrate.api.nvidia.com/v1");
+    expect(e!.apiType).toBe("openai-compatible");
+    expect(e!.auth).toBe("bearer");
+  });
+
+  it("suggests verified NVIDIA-hosted model ids (BYOK-compatible)", () => {
+    const models = defaultModelsFor("nvidia");
+    expect(models).toContain("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(models).toContain("nvidia/nemotron-3.5-lightning-30b-a3b");
+    expect(models).toContain("nvidia/nemotron-3-super-120b-a12b");
+  });
+
+  it("exposes no default provider constant", () => {
+    expect("DEFAULT_BYOK_PROVIDER" in byokModule).toBe(false);
+  });
+
+  it("resolves an explicit nvidia choice end to end", () => {
+    const p = providerFromRequestKey(KEY, "nvidia");
+    expect(p).toBeDefined();
+    expect(p!.id).toBe("nvidia");
+    expect(p!.baseUrl).toBe("https://integrate.api.nvidia.com/v1");
+  });
+});
+
+describe("CORS preflight helper (api-src/_lib)", () => {
+  function mockRes() {
+    const headers: Record<string, string> = {};
+    let statusCode = 0;
+    let body: unknown = null;
+    const res = {
+      status: (c: number) => {
+        statusCode = c;
+        return { json: (b: unknown) => { body = b; } };
+      },
+      setHeader: (k: string, v: string) => { headers[k.toLowerCase()] = v; },
+    };
+    return { res: res as never, headers, get statusCode() { return statusCode; }, get body() { return body; } };
+  }
+
+  it("answers OPTIONS with 204 and CORS headers", () => {
+    const m = mockRes();
+    const handled = handlePreflight({ method: "OPTIONS" } as never, m.res);
+    expect(handled).toBe(true);
+    expect(m.statusCode).toBe(204);
+    expect(m.headers["access-control-allow-origin"]).toBe("*");
+    expect(m.headers["access-control-allow-headers"]).toContain("x-api-key");
+    expect(m.headers["access-control-allow-headers"]).toContain("x-provider");
+  });
+
+  it("passes non-OPTIONS requests through untouched", () => {
+    const m = mockRes();
+    const handled = handlePreflight({ method: "POST" } as never, m.res);
+    expect(handled).toBe(false);
+    expect(m.statusCode).toBe(0);
+    // CORS headers are still stamped on the pass-through for real responses
+    expect(m.headers["access-control-allow-origin"]).toBe("*");
+  });
+
+  it("works with header-less mock responses (tests)", () => {
+    const res = { status: (c: number) => ({ json: (_b: unknown) => {} }) };
+    expect(handlePreflight({ method: "OPTIONS" } as never, res as never)).toBe(true);
+    expect(handlePreflight({ method: "GET" } as never, res as never)).toBe(false);
   });
 });
 
@@ -255,7 +346,23 @@ describe("/api/chat on the Node server", () => {
     expect(text).not.toContain("pppp1234567890");
   }, 60000);
 
-  it("GET /api/providers lists the real catalog including nous", async () => {
+  it("key without provider: honest no-provider error, never a silent pick", async () => {
+    const badKey = "byok-bad-key-kkkk1234567890";
+    const { status, json, text } = await postChat(
+      { messages: [{ role: "user", content: "hello" }] },
+      { "x-api-key": badKey },
+    );
+    // No provider chosen and none configured on the server: the request
+    // must fail honestly (not 500, not fabricated), and the key must not
+    // be assigned to any provider or echoed back.
+    expect(status).toBe(502);
+    expect(json.ok).toBe(false);
+    expect(String(json.error)).toMatch(/No LLM provider configured/i);
+    expect(text).not.toContain(badKey);
+    expect(text).not.toContain("kkkk1234567890");
+  });
+
+  it("GET /api/providers lists the real catalog including nvidia, with no default", async () => {
     const res = await fetch(`${base}/api/providers`);
     expect(res.status).toBe(200);
     const json: any = await res.json();
@@ -264,9 +371,36 @@ describe("/api/chat on the Node server", () => {
     expect(ids).toContain("agentrouter");
     expect(ids).toContain("openrouter");
     expect(ids).toContain("nous");
+    expect(ids).toContain("nvidia");
+    // No default provider is advertised anywhere in the response.
+    expect("defaultProvider" in json).toBe(false);
+    for (const p of json.providers as any[]) expect("isDefault" in p).toBe(false);
+    const nvidia = (json.providers as any[]).find((p) => p.id === "nvidia");
+    expect(nvidia.defaultModels).toContain("nvidia/nemotron-3-ultra-550b-a55b");
     const openrouter = (json.providers as any[]).find((p) => p.id === "openrouter");
     expect(openrouter.defaultModels).toContain("nousresearch/hermes-4-405b");
     // No secrets in the catalog response.
     expect(JSON.stringify(json)).not.toMatch(/api[_-]?key/i);
+  });
+});
+
+describe("/app frontend: explicit provider selection, no default", () => {
+  const src = readFileSync(new URL("../src/web/app/app.js", import.meta.url), "utf8");
+
+  it("provider dropdown starts with an unselected placeholder", () => {
+    expect(src).toContain("Select a provider");
+  });
+
+  it("never hardcodes a default provider", () => {
+    expect(src).not.toContain("DEFAULT_PROVIDER");
+  });
+
+  it("sends x-provider only when the user chose one", () => {
+    expect(src).toContain('if (prov) opts.headers["x-provider"] = prov;');
+    expect(src).not.toContain('opts.headers["x-provider"] = storedProvider() ||');
+  });
+
+  it("chat refuses to send without a chosen provider", () => {
+    expect(src).toContain("Please select a provider in Settings first");
   });
 });

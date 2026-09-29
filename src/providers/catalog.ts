@@ -72,6 +72,18 @@ const BUILTIN: ProviderCatalogEntry[] = [
     color: "cyan",
   },
   {
+    id: "nvidia",
+    displayName: "NVIDIA",
+    description:
+      "NVIDIA NIM — open models via build.nvidia.com (free nvapi- key). OpenAI-compatible endpoint.",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["NVIDIA"],
+    docsUrl: "https://build.nvidia.com",
+    color: "green",
+  },
+  {
     id: "tokenharbor",
     displayName: "Token Harbor",
     description: "OpenAI-compatible model gateway",
@@ -339,6 +351,14 @@ const DEFAULT_MODELS: Record<string, string[]> = {
     "nousresearch/hermes-4-405b",
     "nousresearch/hermes-3-llama-3.1-405b",
     "nousresearch/hermes-3-llama-3.1-70b",
+  ],
+  // NVIDIA NIM model IDs verified against NVIDIA's hosted catalog as
+  // documented by OpenClaw's provider integration (which tracks NVIDIA's
+  // live inference inventory + featured-models feed). UI sugar only.
+  nvidia: [
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "nvidia/nemotron-3-super-120b-a12b",
   ],
 };
 

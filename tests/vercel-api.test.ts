@@ -330,15 +330,35 @@ describe("vercel api: chat (BYOK)", () => {
     noCanary(res.payload);
   }, 60000);
 
-  it("POST /api/demo/status reflects a request key honestly", async () => {
+  it("POST /api/demo/status reflects a request key + explicit provider honestly", async () => {
     const res = mockRes();
     await status(
-      { method: "GET", headers: { "x-api-key": "byok-status-key-1234567890" } },
+      {
+        method: "GET",
+        headers: { "x-api-key": "byok-status-key-1234567890", "x-provider": "nvidia" },
+      },
       res,
     );
     expect(res.statusCode).toBe(200);
     expect(res.payload.providerConfigured).toBe(true);
     expect(String(res.payload.llmNote)).toMatch(/provided with this request/i);
+    expect(String(res.payload.llmNote)).toContain("nvidia");
     expect(JSON.stringify(res.payload)).not.toContain("byok-status-key-1234567890");
+  });
+
+  it("POST /api/demo/status: key alone (no provider) configures nothing", async () => {
+    clearProviderEnv();
+    try {
+      const res = mockRes();
+      await status(
+        { method: "GET", headers: { "x-api-key": "byok-status-key-1234567890" } },
+        res,
+      );
+      expect(res.statusCode).toBe(200);
+      expect(res.payload.providerConfigured).toBe(false);
+      expect(String(res.payload.llmNote)).toMatch(/No LLM provider is configured/i);
+    } finally {
+      restoreProviderEnv();
+    }
   });
 });

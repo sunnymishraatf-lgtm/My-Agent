@@ -43,7 +43,45 @@ export interface VercelResponse {
 }
 
 export function sendJson(res: VercelResponse, status: number, body: unknown): void {
+  setCorsHeaders(res);
   res.status(status).json(body);
+}
+
+/* ------------------------------------------------------------------ */
+/* CORS — the /app Developer Mode lets the user point the UI at any     */
+/* backend (e.g. a self-hosted Node server or another deployment), so   */
+/* the API must answer cross-origin. This is the pragmatic choice for   */
+/* a self-hosted personal backend: the key travels per-request and is   */
+/* never stored server-side.                                            */
+/* ------------------------------------------------------------------ */
+
+const CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-headers": "content-type, authorization, x-api-key, x-provider",
+};
+
+type HeaderSetter = { setHeader?: (name: string, value: string) => void };
+
+function setCorsHeaders(res: VercelResponse): void {
+  const r = res as unknown as HeaderSetter;
+  if (typeof r.setHeader === "function") {
+    for (const [k, v] of Object.entries(CORS_HEADERS)) r.setHeader(k, v);
+  }
+}
+
+/**
+ * Answer CORS preflights. Call as the FIRST statement of every handler;
+ * returns true when the request was fully handled (caller must return).
+ * Safe with the header-less mock responses used in tests.
+ */
+export function handlePreflight(req: VercelRequest, res: VercelResponse): boolean {
+  setCorsHeaders(res);
+  if ((req.method ?? "").toUpperCase() === "OPTIONS") {
+    sendJson(res, 204, {});
+    return true;
+  }
+  return false;
 }
 
 export function requireMethod(req: VercelRequest, res: VercelResponse, method: string): boolean {

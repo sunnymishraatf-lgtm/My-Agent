@@ -21,22 +21,24 @@ export const API_KEY_HEADER = "x-api-key";
 /** The request header that carries a BYOK provider choice. */
 export const PROVIDER_HEADER = "x-provider";
 
-/** Provider id used when the client does not choose one. */
-export const DEFAULT_BYOK_PROVIDER = "agentrouter";
-
 /**
- * Build a provider entry from an explicit request key and an optional
+ * Build a provider entry from an explicit request key and an explicit
  * provider id. Mirrors `resolveEnvProvider` in providers/catalog.ts, but
- * the key comes from the request instead of the environment. Returns
- * undefined for empty/garbage keys, unknown provider ids fall back to the
- * default provider, and providers without a base URL (e.g. `custom`)
- * return undefined.
+ * the key comes from the request instead of the environment.
+ *
+ * There is deliberately NO default provider: returns undefined for
+ * empty/garbage keys, for a missing provider id, for unknown provider
+ * ids (never silently mapped to another provider), and for providers
+ * without a base URL (e.g. `custom`). When this returns undefined the
+ * caller falls back to the server's own env/configured provider, or
+ * returns an honest "no provider selected/configured" error.
  */
 export function providerFromRequestKey(key: string, providerId?: string): ProviderResolved | undefined {
   const k = (key ?? "").trim();
   if (k.length < 8 || /\s/.test(k)) return undefined;
   const wanted = (providerId ?? "").trim().toLowerCase();
-  const entry = (wanted ? getCatalogEntry(wanted) : undefined) ?? getCatalogEntry(DEFAULT_BYOK_PROVIDER);
+  if (!wanted) return undefined;
+  const entry = getCatalogEntry(wanted);
   if (!entry?.baseUrl) return undefined;
   return {
     id: entry.id,
@@ -76,7 +78,7 @@ export function extractRequestKeyFromHeaders(
  * Extract a request provider choice: the `x-provider` header wins, then the
  * `provider` JSON body field. Returns the trimmed, lowercased id, or
  * undefined when not supplied. Unknown ids are NOT rejected here —
- * `providerFromRequestKey` falls back to the default provider for them.
+ * `providerFromRequestKey` returns undefined for them (no silent fallback).
  */
 export function extractRequestProvider(req: IncomingMessage, body?: unknown): string | undefined {
   const h = req.headers[PROVIDER_HEADER];
@@ -100,10 +102,13 @@ export function extractRequestProviderFromHeaders(
 }
 
 /**
- * Build the config for exactly one request. A valid request key produces a
- * single-provider config scoped to this call (for the requested provider,
- * defaulting to agentrouter); otherwise the server's normal configuration
- * (env/config file) is used, unchanged.
+ * Build the config for exactly one request. A valid request key PLUS an
+ * explicit provider choice produces a single-provider config scoped to
+ * this call; otherwise the server's normal configuration (env/config
+ * file) is used, unchanged. A key supplied without a provider choice is
+ * NOT silently assigned to any provider — the server's own env-configured
+ * provider is used if one exists, otherwise the request fails with an
+ * honest "no provider configured" error downstream.
  */
 export function configForRequest(apiKey?: string, providerId?: string): ResolvedConfig {
   const provider = apiKey ? providerFromRequestKey(apiKey, providerId) : undefined;

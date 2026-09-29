@@ -1,17 +1,9 @@
-import {
-  handleApiError,
-  parseId,
-  readJsonBody,
-  requireMethod,
-  sendJson,
-  verifyApprovalToken,
-  type VercelRequest,
-  type VercelResponse,
-} from "../_lib";
+import { handleApiError, parseId, readJsonBody, requireMethod, sendJson, verifyApprovalToken, type VercelRequest, type VercelResponse, handlePreflight } from "../_lib";
 import { extractRequestKeyFromHeaders, extractRequestProviderFromHeaders } from "../../src/server/byok";
 import { registerSecrets } from "../../src/config";
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (handlePreflight(req, res)) return;
   if (!requireMethod(req, res, "POST")) return;
   try {
     // BYOK plumbing: accept the request key and register it for redaction so

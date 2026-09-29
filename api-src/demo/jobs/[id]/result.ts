@@ -1,4 +1,4 @@
-import { handleApiError, parseId, requireMethod, sendJson, type VercelRequest, type VercelResponse } from "../../../_lib";
+import { handleApiError, handlePreflight, parseId, requireMethod, sendJson, type VercelRequest, type VercelResponse } from "../../../_lib";
 
 function jobIdFrom(req: VercelRequest): string {
   const raw = req.query?.id;
@@ -7,6 +7,7 @@ function jobIdFrom(req: VercelRequest): string {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (handlePreflight(req, res)) return;
   if (!requireMethod(req, res, "GET")) return;
   try {
     jobIdFrom(req);

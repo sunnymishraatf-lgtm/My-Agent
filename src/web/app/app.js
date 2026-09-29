@@ -6,9 +6,16 @@
    exist on BOTH the persistent Node server and the Vercel serverless
    deployment, so this exact UI works everywhere (browser, APK wrapper).
 
-   BYOK: an AgentRouter API key saved in Settings lives in localStorage and
+   BYOK: a provider API key saved in Settings lives in localStorage and
    is sent as the `x-api-key` header with every request. It is never stored
    on the server — each request builds a request-scoped provider config.
+   There is NO default provider: the user must pick one explicitly in
+   Settings (sent as the `x-provider` header); chat refuses to send until
+   a provider is chosen.
+
+   DEVELOPER MODE (Settings): optional backend URL override
+   (localStorage neutron_backend_url; empty = same-origin), a client-side
+   API inspector (last 50 calls, secrets redacted), and verbose logging.
    ========================================================================== */
 "use strict";
 
@@ -29,6 +36,8 @@ var API_KEY_STORAGE = "neutron_api_key";
 var PROVIDER_STORAGE = "neutron_provider";
 var MODEL_STORAGE = "neutron_model";
 var JOB_HISTORY_STORAGE = "neutron_jobs";
+var BACKEND_URL_STORAGE = "neutron_backend_url";
+var VERBOSE_STORAGE = "neutron_verbose";
 
 function storedApiKey() {
   try { return localStorage.getItem(API_KEY_STORAGE) || ""; } catch (e) { return ""; }
@@ -57,6 +66,26 @@ function setStoredModel(m) {
     else localStorage.removeItem(MODEL_STORAGE);
   } catch (e) { /* private mode */ }
 }
+/* ----- Developer Mode storage (all client-side) ----- */
+function storedBackendUrl() {
+  try { return (localStorage.getItem(BACKEND_URL_STORAGE) || "").trim(); } catch (e) { return ""; }
+}
+function setStoredBackendUrl(u) {
+  try {
+    if (u) localStorage.setItem(BACKEND_URL_STORAGE, u);
+    else localStorage.removeItem(BACKEND_URL_STORAGE);
+  } catch (e) { /* private mode */ }
+}
+/** The base every api() call is made against. Empty = same-origin (automatic). */
+function backendBase() {
+  return storedBackendUrl().replace(/\/+$/, "");
+}
+function isVerbose() {
+  try { return localStorage.getItem(VERBOSE_STORAGE) === "1"; } catch (e) { return false; }
+}
+function setVerbose(on) {
+  try { localStorage.setItem(VERBOSE_STORAGE, on ? "1" : "0"); } catch (e) { /* private mode */ }
+}
 function jobHistory() {
   try { return JSON.parse(localStorage.getItem(JOB_HISTORY_STORAGE) || "[]"); }
   catch (e) { return []; }
@@ -69,15 +98,62 @@ function recordJob(entry) {
   } catch (e) { /* private mode */ }
 }
 
+/* ----- API inspector: ring buffer of the last 50 calls (client-side only).
+   Secrets are redacted before anything is stored for display. ----- */
+var API_LOG = [];
+var API_LOG_MAX = 50;
+
+function redactSecrets(s) {
+  return String(s)
+    .replace(/("apiKey"\s*:\s*")[^"]*(")/g, "$1***$2")
+    .replace(/("x-api-key"\s*:\s*")[^"]*(")/g, "$1***$2");
+}
+
+function pushApiLog(entry) {
+  API_LOG.unshift(entry);
+  if (API_LOG.length > API_LOG_MAX) API_LOG.length = API_LOG_MAX;
+}
+
+/** Recent API calls, newest first. Used by the Developer Mode inspector. */
+function apiLog() { return API_LOG.slice(); }
+
 async function api(method, path, body) {
+  var base = backendBase();
+  var url = base + path;
+  var t0 = Date.now();
   var opts = { method: method, headers: { "content-type": "application/json" } };
   var key = storedApiKey();
   if (key) opts.headers["x-api-key"] = key;
+  /* No default provider: only send the header when the user chose one. */
   var prov = storedProvider();
   if (prov) opts.headers["x-provider"] = prov;
   if (body !== undefined) opts.body = JSON.stringify(body);
-  var res = await fetch(path, opts);
-  var json = await res.json().catch(function () { return {}; });
+
+  var entry = { method: method, path: path, url: url, ts: new Date().toISOString(), status: 0, ms: 0 };
+  if (body !== undefined) entry.request = redactSecrets(JSON.stringify(body)).slice(0, 4000);
+
+  function finish() {
+    entry.ms = Date.now() - t0;
+    pushApiLog(entry);
+    if (isVerbose()) {
+      try { console.log("[neutron api]", method, url, entry.status || "ERR", entry.ms + "ms"); }
+      catch (e) { /* console unavailable */ }
+    }
+  }
+
+  var res, text = "", json = {};
+  try {
+    res = await fetch(url, opts);
+    text = await res.text();
+    try { json = text ? JSON.parse(text) : {}; } catch (e) { json = {}; }
+  } catch (e) {
+    entry.error = String((e && e.message) || e).slice(0, 500);
+    finish();
+    throw e;
+  }
+  entry.status = res.status;
+  entry.response = redactSecrets(text).slice(0, 4000);
+  finish();
   if (!res.ok || json.ok === false) {
     var err = new Error(json.error || ("HTTP " + res.status));
     err.status = res.status;
@@ -829,6 +905,16 @@ async function renderChat(view) {
   async function doSend() {
     var text = input.value.trim();
     if (!text) return;
+    /* No silent default: chat needs an explicit provider choice. */
+    if (!storedProvider()) {
+      var hint = "Please select a provider in Settings first — NEUTRON never picks one for you.";
+      chatState.messages.push({ role: "user", text: text });
+      chatState.messages.push({ role: "assistant", text: hint });
+      showError(hint);
+      input.value = "";
+      paint();
+      return;
+    }
     input.value = "";
     send.disabled = true;
     chatState.messages.push({ role: "user", text: text });
@@ -874,6 +960,7 @@ async function renderChat(view) {
 /* ---------- settings (BYOK + provider/model choice) ---------- */
 
 var PROVIDER_FALLBACK = [
+  { id: "nvidia", displayName: "NVIDIA", description: "", defaultModels: [] },
   { id: "agentrouter", displayName: "AgentRouter", description: "", defaultModels: [] },
   { id: "openrouter", displayName: "OpenRouter", description: "", defaultModels: [] },
   { id: "nous", displayName: "NousResearch", description: "", defaultModels: [] },
@@ -901,15 +988,19 @@ async function renderSettings(view) {
 
   var provSel = el("select", "input");
   provSel.setAttribute("aria-label", "Provider");
+  /* No default provider: the first option is an unselected placeholder. */
+  var placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select a provider…";
+  provSel.appendChild(placeholder);
   providers.forEach(function (pr) {
     var o = document.createElement("option");
     o.value = pr.id;
     o.textContent = pr.displayName + "  (" + pr.id + ")";
     provSel.appendChild(o);
   });
-  var savedProv = storedProvider() || "agentrouter";
-  if (!byId[savedProv]) savedProv = "agentrouter";
-  provSel.value = savedProv;
+  var savedProv = storedProvider();
+  provSel.value = byId[savedProv] ? savedProv : "";
   pp.appendChild(field("PROVIDER", provSel));
 
   var provNote = el("p", "mono small", "");
@@ -1044,6 +1135,96 @@ async function renderSettings(view) {
   s.appendChild(el("p", "muted small",
     "Your key takes precedence over the server's provider for your requests. Remove it here any time; clearing is immediate and nothing of it remains server-side."));
   view.appendChild(s);
+
+  /* ----- Developer Mode (collapsible) ----- */
+  var dev = el("details", "dump");
+  dev.appendChild(el("summary", null, "DEVELOPER MODE"));
+  var devBody = el("div", "dev-body");
+  dev.appendChild(devBody);
+
+  // Backend URL override
+  devBody.appendChild(el("h3", null, "BACKEND URL OVERRIDE"));
+  devBody.appendChild(el("p", "muted small",
+    "Point the app at any backend (self-hosted Node server, another deployment). Empty = automatic (same origin as this page). The target must allow CORS — both bundled backends do."));
+  var buIn = el("input", "input");
+  buIn.type = "url";
+  buIn.placeholder = "https://your-backend.example.com  (empty = automatic)";
+  buIn.value = storedBackendUrl();
+  buIn.setAttribute("aria-label", "Backend URL override");
+  buIn.autocomplete = "off";
+  devBody.appendChild(field("BACKEND BASE URL", buIn));
+  var buEff = el("p", "mono small", "");
+  function paintBackendEff() {
+    var b = backendBase();
+    buEff.textContent = "EFFECTIVE: " + (b ? b : "(same origin as this page)") + "  —  requests go to " + (b || "(same origin)") + "/api/…";
+  }
+  paintBackendEff();
+  devBody.appendChild(buEff);
+  var buRow = el("div", "row");
+  var buSave = el("button", "btn primary", "Save backend URL");
+  var buClear = el("button", "btn ghost", "Use automatic");
+  buSave.onclick = function () {
+    var u = buIn.value.trim().replace(/\/+$/, "");
+    if (u && !/^https?:\/\//i.test(u)) { showError("Backend URL must start with http:// or https://"); return; }
+    setStoredBackendUrl(u);
+    buIn.value = u;
+    clearError();
+    paintBackendEff();
+  };
+  buClear.onclick = function () {
+    setStoredBackendUrl("");
+    buIn.value = "";
+    clearError();
+    paintBackendEff();
+  };
+  buRow.appendChild(buSave);
+  buRow.appendChild(buClear);
+  devBody.appendChild(buRow);
+
+  // Verbose logging
+  devBody.appendChild(el("h3", null, "VERBOSE LOGGING"));
+  var vLabel = el("label", "field check");
+  var vBox = document.createElement("input");
+  vBox.type = "checkbox";
+  vBox.checked = isVerbose();
+  vBox.onchange = function () { setVerbose(vBox.checked); };
+  vLabel.appendChild(vBox);
+  vLabel.appendChild(el("span", null, "Log every API call to the browser console"));
+  devBody.appendChild(vLabel);
+
+  // API inspector
+  devBody.appendChild(el("h3", null, "API INSPECTOR"));
+  devBody.appendChild(el("p", "muted small",
+    "Last " + API_LOG_MAX + " API calls made by this app in this session, newest first. Secrets are redacted."));
+  var insp = el("div", null);
+  function paintInspector() {
+    insp.innerHTML = "";
+    var calls = apiLog();
+    if (!calls.length) {
+      insp.appendChild(el("p", "muted small", "No API calls recorded yet. Use the app and come back."));
+      return;
+    }
+    calls.forEach(function (c) {
+      var d = el("details", "dump");
+      d.appendChild(el("summary", "mono small",
+        c.method + " " + c.path + "  →  " + (c.status || "ERR") + "  (" + c.ms + "ms)"));
+      var txt = "URL: " + c.url + "\nTime: " + c.ts;
+      if (c.request) txt += "\n\n— request —\n" + c.request;
+      if (c.response) txt += "\n\n— response —\n" + c.response;
+      if (c.error) txt += "\n\n— error —\n" + c.error;
+      d.appendChild(el("pre", null, txt.slice(0, 8000)));
+      insp.appendChild(d);
+    });
+  }
+  paintInspector();
+  var iRow = el("div", "row");
+  var iRefresh = el("button", "btn ghost", "Refresh");
+  iRefresh.onclick = paintInspector;
+  iRow.appendChild(iRefresh);
+  devBody.appendChild(iRow);
+  devBody.appendChild(insp);
+
+  view.appendChild(dev);
 }
 
 /* ---------- boot ---------- */

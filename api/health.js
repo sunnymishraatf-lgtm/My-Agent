@@ -4118,6 +4118,17 @@ var BUILTIN = [
     color: "cyan"
   },
   {
+    id: "nvidia",
+    displayName: "NVIDIA",
+    description: "NVIDIA NIM \u2014 open models via build.nvidia.com (free nvapi- key). OpenAI-compatible endpoint.",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["NVIDIA"],
+    docsUrl: "https://build.nvidia.com",
+    color: "green"
+  },
+  {
     id: "tokenharbor",
     displayName: "Token Harbor",
     description: "OpenAI-compatible model gateway",
@@ -4855,7 +4866,27 @@ var DemoError = class extends Error {
 
 // api-src/_lib.ts
 function sendJson(res, status, body) {
+  setCorsHeaders(res);
   res.status(status).json(body);
+}
+var CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-headers": "content-type, authorization, x-api-key, x-provider"
+};
+function setCorsHeaders(res) {
+  const r = res;
+  if (typeof r.setHeader === "function") {
+    for (const [k, v] of Object.entries(CORS_HEADERS)) r.setHeader(k, v);
+  }
+}
+function handlePreflight(req, res) {
+  setCorsHeaders(res);
+  if ((req.method ?? "").toUpperCase() === "OPTIONS") {
+    sendJson(res, 204, {});
+    return true;
+  }
+  return false;
 }
 function requireMethod(req, res, method) {
   if (req.method !== method) {
@@ -4875,6 +4906,7 @@ function handleApiError(res, err) {
 
 // api-src/health.ts
 async function handler(req, res) {
+  if (handlePreflight(req, res)) return;
   if (!requireMethod(req, res, "GET")) return;
   try {
     let agents = [];

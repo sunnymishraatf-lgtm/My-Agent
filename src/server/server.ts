@@ -514,7 +514,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     res.writeHead(204, {
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET,POST,OPTIONS",
-      "access-control-allow-headers": "content-type,authorization",
+      "access-control-allow-headers": "content-type,authorization,x-api-key,x-provider",
     });
     res.end();
     return;

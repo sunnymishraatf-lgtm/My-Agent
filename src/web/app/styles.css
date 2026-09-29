@@ -547,3 +547,10 @@ details.dump pre {
   background: var(--bg);
 }
 .foot-links { display: flex; gap: 18px; }
+
+/* ----- Developer Mode (Settings) ----- */
+.dev-body { padding: 4px 18px 18px; }
+.dev-body h3 { margin-top: 22px; }
+label.field.check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+label.field.check input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); }
+details.dump > summary { cursor: pointer; }
