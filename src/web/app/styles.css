@@ -645,6 +645,10 @@ body.chat-full .view {
   padding: 8px 10px;
 }
 .chat-hbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.chat-hbtns .btn.armed {
+  border-color: var(--red);
+  color: var(--red);
+}
 .btn.sm { padding: 8px 12px; font-size: 13px; }
 .btn.ghost.sm.on { border-color: var(--primary); color: var(--primary-dark); }
 

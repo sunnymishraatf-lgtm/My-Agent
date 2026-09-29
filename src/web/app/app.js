@@ -1689,7 +1689,23 @@ async function renderChat(view) {
     "Without a provider you get an honest error — never a fabricated reply."));
   view.appendChild(root);
 
+  var newArmTimer = null;
+  function disarmNew() {
+    if (newArmTimer) { clearTimeout(newArmTimer); newArmTimer = null; }
+    newBtn.classList.remove("armed");
+    newBtn.textContent = "New";
+  }
   newBtn.onclick = function () {
+    /* Two-tap confirm: conversation history is now persistent, so an
+       accidental tap must not wipe it. */
+    if (!newBtn.classList.contains("armed")) {
+      newBtn.classList.add("armed");
+      newBtn.textContent = "Sure?";
+      toast("Tap again to clear this conversation.");
+      newArmTimer = setTimeout(disarmNew, 3000);
+      return;
+    }
+    disarmNew();
     chatState.messages = [];
     clearChatHistory();
     try { if (synthSupported) window.speechSynthesis.cancel(); } catch (e) {}
