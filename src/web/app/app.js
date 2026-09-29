@@ -2260,10 +2260,15 @@ async function renderChat(view) {
   var staged = [];
   var pendingReads = 0;
   var chips = el("div", "attach-chips");
+  var KIND_GLYPH = { image: "🖼", zip: "🗜", text: "📄" };
   function paintChips() {
     chips.innerHTML = "";
     staged.forEach(function (f, i) {
       var chip = el("span", "chip attach-chip");
+      var glyph = el("span", "attach-kind", KIND_GLYPH[f.kind] || "📄");
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.title = f.kind === "image" ? "Image" : f.kind === "zip" ? "ZIP archive" : "Text file";
+      chip.appendChild(glyph);
       chip.appendChild(el("span", null, f.name + " (" + fmtSize(f.size) + ")"));
       var x = el("button", "chip-x", "×");
       x.setAttribute("aria-label", "Remove " + f.name);
@@ -2275,6 +2280,13 @@ async function renderChat(view) {
       var r = el("span", "chip attach-chip reading");
       r.textContent = "Reading " + pendingReads + " file" + (pendingReads === 1 ? "" : "s") + "…";
       chips.appendChild(r);
+    }
+    if (staged.length > 1) {
+      var total = staged.reduce(function (n, f) { return n + (Number(f.size) || 0); }, 0);
+      var t = el("span", "chip attach-total");
+      t.textContent = staged.length + "/" + MAX_ATTACH_FILES + " files · " + fmtSize(total) + " total";
+      t.setAttribute("aria-label", staged.length + " of " + MAX_ATTACH_FILES + " files staged, " + fmtSize(total) + " total");
+      chips.appendChild(t);
     }
     chips.classList.toggle("hidden", !staged.length && !pendingReads);
   }

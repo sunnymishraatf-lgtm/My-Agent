@@ -800,6 +800,14 @@ ul.list li.warn { border-color: var(--amber-border); background: var(--amber-sof
   color: var(--text-3);
   background: transparent;
 }
+/* Attachment chips in the chat composer. */
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; }
+.attach-kind { font-size: 14px; line-height: 1; }
+.attach-total {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-3);
+}
 
 /* ---- notices / gates ---- */
 .notice {
