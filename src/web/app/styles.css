@@ -917,6 +917,7 @@ body.chat-full .view {
 
 .attach-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .attach-chip { display: inline-flex; align-items: center; gap: 8px; }
+.attach-chip.reading { opacity: 0.75; font-style: italic; }
 .chip-x {
   border: none;
   background: transparent;

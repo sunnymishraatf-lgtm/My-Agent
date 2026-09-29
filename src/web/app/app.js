@@ -1508,6 +1508,7 @@ async function renderChat(view) {
   var MAX_ATTACH_FILES = 5;
   var MAX_ATTACH_BYTES = 100 * 1024;
   var staged = [];
+  var pendingReads = 0;
   var chips = el("div", "attach-chips");
   function paintChips() {
     chips.innerHTML = "";
@@ -1520,7 +1521,12 @@ async function renderChat(view) {
       chip.appendChild(x);
       chips.appendChild(chip);
     });
-    chips.classList.toggle("hidden", !staged.length);
+    if (pendingReads > 0) {
+      var r = el("span", "chip attach-chip reading");
+      r.textContent = "Reading " + pendingReads + " file" + (pendingReads === 1 ? "" : "s") + "…";
+      chips.appendChild(r);
+    }
+    chips.classList.toggle("hidden", !staged.length && !pendingReads);
   }
   paintChips();
 
@@ -1551,13 +1557,17 @@ async function renderChat(view) {
         return next(i + 1);
       }
       var rd = new FileReader();
+      pendingReads++;
+      paintChips();
       rd.onload = function () {
+        pendingReads = Math.max(0, pendingReads - 1);
         var buf = rd.result;
         var kind = classifyClient(f.name, f.type);
         if (kind === "text") {
           var dec = utf8Decode(new Uint8Array(buf));
           if (dec === null || dec.indexOf("\0") !== -1) {
             showError("\"" + f.name + "\" is not a text file, image, or zip — binary files are not accepted.");
+            paintChips();
             return next(i + 1);
           }
         }
@@ -1567,7 +1577,9 @@ async function renderChat(view) {
         next(i + 1);
       };
       rd.onerror = function () {
+        pendingReads = Math.max(0, pendingReads - 1);
         showError("Could not read \"" + f.name + "\".");
+        paintChips();
         next(i + 1);
       };
       rd.readAsArrayBuffer(f);
@@ -1676,6 +1688,11 @@ async function renderChat(view) {
     var text = input.value.trim();
     var files = staged.slice();
     if (!text && !files.length) return;
+    /* Never send while files are still being read — they'd be silently dropped. */
+    if (pendingReads > 0) {
+      showError("Still reading " + pendingReads + " file" + (pendingReads === 1 ? "" : "s") + " — wait a moment, then send.");
+      return;
+    }
     /* No silent default: chat needs an explicit provider choice. */
     if (!storedProvider()) {
       var hint = "Please select a provider in Settings first — NEUTRON never picks one for you.";
