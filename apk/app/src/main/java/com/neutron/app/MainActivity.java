@@ -9,8 +9,10 @@ import android.webkit.WebViewClient;
 /** NEUTRON — thin native shell around the live NEUTRON web app. */
 public class MainActivity extends Activity {
 
+    // Stable production URL — never changes. The dynamic resolver below
+    // is only a fallback in case production is ever stale.
     private static final String FALLBACK_URL =
-            "https://neutron-agent-bpa51fzlt-sunny-mishras-projects-7798fe35.vercel.app/app";
+            "https://neutron-agent.vercel.app/app";
 
     private WebView web;
     private UpdateManager updater;
