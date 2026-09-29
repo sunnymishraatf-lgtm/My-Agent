@@ -4,10 +4,1391 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/neutron/analyzer.ts
-var FRONTEND_MARKERS = ["pages", "components", "components/", "src/pages", "src/components", "app/"].map((m) => m.toLowerCase());
-var BACKEND_MARKERS = ["controllers", "routes", "services", "api", "middleware", "src/api", "src/services", "src/routes"].map((m) => m.toLowerCase());
-var DB_MARKERS = ["models", "migrations", "schema", "prisma"].map((m) => m.toLowerCase());
+// src/providers/provider.ts
+function normalizeBaseUrl(baseUrl) {
+  let url = baseUrl.trim();
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  url = url.replace(/\/+$/, "");
+  return url;
+}
+
+// src/providers/catalog.ts
+var BUILTIN = [
+  {
+    id: "agentrouter",
+    displayName: "AgentRouter",
+    description: "AgentRouter gateway for many models",
+    baseUrl: "https://agentrouter.org/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["AGENTROUTER", "AGENT_ROUTER"],
+    docsUrl: "https://agentrouter.org",
+    color: "cyan"
+  },
+  {
+    id: "openrouter",
+    displayName: "OpenRouter",
+    description: "Aggregated access to hundreds of models",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["OPENROUTER"],
+    docsUrl: "https://openrouter.ai/docs",
+    color: "magenta"
+  },
+  {
+    id: "nous",
+    displayName: "NousResearch",
+    description: "NousResearch direct inference (Nous Portal). Portal auth is OAuth with short-lived JWTs \u2014 a pasted API key will NOT authenticate here. For Hermes models with an API key, use OpenRouter instead.",
+    baseUrl: "https://inference-api.nousresearch.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["NOUS", "NOUSRESEARCH"],
+    docsUrl: "https://github.com/NousResearch/hermes-agent",
+    color: "cyan"
+  },
+  {
+    id: "tokenharbor",
+    displayName: "Token Harbor",
+    description: "OpenAI-compatible model gateway",
+    baseUrl: "https://tokenharbor.ai/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["TOKENHARBOR", "TOKEN_HARBOR"],
+    docsUrl: "https://tokenharbor.ai",
+    color: "cyanBright"
+  },
+  {
+    id: "openai",
+    displayName: "OpenAI",
+    description: "OpenAI GPT models",
+    baseUrl: "https://api.openai.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["OPENAI"],
+    docsUrl: "https://platform.openai.com/docs",
+    color: "green"
+  },
+  {
+    id: "anthropic",
+    displayName: "Anthropic",
+    description: "Claude models via the Messages API",
+    baseUrl: "https://api.anthropic.com",
+    apiType: "anthropic",
+    auth: "x-api-key",
+    env: ["ANTHROPIC"],
+    docsUrl: "https://docs.anthropic.com",
+    color: "yellow"
+  },
+  {
+    id: "google",
+    displayName: "Google Gemini",
+    description: "Gemini models via the Generative Language API",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    apiType: "google",
+    auth: "query",
+    env: ["GOOGLE", "GEMINI", "GOOGLE_GEMINI"],
+    docsUrl: "https://ai.google.dev/docs",
+    color: "blue"
+  },
+  {
+    id: "groq",
+    displayName: "Groq",
+    description: "Ultra-fast inference on open models",
+    baseUrl: "https://api.groq.com/openai/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["GROQ"],
+    docsUrl: "https://console.groq.com/docs",
+    color: "red"
+  },
+  {
+    id: "mistral",
+    displayName: "Mistral",
+    description: "Mistral AI models",
+    baseUrl: "https://api.mistral.ai/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["MISTRAL"],
+    docsUrl: "https://docs.mistral.ai",
+    color: "yellowBright"
+  },
+  {
+    id: "deepseek",
+    displayName: "DeepSeek",
+    description: "DeepSeek chat and reasoning models",
+    baseUrl: "https://api.deepseek.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["DEEPSEEK"],
+    docsUrl: "https://api-docs.deepseek.com",
+    color: "blueBright"
+  },
+  {
+    id: "xai",
+    displayName: "xAI",
+    description: "Grok models from xAI",
+    baseUrl: "https://api.x.ai/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["XAI", "X_AI"],
+    docsUrl: "https://docs.x.ai",
+    color: "white"
+  },
+  {
+    id: "cohere",
+    displayName: "Cohere",
+    description: "Cohere Command models (compatibility API)",
+    baseUrl: "https://api.cohere.ai/compatibility/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["COHERE"],
+    docsUrl: "https://docs.cohere.com",
+    color: "greenBright"
+  },
+  {
+    id: "qwen",
+    displayName: "Alibaba Qwen",
+    description: "Qwen models via DashScope compatibility mode",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["QWEN", "DASHSCOPE", "ALIBABA"],
+    docsUrl: "https://help.aliyun.com/zh/model-studio",
+    color: "magentaBright"
+  },
+  {
+    id: "ollama",
+    displayName: "Ollama",
+    description: "Local models served by Ollama",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    apiType: "openai-compatible",
+    auth: "none",
+    env: ["OLLAMA"],
+    docsUrl: "https://ollama.com",
+    color: "white",
+    local: true
+  },
+  {
+    id: "free-llm",
+    displayName: "Free LLM",
+    description: "Local OpenAI-compatible gateway",
+    baseUrl: "http://localhost:3001/v1",
+    apiType: "openai-compatible",
+    auth: "none",
+    env: ["LLM", "FREE_LLM"],
+    docsUrl: "https://github.com/FreeLLMAPI",
+    color: "green",
+    local: true
+  },
+  {
+    id: "custom",
+    displayName: "Any Custom",
+    description: "Any OpenAI-compatible endpoint you host",
+    baseUrl: "",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["ANY", "CUSTOM"],
+    docsUrl: "",
+    color: "gray"
+  }
+];
+var registry = /* @__PURE__ */ new Map();
+for (const entry of BUILTIN) registry.set(entry.id, entry);
+function listCatalog() {
+  return [...registry.values()];
+}
+function getCatalogEntry(id) {
+  return registry.get(id);
+}
+function findCatalogEntry(query) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return void 0;
+  for (const entry of registry.values()) {
+    if (entry.id.toLowerCase() === needle || entry.displayName.toLowerCase() === needle) return entry;
+  }
+  return void 0;
+}
+function envPrefixesFor(entry) {
+  const idUpper = entry.id.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  return [.../* @__PURE__ */ new Set([...entry.env, idUpper])];
+}
+function resolveEnvProviderFields(entry) {
+  const fields = { id: entry.id, matched: false };
+  for (const prefix of envPrefixesFor(entry)) {
+    const baseUrl = process.env[`${prefix}_BASE_URL`];
+    const apiKey = process.env[`${prefix}_API_KEY`];
+    const models = process.env[`${prefix}_MODELS`];
+    if (!baseUrl && !apiKey && !models) continue;
+    fields.matched = true;
+    if (baseUrl) fields.baseUrl = baseUrl;
+    if (apiKey) fields.apiKey = apiKey;
+    if (models) fields.models = models.split(",").map((m) => m.trim()).filter(Boolean);
+    break;
+  }
+  return fields;
+}
+function resolveEnvProvider(entry) {
+  const fields = resolveEnvProviderFields(entry);
+  if (!fields.matched || !fields.baseUrl && !fields.apiKey) return void 0;
+  const baseUrl = fields.baseUrl ?? entry.baseUrl;
+  if (!baseUrl) return void 0;
+  return {
+    id: entry.id,
+    baseUrl,
+    apiKey: fields.apiKey,
+    models: fields.models ?? [],
+    enabled: true
+  };
+}
+
+// src/providers/errors.ts
+function base(ctx, kind, reason, retryable, suggestion) {
+  const err = new Error(`${ctx.provider}: ${reason}`);
+  err.kind = kind;
+  err.retryable = retryable;
+  err.reason = reason;
+  err.suggestion = suggestion;
+  err.provider = ctx.provider;
+  err.endpoint = ctx.endpoint;
+  err.model = ctx.model;
+  return err;
+}
+function keySuggestion(ctx, fallback) {
+  return ctx.keyEnv ? `check ${ctx.keyEnv}` : fallback;
+}
+function keyEnvVar(providerId) {
+  const entry = getCatalogEntry(providerId);
+  if (!entry) return `${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+  const prefixes = envPrefixesFor(entry);
+  return prefixes.length > 0 ? `${prefixes[0]}_API_KEY` : void 0;
+}
+function rootCause(err) {
+  let current = err;
+  let depth = 0;
+  let last = { code: void 0, message: "", name: "" };
+  while (current && depth < 6) {
+    last = {
+      code: typeof current.code === "string" ? current.code : last.code,
+      message: typeof current.message === "string" ? current.message : last.message,
+      name: typeof current.name === "string" ? current.name : last.name
+    };
+    const next = current.cause;
+    if (!next || typeof next !== "object") break;
+    current = next;
+    depth++;
+  }
+  return last;
+}
+var TLS_CODES = /* @__PURE__ */ new Set([
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "ERR_TLS_CERT_ALTNAME_FORMAT_INVALID"
+]);
+function classifyNetworkError(err, ctx) {
+  const { code, message, name } = rootCause(err);
+  const msg = `${name}: ${message}`.toLowerCase();
+  const timeout = name === "TimeoutError" || code === "ETIMEDOUT" || code === "ESOCKETTIMEDOUT" || msg.includes("aborted due to timeout") || msg.includes("timeout");
+  if (timeout) {
+    return base(
+      ctx,
+      "timeout",
+      "request timed out",
+      true,
+      "the provider may be slow or unreachable; try again, or run `neutron doctor`"
+    );
+  }
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN" || msg.includes("getaddrinfo")) {
+    const host = safeHost(ctx.endpoint);
+    return base(
+      ctx,
+      "dns",
+      `could not resolve host${host ? ` "${host}"` : ""} (DNS failure)`,
+      true,
+      "check the base URL and your network/DNS settings"
+    );
+  }
+  if (code === "ECONNREFUSED") {
+    return base(
+      ctx,
+      "connection-refused",
+      "connection refused \u2014 nothing is listening at that address",
+      false,
+      "check the base URL (host/port); for local providers make sure the server is running"
+    );
+  }
+  if (code === "ECONNRESET" || code === "EPIPE" || msg.includes("socket hang up") || msg.includes("other side closed")) {
+    return base(
+      ctx,
+      "connection-reset",
+      "connection reset by the server",
+      true,
+      "transient network issue; try again"
+    );
+  }
+  if (code && TLS_CODES.has(code) || msg.includes("certificate") || msg.includes("ssl")) {
+    return base(
+      ctx,
+      "tls",
+      `TLS/SSL failure (${code ?? "certificate error"})`,
+      false,
+      "check for a proxy/MITM, VPN, or an expired certificate; do not disable TLS verification"
+    );
+  }
+  if (!ctx.endpoint) {
+    return base(ctx, "config", "provider has no base URL configured", false, "run `neutron config` or set <PROVIDER>_BASE_URL");
+  }
+  return base(
+    ctx,
+    "network",
+    `network error${code ? ` (${code})` : ""}${message ? `: ${truncate(message, 120)}` : ""}`,
+    true,
+    "check your network connection, then run `neutron doctor`"
+  );
+}
+function classifyHttpError(status, detail, ctx) {
+  const err = classifyHttp(status, detail, ctx);
+  err.status = status;
+  return err;
+}
+function classifyHttp(status, detail, ctx) {
+  const clean = truncate(detail, 200);
+  const withDetail = clean ? `: ${clean}` : "";
+  switch (status) {
+    case 400:
+      return base(
+        ctx,
+        "http",
+        `invalid request (HTTP 400)${withDetail}`,
+        false,
+        "check the model id and request parameters"
+      );
+    case 401:
+      return base(
+        ctx,
+        "http",
+        `authentication failed (HTTP 401)${withDetail}`,
+        false,
+        keySuggestion(ctx, "check the provider API key")
+      );
+    case 403:
+      return base(
+        ctx,
+        "http",
+        `forbidden (HTTP 403)${withDetail}`,
+        false,
+        "the key may lack access to this model or endpoint"
+      );
+    case 404:
+      return base(
+        ctx,
+        "http",
+        `not found (HTTP 404)${withDetail}`,
+        false,
+        "check the base URL (a wrong /v1 prefix is a common cause) and the model id"
+      );
+    case 408:
+      return base(ctx, "http", "request timeout (HTTP 408)", true, "try again");
+    case 429:
+      return base(
+        ctx,
+        "http",
+        `rate limited (HTTP 429)${withDetail}`,
+        true,
+        "slow down or wait before retrying"
+      );
+    default:
+      if (status >= 500) {
+        return base(
+          ctx,
+          "http",
+          `provider server error (HTTP ${status})${withDetail}`,
+          true,
+          "the provider is having issues; try again later"
+        );
+      }
+      return base(
+        ctx,
+        "http",
+        `request failed (HTTP ${status})${withDetail}`,
+        false,
+        "run `neutron doctor` for details"
+      );
+  }
+}
+function classifyInvalidJson(ctx, snippet) {
+  return base(
+    ctx,
+    "invalid-json",
+    `provider returned invalid JSON${snippet ? `: ${truncate(snippet, 120)}` : ""}`,
+    false,
+    "the endpoint may not be an LLM API; check the base URL"
+  );
+}
+function isClassified(err) {
+  return !!err && typeof err === "object" && typeof err.kind === "string" && typeof err.retryable === "boolean";
+}
+function isRetryable(err) {
+  if (isClassified(err)) return err.retryable;
+  const e = err;
+  if (typeof e?.retryable === "boolean") return e.retryable;
+  if (typeof e?.status === "number") return e.status === 408 || e.status === 429 || e.status >= 500;
+  return true;
+}
+function summarizeError(err) {
+  if (isClassified(err)) {
+    return err.suggestion ? `${err.reason} \u2014 ${err.suggestion}` : err.reason;
+  }
+  const e = err;
+  if (typeof e?.status === "number") return `HTTP ${e.status} \u2014 ${truncate(err instanceof Error ? err.message : String(err), 160)}`;
+  return truncate(err instanceof Error ? err.message : String(err), 160);
+}
+function formatFailoverError(failures) {
+  const lines = ["All LLM providers failed after retries and failover.", "", "Provider failures:"];
+  for (const f of failures) {
+    lines.push(`- ${f.id}: ${summarizeError(f.error)}`);
+  }
+  lines.push("", "Suggestion: run `neutron doctor` to diagnose each provider.");
+  const err = new Error(lines.join("\n"));
+  err.failures = failures;
+  return err;
+}
+function safeHost(endpoint) {
+  if (!endpoint) return "";
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return "";
+  }
+}
+function truncate(s, n) {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > n ? `${t.slice(0, n)}\u2026` : t;
+}
+
+// src/providers/openai.ts
+async function requestJson(ctx, url, init, endpointLabel) {
+  let res;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    return { ok: false, error: classifyNetworkError(err, ctx) };
+  }
+  const body = await res.text().catch(() => "");
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const parsed = JSON.parse(body);
+      detail = parsed.error?.message ?? (typeof parsed.message === "string" ? parsed.message : "");
+    } catch {
+      detail = body.slice(0, 200);
+    }
+    const classified = classifyHttpError(res.status, detail, ctx);
+    classified.status = res.status;
+    classified.cooldown = res.status === 429;
+    classified.detail = body.slice(0, 1e3);
+    void endpointLabel;
+    return { ok: false, error: classified };
+  }
+  if (!body) return { ok: false, error: classifyInvalidJson(ctx, "") };
+  try {
+    return { ok: true, data: JSON.parse(body) };
+  } catch {
+    return { ok: false, error: classifyInvalidJson(ctx, body.slice(0, 200)) };
+  }
+}
+var OpenAICompatibleProvider = class {
+  name;
+  baseUrl;
+  apiKey;
+  timeoutMs;
+  cachedModels;
+  lastModelsFetch = 0;
+  constructor(opts) {
+    this.name = opts.id;
+    this.baseUrl = normalizeBaseUrl(opts.baseUrl);
+    this.apiKey = opts.apiKey;
+    this.timeoutMs = opts.timeoutMs ?? 12e4;
+  }
+  ctx(model) {
+    return {
+      provider: this.name,
+      endpoint: this.baseUrl,
+      ...model ? { model } : {},
+      keyEnv: keyEnvVar(this.name)
+    };
+  }
+  async models() {
+    if (this.cachedModels && Date.now() - this.lastModelsFetch < 5 * 6e4) {
+      return this.cachedModels;
+    }
+    const result = await requestJson(
+      this.ctx(),
+      `${this.baseUrl}/models`,
+      {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(1e4)
+      },
+      "/models"
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data;
+    this.cachedModels = (data.data ?? []).map((m) => ({
+      id: m.id,
+      name: m.id,
+      contextWindow: 32768,
+      free: false
+    }));
+    this.lastModelsFetch = Date.now();
+    return this.cachedModels;
+  }
+  async chat(request) {
+    const started = Date.now();
+    const result = await requestJson(
+      this.ctx(request.model),
+      `${this.baseUrl}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...this.headers()
+        },
+        body: JSON.stringify({
+          model: request.model,
+          messages: request.messages,
+          temperature: request.temperature,
+          max_tokens: request.maxTokens,
+          stop: request.stop
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      },
+      "/chat/completions"
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data;
+    const text = data.choices?.[0]?.message?.content ?? "";
+    return {
+      text,
+      provider: this.name,
+      model: request.model ?? "unknown",
+      inputTokens: data.usage?.prompt_tokens,
+      outputTokens: data.usage?.completion_tokens,
+      latencyMs: Date.now() - started
+    };
+  }
+  async *stream(request) {
+    let res;
+    try {
+      res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...this.headers()
+        },
+        body: JSON.stringify({
+          model: request.model,
+          messages: request.messages,
+          temperature: request.temperature,
+          max_tokens: request.maxTokens,
+          stop: request.stop,
+          stream: true
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
+    } catch (err) {
+      throw classifyNetworkError(err, this.ctx(request.model));
+    }
+    if (!res.ok || !res.body) {
+      const body = await res.text().catch(() => "");
+      let detail = "";
+      try {
+        const parsed = JSON.parse(body);
+        detail = parsed.error?.message ?? "";
+      } catch {
+        detail = body.slice(0, 200);
+      }
+      const classified = classifyHttpError(res.status, detail, this.ctx(request.model));
+      classified.status = res.status;
+      classified.cooldown = res.status === 429;
+      throw classified;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) >= 0) {
+          const chunkRaw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const line = chunkRaw.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          const payload = line.slice(6).trim();
+          if (payload === "[DONE]") {
+            yield { delta: "", done: true };
+            return;
+          }
+          try {
+            const json = JSON.parse(payload);
+            const delta = json.choices?.[0]?.delta?.content ?? "";
+            if (delta) yield { delta, done: false };
+          } catch {
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  async healthCheck() {
+    const started = Date.now();
+    try {
+      const res = await fetch(`${this.baseUrl}/models`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(1e4)
+      });
+      return { ok: res.ok, latencyMs: Date.now() - started };
+    } catch {
+      return { ok: false, latencyMs: Date.now() - started };
+    }
+  }
+  headers() {
+    const h = { "Content-Type": "application/json" };
+    if (this.apiKey) h["Authorization"] = `Bearer ${this.apiKey}`;
+    return h;
+  }
+};
+
+// src/providers/adapters.ts
+function joinUrl(baseUrl, path) {
+  return `${normalizeBaseUrl(baseUrl)}/${path.replace(/^\/+/, "")}`;
+}
+async function requestJson2(ctx, url, init, endpointLabel) {
+  let res;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    return { ok: false, error: classifyNetworkError(err, ctx) };
+  }
+  const body = await res.text().catch(() => "");
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const parsed = JSON.parse(body);
+      detail = parsed.error?.message ?? (typeof parsed.message === "string" ? parsed.message : "");
+    } catch {
+      detail = body.slice(0, 200);
+    }
+    const classified = classifyHttpError(res.status, detail, ctx);
+    classified.status = res.status;
+    classified.cooldown = res.status === 429;
+    classified.detail = body.slice(0, 1e3);
+    void endpointLabel;
+    return { ok: false, error: classified };
+  }
+  if (!body) return { ok: false, error: classifyInvalidJson(ctx, "") };
+  try {
+    return { ok: true, data: JSON.parse(body) };
+  } catch {
+    return { ok: false, error: classifyInvalidJson(ctx, body.slice(0, 200)) };
+  }
+}
+async function* sseEvents(res) {
+  if (!res.body) return;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("data:")) yield line.slice(5).trim();
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+async function openStream(ctx, url, init, endpointLabel) {
+  let res;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    return { ok: false, error: classifyNetworkError(err, ctx) };
+  }
+  if (res.ok && res.body) return { ok: true, res };
+  const body = await res.text().catch(() => "");
+  let detail = "";
+  try {
+    const parsed = JSON.parse(body);
+    detail = parsed.error?.message ?? "";
+  } catch {
+    detail = body.slice(0, 200);
+  }
+  const classified = classifyHttpError(res.status, detail, ctx);
+  classified.status = res.status;
+  classified.cooldown = res.status === 429;
+  void endpointLabel;
+  return { ok: false, error: classified };
+}
+var AnthropicProvider = class _AnthropicProvider {
+  name;
+  baseUrl;
+  apiKey;
+  timeoutMs;
+  constructor(opts) {
+    this.name = opts.id;
+    this.baseUrl = normalizeBaseUrl(opts.baseUrl);
+    this.apiKey = opts.apiKey;
+    this.timeoutMs = opts.timeoutMs ?? 12e4;
+  }
+  headers() {
+    const h = {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01"
+    };
+    if (this.apiKey) h["x-api-key"] = this.apiKey;
+    return h;
+  }
+  ctx(model) {
+    return {
+      provider: this.name,
+      endpoint: this.baseUrl,
+      ...model ? { model } : {},
+      keyEnv: keyEnvVar(this.name)
+    };
+  }
+  static splitMessages(messages) {
+    const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+    const rest = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role, content: m.content }));
+    return { ...system ? { system } : {}, messages: rest };
+  }
+  async models() {
+    const result = await requestJson2(
+      this.ctx(),
+      joinUrl(this.baseUrl, "v1/models"),
+      { headers: this.headers(), signal: AbortSignal.timeout(15e3) },
+      "/v1/models"
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data;
+    return (data.data ?? []).map((m) => ({ id: m.id, name: m.display_name ?? m.id, contextWindow: 0, free: false }));
+  }
+  async chat(request) {
+    const started = Date.now();
+    const { system, messages } = _AnthropicProvider.splitMessages(request.messages);
+    const result = await requestJson2(
+      this.ctx(request.model),
+      joinUrl(this.baseUrl, "v1/messages"),
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({
+          model: request.model,
+          max_tokens: request.maxTokens ?? 4096,
+          temperature: request.temperature,
+          ...system ? { system } : {},
+          messages
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      },
+      "/v1/messages"
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data;
+    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+    return {
+      text,
+      provider: this.name,
+      model: request.model ?? "unknown",
+      inputTokens: data.usage?.input_tokens,
+      outputTokens: data.usage?.output_tokens,
+      latencyMs: Date.now() - started
+    };
+  }
+  async *stream(request) {
+    const { system, messages } = _AnthropicProvider.splitMessages(request.messages);
+    const opened = await openStream(
+      this.ctx(request.model),
+      joinUrl(this.baseUrl, "v1/messages"),
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({
+          model: request.model,
+          max_tokens: request.maxTokens ?? 4096,
+          temperature: request.temperature,
+          stream: true,
+          ...system ? { system } : {},
+          messages
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      },
+      "/v1/messages"
+    );
+    if (!opened.ok) throw opened.error;
+    for await (const payload of sseEvents(opened.res)) {
+      if (payload === "[DONE]") {
+        yield { delta: "", done: true };
+        return;
+      }
+      try {
+        const json = JSON.parse(payload);
+        if (json.type === "content_block_delta" && json.delta?.text) {
+          yield { delta: json.delta.text, done: false };
+        } else if (json.type === "message_stop") {
+          yield { delta: "", done: true };
+          return;
+        }
+      } catch {
+      }
+    }
+    yield { delta: "", done: true };
+  }
+  async healthCheck() {
+    const started = Date.now();
+    try {
+      const res = await fetch(joinUrl(this.baseUrl, "v1/models"), {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(1e4)
+      });
+      return { ok: res.ok, latencyMs: Date.now() - started };
+    } catch {
+      return { ok: false, latencyMs: Date.now() - started };
+    }
+  }
+};
+var GoogleProvider = class _GoogleProvider {
+  name;
+  baseUrl;
+  apiKey;
+  timeoutMs;
+  constructor(opts) {
+    this.name = opts.id;
+    this.baseUrl = normalizeBaseUrl(opts.baseUrl);
+    this.apiKey = opts.apiKey;
+    this.timeoutMs = opts.timeoutMs ?? 12e4;
+  }
+  keyParam(sep) {
+    return this.apiKey ? `${sep}key=${encodeURIComponent(this.apiKey)}` : "";
+  }
+  ctx(model) {
+    return {
+      provider: this.name,
+      endpoint: this.baseUrl,
+      ...model ? { model } : {},
+      keyEnv: keyEnvVar(this.name)
+    };
+  }
+  static splitMessages(messages) {
+    const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+    const contents = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+    return { ...system ? { system } : {}, contents };
+  }
+  async models() {
+    const result = await requestJson2(
+      this.ctx(),
+      `${this.baseUrl}/models?pageSize=1000${this.keyParam("&")}`,
+      { headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(15e3) },
+      "/models"
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data;
+    return (data.models ?? []).map((m) => ({
+      id: m.name.replace(/^models\//, ""),
+      name: m.displayName ?? m.name.replace(/^models\//, ""),
+      contextWindow: 0,
+      free: false
+    }));
+  }
+  async chat(request) {
+    const started = Date.now();
+    const { system, contents } = _GoogleProvider.splitMessages(request.messages);
+    const result = await requestJson2(
+      this.ctx(request.model),
+      `${this.baseUrl}/models/${request.model}:generateContent${this.keyParam("?")}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents,
+          ...system ? { systemInstruction: { parts: [{ text: system }] } } : {},
+          generationConfig: {
+            ...request.temperature !== void 0 ? { temperature: request.temperature } : {},
+            ...request.maxTokens !== void 0 ? { maxOutputTokens: request.maxTokens } : {}
+          }
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      },
+      "/generateContent"
+    );
+    if (!result.ok) throw result.error;
+    const data = result.data;
+    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+    return {
+      text,
+      provider: this.name,
+      model: request.model ?? "unknown",
+      inputTokens: data.usageMetadata?.promptTokenCount,
+      outputTokens: data.usageMetadata?.candidatesTokenCount,
+      latencyMs: Date.now() - started
+    };
+  }
+  async *stream(request) {
+    const { system, contents } = _GoogleProvider.splitMessages(request.messages);
+    const opened = await openStream(
+      this.ctx(request.model),
+      `${this.baseUrl}/models/${request.model}:streamGenerateContent?alt=sse${this.keyParam("&")}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents,
+          ...system ? { systemInstruction: { parts: [{ text: system }] } } : {},
+          generationConfig: {
+            ...request.temperature !== void 0 ? { temperature: request.temperature } : {},
+            ...request.maxTokens !== void 0 ? { maxOutputTokens: request.maxTokens } : {}
+          }
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      },
+      "/streamGenerateContent"
+    );
+    if (!opened.ok) throw opened.error;
+    for await (const payload of sseEvents(opened.res)) {
+      try {
+        const json = JSON.parse(payload);
+        const delta = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+        if (delta) yield { delta, done: false };
+      } catch {
+      }
+    }
+    yield { delta: "", done: true };
+  }
+  async healthCheck() {
+    const started = Date.now();
+    try {
+      const res = await fetch(`${this.baseUrl}/models?pageSize=1${this.keyParam("&")}`, {
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(1e4)
+      });
+      return { ok: res.ok, latencyMs: Date.now() - started };
+    } catch {
+      return { ok: false, latencyMs: Date.now() - started };
+    }
+  }
+};
+
+// src/providers/registry.ts
+function resolveApiType(p) {
+  if (p.apiType) return p.apiType;
+  const entry = findCatalogEntry(p.id);
+  if (entry) return entry.apiType;
+  const url = p.baseUrl.toLowerCase();
+  if (url.includes("api.anthropic.com")) return "anthropic";
+  if (url.includes("generativelanguage.googleapis.com")) return "google";
+  return "openai-compatible";
+}
+function createRegistryProvider(p, opts) {
+  const apiOpts = {
+    id: p.id,
+    baseUrl: p.baseUrl,
+    apiKey: p.apiKey,
+    // Honors config.api.timeoutMs; the default matches the old hardcoded value.
+    timeoutMs: opts?.timeoutMs ?? 12e4
+  };
+  switch (resolveApiType(p).toLowerCase()) {
+    case "anthropic":
+      return new AnthropicProvider(apiOpts);
+    case "google":
+      return new GoogleProvider(apiOpts);
+    default:
+      return new OpenAICompatibleProvider(apiOpts);
+  }
+}
+var ProviderRegistry = class {
+  providers = /* @__PURE__ */ new Map();
+  configuredModels = /* @__PURE__ */ new Map();
+  health = /* @__PURE__ */ new Map();
+  rrIndex = 0;
+  defaultTimeoutMs = 12e4;
+  configure(list, opts) {
+    if (opts?.timeoutMs !== void 0) this.defaultTimeoutMs = opts.timeoutMs;
+    this.providers.clear();
+    this.configuredModels.clear();
+    for (const p of list) {
+      if (!p.enabled) continue;
+      this.providers.set(p.id, createRegistryProvider(p, { timeoutMs: this.defaultTimeoutMs }));
+      this.configuredModels.set(p.id, [...p.models]);
+    }
+  }
+  add(id, provider, models = []) {
+    this.providers.set(id, provider);
+    this.configuredModels.set(id, [...models]);
+  }
+  modelsFor(id) {
+    return this.configuredModels.get(id) ?? [];
+  }
+  get(id) {
+    return this.providers.get(id);
+  }
+  all() {
+    return [...this.providers.values()];
+  }
+  ids() {
+    return [...this.providers.keys()];
+  }
+  has(id) {
+    return this.providers.has(id);
+  }
+  async healthCheck(id) {
+    const provider = this.providers.get(id);
+    if (!provider) return { ok: false, latencyMs: 0 };
+    const result = await provider.healthCheck();
+    this.health.set(id, { ...result, checkedAt: Date.now() });
+    return result;
+  }
+  isHealthy(id) {
+    const h = this.health.get(id);
+    if (!h) return true;
+    if (Date.now() - h.checkedAt > 6e4) return true;
+    return h.ok;
+  }
+  nextHealthy() {
+    const ids = this.ids();
+    if (ids.length === 0) return void 0;
+    for (let i = 0; i < ids.length; i++) {
+      const idx = (this.rrIndex + i) % ids.length;
+      const id = ids[idx];
+      if (this.isHealthy(id)) {
+        this.rrIndex = (idx + 1) % ids.length;
+        return this.providers.get(id);
+      }
+    }
+    return this.providers.get(ids[0]);
+  }
+};
+
+// src/api/pool.ts
+var ConcurrencyLimit = class {
+  max;
+  active = 0;
+  queue = [];
+  constructor(max) {
+    this.max = Math.max(1, max);
+  }
+  get running() {
+    return this.active;
+  }
+  get queued() {
+    return this.queue.length;
+  }
+  async run(fn) {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+  acquire() {
+    return new Promise((resolve) => {
+      if (this.active < this.max) {
+        this.active++;
+        resolve();
+      } else {
+        this.queue.push(resolve);
+      }
+    });
+  }
+  release() {
+    this.active--;
+    const next = this.queue.shift();
+    if (next) {
+      this.active++;
+      next();
+    }
+  }
+  width(newMax) {
+    const clamped = Math.max(1, newMax);
+    const delta = clamped - this.max;
+    this.max = clamped;
+    if (delta > 0) {
+      const wake = Math.min(delta, this.queue.length);
+      for (let i = 0; i < wake; i++) {
+        this.active++;
+        this.queue.shift()();
+      }
+    }
+  }
+};
+
+// src/api/api-manager.ts
+var ApiSystem = class {
+  config;
+  routing;
+  registry;
+  pool;
+  cooldowns = /* @__PURE__ */ new Map();
+  usageMap = /* @__PURE__ */ new Map();
+  discoveredModels = /* @__PURE__ */ new Map();
+  requestsCompleted = 0;
+  totalInputTokens = 0;
+  totalOutputTokens = 0;
+  totalLatencyMs = 0;
+  totalFailures = 0;
+  totalFailovers = 0;
+  logger;
+  stopFlag = false;
+  constructor(opts) {
+    const cfg = opts.config;
+    this.config = cfg.api;
+    this.routing = cfg.routing;
+    this.pool = new ConcurrencyLimit(this.config.maxConcurrentRequests);
+    this.registry = opts.registry ?? new ProviderRegistry();
+    this.registry.configure(cfg.providers, { timeoutMs: this.config.timeoutMs });
+    this.logger = opts.logger;
+  }
+  configure(providers) {
+    this.registry.configure(providers);
+  }
+  log(msg) {
+    this.logger?.info(msg);
+  }
+  clearCooldowns() {
+    this.cooldowns.clear();
+  }
+  isCooldown(id) {
+    const until = this.cooldowns.get(id);
+    return until !== void 0 && until > Date.now();
+  }
+  setCooldown(id, ms) {
+    this.cooldowns.set(id, Date.now() + ms);
+  }
+  availableProviderIds() {
+    return this.registry.ids().filter((id) => !this.isCooldown(id));
+  }
+  get stats() {
+    return {
+      active: this.pool.running,
+      queued: this.pool.queued,
+      requests: this.requestsCompleted,
+      inputTokens: this.totalInputTokens,
+      outputTokens: this.totalOutputTokens,
+      failures: this.totalFailures,
+      failovers: this.totalFailovers,
+      latencyMs: this.totalLatencyMs,
+      providers: this.usageMap
+    };
+  }
+  async health() {
+    const out = {};
+    for (const id of this.registry.ids()) {
+      out[id] = await this.registry.healthCheck(id);
+    }
+    return out;
+  }
+  async chat(kind, messages, opts) {
+    if (this.stopFlag) {
+      throw new Error("API system is stopped");
+    }
+    if (this.registry.ids().length === 0) {
+      throw new Error(
+        "No LLM provider configured. Run `neutron config` to set one, or set LLM_BASE_URL/LLM_API_KEY (or OPENAI_BASE_URL/OPENAI_API_KEY) environment variables."
+      );
+    }
+    const req = {
+      messages,
+      model: opts?.model,
+      temperature: opts?.temperature,
+      maxTokens: opts?.maxTokens
+    };
+    return this.pool.run(() => this.runWithFailover(kind, req, opts?.provider));
+  }
+  async *stream(kind, messages, opts) {
+    if (this.stopFlag) throw new Error("API system is stopped");
+    if (this.registry.ids().length === 0) {
+      throw new Error("No LLM provider configured. Run `neutron config` to set one.");
+    }
+    const tried = /* @__PURE__ */ new Set();
+    let current = this.pickNext(kind, opts?.model, tried, opts?.provider);
+    const failures = [];
+    while (current) {
+      tried.add(current.id);
+      let emitted = false;
+      try {
+        let model = current.model;
+        if (!model) {
+          model = await this.discoverModel(current.id, current.provider);
+          if (!model) {
+            throw new Error(`Provider ${current.id} has no models configured and discovery failed.`);
+          }
+        }
+        for await (const chunk of current.provider.stream({
+          messages,
+          model,
+          temperature: opts?.temperature,
+          maxTokens: opts?.maxTokens
+        })) {
+          emitted = true;
+          yield { delta: chunk.delta, done: chunk.done, provider: current.id, model };
+        }
+        this.requestsCompleted++;
+        return;
+      } catch (err) {
+        this.totalFailures++;
+        const message = err instanceof Error ? err.message : String(err);
+        failures.push({ id: current.id, error: err });
+        this.log(`provider ${current.id} stream failed: ${message}`);
+        if (emitted) throw err;
+        this.totalFailovers++;
+      }
+      current = this.pickNext(kind, opts?.model, tried, void 0);
+    }
+    throw formatFailoverError(failures);
+  }
+  async runWithFailover(kind, req, forcedProvider) {
+    const tried = /* @__PURE__ */ new Set();
+    let current = this.pickNext(kind, req.model, tried, forcedProvider);
+    const failures = [];
+    while (current) {
+      if (this.stopFlag) throw new Error("API system is stopped");
+      tried.add(current.id);
+      try {
+        let model = current.model;
+        if (!model) {
+          model = await this.discoverModel(current.id, current.provider);
+          if (!model) {
+            throw new Error(
+              `Provider ${current.id} has no models configured and model discovery failed. Add a model to your provider config or set routing.`
+            );
+          }
+        }
+        const res = await this.executeWithRetry(current.provider, current.id, { ...req, model });
+        this.recordUsage(res, current.id);
+        return res;
+      } catch (err) {
+        const e = err;
+        if (e.cooldown) this.setCooldown(current.id, this.config.providerCooldownMs);
+        this.totalFailures++;
+        this.totalFailovers++;
+        failures.push({ id: current.id, error: err });
+        const message = err instanceof Error ? err.message : String(err);
+        this.log(`provider ${current.id} failed: ${message}; failing over`);
+      }
+      current = this.pickNext(kind, req.model, tried, void 0);
+    }
+    throw formatFailoverError(failures);
+  }
+  preferFree(ids) {
+    const free = ids.filter((id) => id.toLowerCase().includes("free"));
+    return [...free, ...ids.filter((id) => !free.includes(id))];
+  }
+  async discoverModel(id, provider) {
+    const configured = this.registry.modelsFor(id);
+    if (configured.length > 0) return this.preferFree(configured)[0];
+    const cached = this.discoveredModels.get(id);
+    if (cached) return cached[0];
+    const models = await provider.models();
+    const ids = models.map((m) => m.id).filter(Boolean);
+    if (ids.length > 0) {
+      const ordered = this.preferFree(ids);
+      this.discoveredModels.set(id, ordered);
+      this.log(`provider ${id}: discovered ${ordered.length} models, using ${ordered[0]}`);
+      return ordered[0];
+    }
+    return void 0;
+  }
+  pickNext(kind, modelHint, tried, forced) {
+    if (forced && !tried.has(forced) && this.registry.has(forced) && !this.isCooldown(forced)) {
+      return { id: forced, provider: this.registry.get(forced), model: this.resolveModel(forced, modelHint ?? this.routing[kind]) };
+    }
+    const pool = this.availableProviderIds().filter((id2) => !tried.has(id2));
+    if (pool.length === 0) return void 0;
+    const preferredModel = modelHint ?? this.routing[kind];
+    if (preferredModel) {
+      for (const id2 of pool) {
+        if (this.registry.modelsFor(id2).includes(preferredModel)) {
+          return { id: id2, provider: this.registry.get(id2), model: preferredModel };
+        }
+      }
+    }
+    for (const id2 of pool) {
+      if (id2 === "free-llm" || id2 === "openai") {
+        return { id: id2, provider: this.registry.get(id2), model: this.resolveModel(id2, preferredModel) };
+      }
+    }
+    const id = pool[0];
+    return { id, provider: this.registry.get(id), model: this.resolveModel(id, preferredModel) };
+  }
+  resolveModel(providerId, hint) {
+    if (hint) return hint;
+    const models = this.registry.modelsFor(providerId);
+    if (models.length > 0) return this.preferFree(models)[0];
+    return void 0;
+  }
+  async executeWithRetry(provider, id, req) {
+    const started = Date.now();
+    let lastErr;
+    for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+      if (this.stopFlag) throw new Error("API system is stopped");
+      try {
+        const res = await provider.chat(req);
+        res.latencyMs = Date.now() - started;
+        return res;
+      } catch (err) {
+        lastErr = err;
+        const e = err;
+        if (e.cooldown) this.setCooldown(id, this.config.providerCooldownMs);
+        if (!isRetryable(err)) break;
+        if (attempt < this.config.maxRetries) {
+          const wait = Math.min(this.config.backoffBaseMs * 2 ** attempt, 3e4) + (this.config.requestCooldownMs ?? 0);
+          this.log(`retrying ${id} attempt ${attempt + 2} in ${wait}ms`);
+          await new Promise((r) => setTimeout(r, wait));
+        }
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(`Provider ${id} failed`);
+  }
+  recordUsage(res, providerId) {
+    this.requestsCompleted++;
+    this.totalInputTokens += res.inputTokens ?? 0;
+    this.totalOutputTokens += res.outputTokens ?? 0;
+    this.totalLatencyMs += res.latencyMs ?? 0;
+    let stat = this.usageMap.get(providerId);
+    if (!stat) {
+      stat = { totalRequests: 0, failures: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0, failoverCount: 0, cooldownUntil: void 0 };
+      this.usageMap.set(providerId, stat);
+    }
+    stat.totalRequests++;
+    stat.inputTokens += res.inputTokens ?? 0;
+    stat.outputTokens += res.outputTokens ?? 0;
+    stat.latencyMs += res.latencyMs ?? 0;
+  }
+  stop() {
+    this.stopFlag = true;
+  }
+};
+
+// src/config.ts
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -3658,23 +5039,23 @@ var ZodEffects = class extends ZodType {
     }
     if (effect.type === "transform") {
       if (ctx.common.async === false) {
-        const base = this._def.schema._parseSync({
+        const base2 = this._def.schema._parseSync({
           data: ctx.data,
           path: ctx.path,
           parent: ctx
         });
-        if (!isValid(base))
+        if (!isValid(base2))
           return INVALID;
-        const result = effect.transform(base.value, checkCtx);
+        const result = effect.transform(base2.value, checkCtx);
         if (result instanceof Promise) {
           throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
         }
         return { status: status.value, value: result };
       } else {
-        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
-          if (!isValid(base))
+        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base2) => {
+          if (!isValid(base2))
             return INVALID;
-          return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
+          return Promise.resolve(effect.transform(base2.value, checkCtx)).then((result) => ({
             status: status.value,
             value: result
           }));
@@ -4050,189 +5431,13 @@ var coerce = {
 };
 var NEVER = INVALID;
 
-// src/providers/catalog.ts
-var BUILTIN = [
-  {
-    id: "agentrouter",
-    displayName: "AgentRouter",
-    description: "AgentRouter gateway for many models",
-    baseUrl: "https://agentrouter.org/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["AGENTROUTER", "AGENT_ROUTER"],
-    docsUrl: "https://agentrouter.org",
-    color: "cyan"
-  },
-  {
-    id: "openrouter",
-    displayName: "OpenRouter",
-    description: "Aggregated access to hundreds of models",
-    baseUrl: "https://openrouter.ai/api/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["OPENROUTER"],
-    docsUrl: "https://openrouter.ai/docs",
-    color: "magenta"
-  },
-  {
-    id: "nous",
-    displayName: "NousResearch",
-    description: "NousResearch direct inference (Nous Portal). Portal auth is OAuth with short-lived JWTs \u2014 a pasted API key will NOT authenticate here. For Hermes models with an API key, use OpenRouter instead.",
-    baseUrl: "https://inference-api.nousresearch.com/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["NOUS", "NOUSRESEARCH"],
-    docsUrl: "https://github.com/NousResearch/hermes-agent",
-    color: "cyan"
-  },
-  {
-    id: "tokenharbor",
-    displayName: "Token Harbor",
-    description: "OpenAI-compatible model gateway",
-    baseUrl: "https://tokenharbor.ai/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["TOKENHARBOR", "TOKEN_HARBOR"],
-    docsUrl: "https://tokenharbor.ai",
-    color: "cyanBright"
-  },
-  {
-    id: "openai",
-    displayName: "OpenAI",
-    description: "OpenAI GPT models",
-    baseUrl: "https://api.openai.com/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["OPENAI"],
-    docsUrl: "https://platform.openai.com/docs",
-    color: "green"
-  },
-  {
-    id: "anthropic",
-    displayName: "Anthropic",
-    description: "Claude models via the Messages API",
-    baseUrl: "https://api.anthropic.com",
-    apiType: "anthropic",
-    auth: "x-api-key",
-    env: ["ANTHROPIC"],
-    docsUrl: "https://docs.anthropic.com",
-    color: "yellow"
-  },
-  {
-    id: "google",
-    displayName: "Google Gemini",
-    description: "Gemini models via the Generative Language API",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    apiType: "google",
-    auth: "query",
-    env: ["GOOGLE", "GEMINI", "GOOGLE_GEMINI"],
-    docsUrl: "https://ai.google.dev/docs",
-    color: "blue"
-  },
-  {
-    id: "groq",
-    displayName: "Groq",
-    description: "Ultra-fast inference on open models",
-    baseUrl: "https://api.groq.com/openai/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["GROQ"],
-    docsUrl: "https://console.groq.com/docs",
-    color: "red"
-  },
-  {
-    id: "mistral",
-    displayName: "Mistral",
-    description: "Mistral AI models",
-    baseUrl: "https://api.mistral.ai/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["MISTRAL"],
-    docsUrl: "https://docs.mistral.ai",
-    color: "yellowBright"
-  },
-  {
-    id: "deepseek",
-    displayName: "DeepSeek",
-    description: "DeepSeek chat and reasoning models",
-    baseUrl: "https://api.deepseek.com/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["DEEPSEEK"],
-    docsUrl: "https://api-docs.deepseek.com",
-    color: "blueBright"
-  },
-  {
-    id: "xai",
-    displayName: "xAI",
-    description: "Grok models from xAI",
-    baseUrl: "https://api.x.ai/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["XAI", "X_AI"],
-    docsUrl: "https://docs.x.ai",
-    color: "white"
-  },
-  {
-    id: "cohere",
-    displayName: "Cohere",
-    description: "Cohere Command models (compatibility API)",
-    baseUrl: "https://api.cohere.ai/compatibility/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["COHERE"],
-    docsUrl: "https://docs.cohere.com",
-    color: "greenBright"
-  },
-  {
-    id: "qwen",
-    displayName: "Alibaba Qwen",
-    description: "Qwen models via DashScope compatibility mode",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["QWEN", "DASHSCOPE", "ALIBABA"],
-    docsUrl: "https://help.aliyun.com/zh/model-studio",
-    color: "magentaBright"
-  },
-  {
-    id: "ollama",
-    displayName: "Ollama",
-    description: "Local models served by Ollama",
-    baseUrl: "http://127.0.0.1:11434/v1",
-    apiType: "openai-compatible",
-    auth: "none",
-    env: ["OLLAMA"],
-    docsUrl: "https://ollama.com",
-    color: "white",
-    local: true
-  },
-  {
-    id: "free-llm",
-    displayName: "Free LLM",
-    description: "Local OpenAI-compatible gateway",
-    baseUrl: "http://localhost:3001/v1",
-    apiType: "openai-compatible",
-    auth: "none",
-    env: ["LLM", "FREE_LLM"],
-    docsUrl: "https://github.com/FreeLLMAPI",
-    color: "green",
-    local: true
-  },
-  {
-    id: "custom",
-    displayName: "Any Custom",
-    description: "Any OpenAI-compatible endpoint you host",
-    baseUrl: "",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["ANY", "CUSTOM"],
-    docsUrl: "",
-    color: "gray"
-  }
-];
-var registry = /* @__PURE__ */ new Map();
-for (const entry of BUILTIN) registry.set(entry.id, entry);
+// src/compat.ts
+function envVar(name) {
+  const next = process.env[`NEUTRON_${name}`];
+  if (next !== void 0 && next !== "") return next;
+  const legacy = process.env[`SUNNY_${name}`];
+  return legacy !== void 0 && legacy !== "" ? legacy : void 0;
+}
 
 // src/config.ts
 var configSchema = external_exports.object({
@@ -4249,6 +5454,194 @@ var configSchema = external_exports.object({
     maxIterations: external_exports.number().min(0).max(20).default(5)
   }).default({})
 });
+function configDirFor(name) {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  if (process.platform === "win32") {
+    return process.env.APPDATA ? join(process.env.APPDATA, name) : join(homedir(), `.${name}`);
+  }
+  if (xdg) return join(xdg, name);
+  return join(homedir(), ".config", name);
+}
+function configDir() {
+  const explicit = envVar("CONFIG_DIR");
+  if (explicit) return explicit;
+  const next = configDirFor("neutron");
+  const legacy = configDirFor("sunny");
+  return !existsSync(next) && existsSync(legacy) ? legacy : next;
+}
+function globalConfigPath() {
+  return join(configDir(), "config.json");
+}
+function providerEnv(prefix, id) {
+  const baseUrl = process.env[`${prefix}_BASE_URL`] || process.env[`${id.toUpperCase()}_BASE_URL`];
+  const apiKey = process.env[`${prefix}_API_KEY`] || process.env[`${id.toUpperCase()}_API_KEY`];
+  const models = process.env[`${prefix}_MODELS`] || process.env[`${id.toUpperCase()}_MODELS`];
+  if (!baseUrl && !apiKey) return void 0;
+  const resolvedBase = baseUrl || knownBaseUrls[id];
+  if (!resolvedBase) return void 0;
+  return {
+    id,
+    baseUrl: resolvedBase,
+    apiKey,
+    models: models ? models.split(",").map((m) => m.trim()).filter(Boolean) : [],
+    enabled: true
+  };
+}
+var freeProviders = [
+  { id: "free-llm", env: "LLM", desc: "FreeLLMAPI (OpenAI-compatible gateway)" },
+  { id: "groq", env: "GROQ", desc: "Groq (OpenAI-compatible)" },
+  { id: "openrouter", env: "OPENROUTER", desc: "OpenRouter (OpenAI-compatible)" },
+  { id: "openai", env: "OPENAI", desc: "OpenAI" },
+  { id: "ollama", env: "OLLAMA", desc: "Local Ollama" },
+  { id: "any", env: "ANY", desc: "Any OpenAI-compatible endpoint" }
+];
+var knownBaseUrls = {
+  "free-llm": "http://localhost:3001/v1",
+  groq: "https://api.groq.com/openai/v1",
+  openrouter: "https://openrouter.ai/api/v1",
+  openai: "https://api.openai.com/v1",
+  ollama: "http://127.0.0.1:11434/v1"
+};
+function normalizeProvider(prov) {
+  if (!prov || typeof prov !== "object") return void 0;
+  const raw = prov;
+  const p = {
+    id: String(raw.id || ""),
+    baseUrl: String(raw.baseUrl || ""),
+    apiKey: raw.apiKey !== void 0 ? String(raw.apiKey) : void 0,
+    models: Array.isArray(raw.models) ? raw.models.map(String) : [],
+    enabled: raw.enabled !== false,
+    weight: typeof raw.weight === "number" ? raw.weight : void 0
+  };
+  if (!p.id || !p.baseUrl) return void 0;
+  return p;
+}
+function readFileProviders() {
+  const raw = readRawConfig();
+  const list = Array.isArray(raw.providers) ? raw.providers : [];
+  return list.map(normalizeProvider).filter((p) => !!p);
+}
+function readGlobalProviders() {
+  const fromFile = readFileProviders();
+  const fileById = new Map(fromFile.map((p) => [p.id, p]));
+  const fromEnv = [];
+  const envIds = /* @__PURE__ */ new Set();
+  for (const entry of listCatalog()) {
+    if (entry.id === "custom" || envIds.has(entry.id)) continue;
+    const fields = resolveEnvProviderFields(entry);
+    if (!fields.matched) continue;
+    envIds.add(entry.id);
+    const fileEntry = fileById.get(entry.id);
+    if (fileEntry && (fields.baseUrl || fields.apiKey || fields.models)) {
+      fromEnv.push({
+        ...fileEntry,
+        baseUrl: fields.baseUrl ?? fileEntry.baseUrl ?? entry.baseUrl,
+        ...fields.apiKey !== void 0 ? { apiKey: fields.apiKey } : {},
+        ...fields.models !== void 0 ? { models: fields.models } : {},
+        enabled: true
+      });
+    } else {
+      const resolved = resolveEnvProvider(entry);
+      if (resolved) fromEnv.push(resolved);
+      else if (fileEntry) fromEnv.push(fileEntry);
+    }
+  }
+  for (const p of freeProviders) {
+    if (envIds.has(p.id)) continue;
+    const env = providerEnv(p.env, p.id);
+    if (!env) continue;
+    envIds.add(p.id);
+    const fileEntry = fileById.get(p.id);
+    if (fileEntry) {
+      const explicitBase = process.env[`${p.env}_BASE_URL`] || process.env[`${p.id.toUpperCase()}_BASE_URL`];
+      const explicitModels = process.env[`${p.env}_MODELS`] || process.env[`${p.id.toUpperCase()}_MODELS`];
+      fromEnv.push({
+        ...fileEntry,
+        // An explicit env base URL wins; otherwise the file's base URL is
+        // kept, and the known-base-URL fallback applies only when the file
+        // has none either.
+        baseUrl: explicitBase || fileEntry.baseUrl || env.baseUrl,
+        ...env.apiKey !== void 0 ? { apiKey: env.apiKey } : {},
+        ...explicitModels !== void 0 ? { models: explicitModels.split(",").map((m) => m.trim()).filter(Boolean) } : {},
+        enabled: true
+      });
+    } else {
+      fromEnv.push(env);
+    }
+  }
+  const fileKept = fromFile.filter((p) => !envIds.has(p.id));
+  return [...fileKept, ...fromEnv];
+}
+function loadConfig(params) {
+  const parsed = configSchema.parse(params?.raw ?? {});
+  const providers = params?.providers ?? readGlobalProviders();
+  return {
+    api: parsed.api,
+    routing: parsed.routing,
+    completion: parsed.completion,
+    providers
+  };
+}
+function readRawConfig() {
+  const file = globalConfigPath();
+  if (!existsSync(file)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+var keySet = /* @__PURE__ */ new Set();
+function registerSecrets(newKeys) {
+  for (const k of newKeys) {
+    if (k && k.length >= 8) keySet.add(k);
+  }
+}
+
+// src/server/byok.ts
+var API_KEY_HEADER = "x-api-key";
+var PROVIDER_HEADER = "x-provider";
+var DEFAULT_BYOK_PROVIDER = "agentrouter";
+function providerFromRequestKey(key, providerId) {
+  const k = (key ?? "").trim();
+  if (k.length < 8 || /\s/.test(k)) return void 0;
+  const wanted = (providerId ?? "").trim().toLowerCase();
+  const entry = (wanted ? getCatalogEntry(wanted) : void 0) ?? getCatalogEntry(DEFAULT_BYOK_PROVIDER);
+  if (!entry?.baseUrl) return void 0;
+  return {
+    id: entry.id,
+    baseUrl: entry.baseUrl,
+    apiKey: k,
+    models: [],
+    enabled: true
+  };
+}
+function extractRequestKeyFromHeaders(headers) {
+  if (!headers) return void 0;
+  const h = headers[API_KEY_HEADER] ?? headers["X-Api-Key"] ?? headers["X-API-KEY"];
+  const v = Array.isArray(h) ? h[0] : h;
+  return typeof v === "string" && v.trim() ? v.trim() : void 0;
+}
+function extractRequestProviderFromHeaders(headers) {
+  if (!headers) return void 0;
+  const h = headers[PROVIDER_HEADER] ?? headers["X-Provider"] ?? headers["X-PROVIDER"];
+  const v = Array.isArray(h) ? h[0] : h;
+  return typeof v === "string" && v.trim() ? v.trim().toLowerCase() : void 0;
+}
+function configForRequest(apiKey, providerId) {
+  const provider = apiKey ? providerFromRequestKey(apiKey, providerId) : void 0;
+  if (provider?.apiKey) {
+    registerSecrets([provider.apiKey]);
+    return loadConfig({ providers: [provider] });
+  }
+  return loadConfig();
+}
+
+// src/neutron/analyzer.ts
+var FRONTEND_MARKERS = ["pages", "components", "components/", "src/pages", "src/components", "app/"].map((m) => m.toLowerCase());
+var BACKEND_MARKERS = ["controllers", "routes", "services", "api", "middleware", "src/api", "src/services", "src/routes"].map((m) => m.toLowerCase());
+var DB_MARKERS = ["models", "migrations", "schema", "prisma"].map((m) => m.toLowerCase());
 
 // src/neutron/demo.ts
 var TASKFLOW = {
@@ -4649,10 +6042,20 @@ function requireMethod(req, res, method) {
   }
   return true;
 }
-var SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-function parseId(value, what) {
-  if (typeof value === "string" && SESSION_ID_RE.test(value)) return value;
-  throw new DemoError(`Invalid ${what}`, 400);
+function readJsonBody(req) {
+  const raw = req.body;
+  if (raw === void 0 || raw === null) return {};
+  if (typeof raw === "string") {
+    if (!raw.trim()) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+    }
+    throw new DemoError("Invalid JSON body", 400);
+  }
+  if (typeof raw === "object") return raw;
+  throw new DemoError("Invalid JSON body", 400);
 }
 var TOKEN_TTL_MS = 30 * 60 * 1e3;
 function handleApiError(res, err) {
@@ -4663,20 +6066,41 @@ function handleApiError(res, err) {
   sendJson(res, 500, { ok: false, error: "Internal server error" });
 }
 
-// api-src/demo/jobs/[id].ts
-function jobIdFrom(req) {
-  const raw = req.query?.id;
-  const id = Array.isArray(raw) ? raw[0] : raw;
-  return parseId(id, "job id");
-}
+// api-src/chat.ts
+var silentLogger = { debug: () => {
+}, info: () => {
+}, warn: () => {
+}, error: () => {
+} };
 async function handler(req, res) {
-  if (!requireMethod(req, res, "GET")) return;
+  if (!requireMethod(req, res, "POST")) return;
   try {
-    jobIdFrom(req);
-    sendJson(res, 404, {
-      ok: false,
-      error: "No jobs exist on this serverless demo. Full agent execution needs the persistent Node host \u2014 see docs/DEPLOYMENT.md."
-    });
+    const body = readJsonBody(req);
+    const fromBody = typeof body.apiKey === "string" ? body.apiKey : void 0;
+    const apiKey = extractRequestKeyFromHeaders(req.headers) ?? fromBody;
+    const providerId = extractRequestProviderFromHeaders(req.headers) ?? (typeof body.provider === "string" ? body.provider.trim().toLowerCase() || void 0 : void 0);
+    const raw = Array.isArray(body.messages) ? body.messages : [];
+    const messages = raw.filter(
+      (m) => !!m && typeof m === "object" && typeof m.content === "string" && m.content.trim().length > 0
+    ).slice(-20).map((m) => ({
+      role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
+      content: m.content.slice(0, 8e3)
+    }));
+    if (!messages.some((m) => m.role === "user")) {
+      sendJson(res, 400, { ok: false, error: "No user message provided" });
+      return;
+    }
+    const config = configForRequest(apiKey, providerId);
+    const api = new ApiSystem({ config, logger: silentLogger });
+    try {
+      const chatOpts = {};
+      if (typeof body.model === "string" && body.model) chatOpts.model = body.model;
+      if (providerId) chatOpts.provider = providerId;
+      const reply = await api.chat("general", messages, chatOpts);
+      sendJson(res, 200, { ok: true, text: reply.text, provider: reply.provider, model: reply.model });
+    } catch (err) {
+      sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
   } catch (err) {
     handleApiError(res, err);
   }

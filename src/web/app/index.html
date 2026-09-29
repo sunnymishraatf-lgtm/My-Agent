@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NEUTRON — Maintenance App</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Mono:wght@400;700&family=Work+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/src/web/app/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">NEUTRON</div>
+    <div class="subtitle">Maintenance App</div>
+  </div>
+  <div class="topbar-right">
+    <span id="server-pill" class="pill">checking…</span>
+    <a class="btn ghost" href="/demo">Guided demo</a>
+  </div>
+</header>
+
+<div id="error-bar" class="error-bar hidden" role="alert"></div>
+
+<div class="shell">
+  <nav class="sidebar" aria-label="NEUTRON app sections">
+    <a href="#/dashboard" data-route="dashboard">Dashboard</a>
+    <a href="#/maintain" data-route="maintain">Maintain</a>
+    <a href="#/repos" data-route="repos">Repositories</a>
+    <a href="#/reports" data-route="reports">Reports</a>
+    <a href="#/chat" data-route="chat">Chat</a>
+    <a href="#/settings" data-route="settings">Settings</a>
+    <div class="side-note">The guided hackathon demo lives at <a href="/demo">/demo</a>.</div>
+  </nav>
+  <main id="view" class="view" aria-live="polite"></main>
+</div>
+
+<footer class="footer">
+  <span>NEUTRON — AI Software Maintenance Agent</span>
+  <span class="foot-links">
+    <a href="https://github.com/sunnymishraatf-lgtm/My-Agent">GitHub</a>
+    <a href="/demo">/demo</a>
+    <a href="#/dashboard">/app</a>
+  </span>
+</footer>
+
+<script src="/src/web/app/app.js"></script>
+</body>
+</html>

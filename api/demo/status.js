@@ -5112,6 +5112,17 @@ var BUILTIN = [
     color: "magenta"
   },
   {
+    id: "nous",
+    displayName: "NousResearch",
+    description: "NousResearch direct inference (Nous Portal). Portal auth is OAuth with short-lived JWTs \u2014 a pasted API key will NOT authenticate here. For Hermes models with an API key, use OpenRouter instead.",
+    baseUrl: "https://inference-api.nousresearch.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["NOUS", "NOUSRESEARCH"],
+    docsUrl: "https://github.com/NousResearch/hermes-agent",
+    color: "cyan"
+  },
+  {
     id: "tokenharbor",
     displayName: "Token Harbor",
     description: "OpenAI-compatible model gateway",
@@ -7539,7 +7550,8 @@ async function implementPlan(opts, tasks) {
     noLlm: false
   };
   const providers = readGlobalProviders();
-  const canRun = providers.some((p) => p.enabled && p.baseUrl) && !!opts.api;
+  const apiHasProviders = !!opts.api && opts.api.registry.ids().length > 0;
+  const canRun = apiHasProviders || providers.some((p) => p.enabled && p.baseUrl) && !!opts.api;
   const beforeMap = /* @__PURE__ */ new Map();
   const touchSet = /* @__PURE__ */ new Set();
   for (const t of tasks) for (const f of t.files) touchSet.add(f);
@@ -8690,6 +8702,45 @@ var DEMO_REQUESTS = {
 var DEMO_DESCRIPTIONS = {
   taskflow: "TaskFlow \u2014 a task management app with email/login, user profiles, a REST API and tests. Add Google OAuth."
 };
+
+// src/server/byok.ts
+var API_KEY_HEADER = "x-api-key";
+var PROVIDER_HEADER = "x-provider";
+var DEFAULT_BYOK_PROVIDER = "agentrouter";
+function providerFromRequestKey(key, providerId) {
+  const k = (key ?? "").trim();
+  if (k.length < 8 || /\s/.test(k)) return void 0;
+  const wanted = (providerId ?? "").trim().toLowerCase();
+  const entry = (wanted ? getCatalogEntry(wanted) : void 0) ?? getCatalogEntry(DEFAULT_BYOK_PROVIDER);
+  if (!entry?.baseUrl) return void 0;
+  return {
+    id: entry.id,
+    baseUrl: entry.baseUrl,
+    apiKey: k,
+    models: [],
+    enabled: true
+  };
+}
+function extractRequestKeyFromHeaders(headers) {
+  if (!headers) return void 0;
+  const h = headers[API_KEY_HEADER] ?? headers["X-Api-Key"] ?? headers["X-API-KEY"];
+  const v = Array.isArray(h) ? h[0] : h;
+  return typeof v === "string" && v.trim() ? v.trim() : void 0;
+}
+function extractRequestProviderFromHeaders(headers) {
+  if (!headers) return void 0;
+  const h = headers[PROVIDER_HEADER] ?? headers["X-Provider"] ?? headers["X-PROVIDER"];
+  const v = Array.isArray(h) ? h[0] : h;
+  return typeof v === "string" && v.trim() ? v.trim().toLowerCase() : void 0;
+}
+function configForRequest(apiKey, providerId) {
+  const provider = apiKey ? providerFromRequestKey(apiKey, providerId) : void 0;
+  if (provider?.apiKey) {
+    registerSecrets([provider.apiKey]);
+    return loadConfig({ providers: [provider] });
+  }
+  return loadConfig();
+}
 
 // src/providers/provider.ts
 function normalizeBaseUrl(baseUrl) {
@@ -9920,9 +9971,9 @@ var silentLogger = { debug: () => {
 }, warn: () => {
 }, error: () => {
 } };
-function buildApi() {
-  if (!hasProviderConfigured()) return {};
-  const config = loadConfig();
+function buildApi(apiKey, providerId) {
+  const config = configForRequest(apiKey, providerId);
+  if (!config.providers.some((p) => p.enabled && p.baseUrl)) return {};
   registerSecrets(config.providers.map((p) => p.apiKey).filter((k) => !!k));
   return { api: new ApiSystem({ config, logger: silentLogger }) };
 }
@@ -10012,7 +10063,7 @@ var DemoManager = class {
     }
     return n;
   }
-  execute(analysisId) {
+  execute(analysisId, apiKey, providerId) {
     const rec = this.getAnalysis(analysisId);
     const approvalAt = this.approvals.get(analysisId);
     if (!approvalAt) {
@@ -10033,9 +10084,9 @@ var DemoManager = class {
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     this.jobs.set(job.id, job);
-    void this.runJob(job, rec).catch((err) => {
+    void this.runJob(job, rec, apiKey, providerId).catch((err) => {
       job.status = "failed";
-      job.error = err instanceof Error ? err.message : String(err);
+      job.error = redact(err instanceof Error ? err.message : String(err));
       job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
       pushEvent(job, "job", `Job failed: ${job.error}`);
     });
@@ -10047,8 +10098,8 @@ var DemoManager = class {
     return job;
   }
   /* ---------------- job runner: the real NEUTRON stages ---------------- */
-  async runJob(job, rec) {
-    const { api } = buildApi();
+  async runJob(job, rec, apiKey, providerId) {
+    const { api } = buildApi(apiKey, providerId);
     const noLlm = !api;
     job.noLlm = noLlm;
     job.status = "running";
@@ -10296,8 +10347,9 @@ function sanitizeResult(r) {
     errors: r.errors
   };
 }
-function getDemoStatus(manager) {
-  const providerConfigured = hasProviderConfigured();
+function getDemoStatus(manager, opts) {
+  const requestKey = opts?.apiKey ? providerFromRequestKey(opts.apiKey, opts.providerId) : void 0;
+  const providerConfigured = hasProviderConfigured() || !!requestKey;
   return {
     ok: true,
     demoRepository: DEMO_PROJECT,
@@ -10306,7 +10358,7 @@ function getDemoStatus(manager) {
     workspaceReady: existsSync13(manager.workspace),
     providerConfigured,
     cloneEnabled: cloneAllowed(),
-    llmNote: providerConfigured ? "An LLM provider is configured on this server: approving the plan will run the real agent implementation." : "No LLM provider is configured on this server: the agent implementation step will be honestly skipped (nothing fabricated). Analysis, planning, tests, security, review and the release gate still run for real."
+    llmNote: requestKey ? `An API key was provided with this request for provider "${requestKey.id}": LLM steps will use it for this request only. The key is never stored on the server.` : providerConfigured ? "An LLM provider is configured on this server: approving the plan will run the real agent implementation." : "No LLM provider is configured on this server: the agent implementation step will be honestly skipped (nothing fabricated). Analysis, planning, tests, security, review and the release gate still run for real."
   };
 }
 
@@ -10342,7 +10394,10 @@ async function handler(req, res) {
   try {
     const manager = newDemoManager();
     sendJson(res, 200, {
-      ...getDemoStatus(manager),
+      ...getDemoStatus(manager, {
+        apiKey: extractRequestKeyFromHeaders(req.headers),
+        providerId: extractRequestProviderFromHeaders(req.headers)
+      }),
       serverless: true,
       // Honest capability flag: analysis/impact/plan/approval run live;
       // full agent execution needs the persistent Node host.

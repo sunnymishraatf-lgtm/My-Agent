@@ -60,6 +60,18 @@ const BUILTIN: ProviderCatalogEntry[] = [
     color: "magenta",
   },
   {
+    id: "nous",
+    displayName: "NousResearch",
+    description:
+      "NousResearch direct inference (Nous Portal). Portal auth is OAuth with short-lived JWTs — a pasted API key will NOT authenticate here. For Hermes models with an API key, use OpenRouter instead.",
+    baseUrl: "https://inference-api.nousresearch.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["NOUS", "NOUSRESEARCH"],
+    docsUrl: "https://github.com/NousResearch/hermes-agent",
+    color: "cyan",
+  },
+  {
     id: "tokenharbor",
     displayName: "Token Harbor",
     description: "OpenAI-compatible model gateway",
@@ -307,4 +319,29 @@ export function resolveEnvProvider(entry: ProviderCatalogEntry): ProviderResolve
 /** Deep copy of the built-in catalog, useful in tests to reset state. */
 export function builtinCatalog(): ProviderCatalogEntry[] {
   return BUILTIN.map((entry) => ({ ...entry }));
+}
+
+/**
+ * Sensible default model IDs per provider for UI dropdowns. This is UI
+ * sugar only — the catalog itself deliberately does not store model lists
+ * (they are discovered from each provider's own `/models` endpoint).
+ * Free-text override is always allowed.
+ *
+ * The Hermes model IDs below were verified live against OpenRouter's
+ * public model list (https://openrouter.ai/api/v1/models). Hermes models
+ * are served by OpenRouter with a plain API key, which is what makes them
+ * work with BYOK. The `nous` direct endpoint is OAuth-only (short-lived
+ * JWTs minted from a Portal refresh token), so it carries no static
+ * model defaults — a pasted key cannot authenticate there.
+ */
+const DEFAULT_MODELS: Record<string, string[]> = {
+  openrouter: [
+    "nousresearch/hermes-4-405b",
+    "nousresearch/hermes-3-llama-3.1-405b",
+    "nousresearch/hermes-3-llama-3.1-70b",
+  ],
+};
+
+export function defaultModelsFor(providerId: string): string[] {
+  return [...(DEFAULT_MODELS[providerId] ?? [])];
 }

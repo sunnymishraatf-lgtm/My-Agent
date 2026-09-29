@@ -1,5 +1,4 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { loadConfig } from "../config";
 import { ApiSystem } from "../api/api-manager";
 import { ChatAgent } from "../chat/agent";
 import { SessionStore, type ChatSession } from "../chat/session";
@@ -7,11 +6,15 @@ import { findAgent, loadAgents } from "../chat/agent-config";
 import { getVersion } from "../version";
 import { createNeutronWorkflow, runFullWorkflow, type NeutronWorkflowOptions, type NeutronResult } from "../neutron/workflow";
 import { NeutronStore } from "../neutron/store";
+import { RunArchive } from "../neutron/record";
 import { analyzeRepository } from "../neutron/analyzer";
 import { analyzeImpact } from "../neutron/impact";
 import { buildPlan } from "../neutron/planner";
 import { formatImpactGraph } from "../neutron/impact";
 import type { RepoAnalysis, ImpactGraph, NeutronPlan, MaintenanceRequest } from "../neutron/model";
+import type { ChatMessage } from "../types";
+import { extractRequestKey, extractRequestProvider, configForRequest } from "./byok";
+import { listCatalog, defaultModelsFor } from "../providers/catalog";
 import { existsSync, readFileSync, createReadStream } from "node:fs";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -376,7 +379,11 @@ async function handleDemoApi(manager: DemoManager, req: IncomingMessage, res: Se
   const path = url.pathname;
   try {
     if (req.method === "GET" && path === "/api/demo/status") {
-      sendJson(res, 200, getDemoStatus(manager));
+      sendJson(res, 200,
+        getDemoStatus(manager, {
+          apiKey: extractRequestKey(req),
+          providerId: extractRequestProvider(req),
+        }));
       return;
     }
     if (req.method === "POST" && path === "/api/demo/prepare") {
@@ -404,8 +411,15 @@ async function handleDemoApi(manager: DemoManager, req: IncomingMessage, res: Se
       return;
     }
     if (req.method === "POST" && path === "/api/demo/execute") {
-      const body = (await readJsonBody(req)) as { analysisId?: unknown };
-      const job = manager.execute(parseAnalysisId(body.analysisId));
+      const body = (await readJsonBody(req)) as { analysisId?: unknown; apiKey?: unknown; provider?: unknown };
+      // BYOK: the request key (x-api-key header or apiKey body field) and the
+      // provider choice (x-provider header or provider body field) are passed
+      // as call parameters only — never stored on the manager.
+      const job = manager.execute(
+        parseAnalysisId(body.analysisId),
+        extractRequestKey(req, body),
+        extractRequestProvider(req, body),
+      );
       sendJson(res, 202, { ok: true, ...serializeJob(job) });
       return;
     }
@@ -693,7 +707,11 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
       // Capture the approval decision now: the workflow re-plans and persists state mid-run,
       // so the callbacks below must use this captured value instead of re-reading mutable state.
       const approvedForRun = true;
-      const config = loadConfig();
+      // BYOK: a request key (x-api-key header or apiKey body field) builds a
+      // request-scoped provider config for the requested provider (x-provider
+      // header or provider body field, default agentrouter); otherwise the
+      // server config applies.
+      const config = configForRequest(extractRequestKey(req, body), extractRequestProvider(req, body));
       const api = new ApiSystem({ config, logger: silentLogger });
       // Only the plan gate can be approved over HTTP. Command approvals and anything else stay denied
       // (they need the interactive CLI/TUI), and nothing is ever deployed.
@@ -742,6 +760,19 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     }
   }
 
+  if (req.method === "GET" && url.pathname === "/api/providers") {
+    sendJson(res, 200, {
+      ok: true,
+      providers: listCatalog().map((e) => ({
+        id: e.id,
+        displayName: e.displayName,
+        description: e.description,
+        defaultModels: defaultModelsFor(e.id),
+      })),
+    });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/neutron/repositories") {
     try {
       const store = new NeutronStore(opts.root);
@@ -755,14 +786,95 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/api/neutron/bob/activity") {
+  if (req.method === "GET" && url.pathname === "/api/neutron/runs") {
     try {
+      const archive = new RunArchive(opts.root);
+      sendJson(res, 200, { runs: archive.list() });
+      return;
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/neutron/runs/")) {
+    try {
+      let id = "";
+      try {
+        id = decodeURIComponent(url.pathname.slice("/api/neutron/runs/".length));
+      } catch {
+        /* malformed escape -> 404 below */
+      }
+      if (!id || id.includes("/") || !SESSION_ID_RE.test(id)) {
+        sendJson(res, 404, { ok: false, error: "Not found" });
+        return;
+      }
+      const archive = new RunArchive(opts.root);
+      const run = archive.load(id);
+      if (!run) {
+        sendJson(res, 404, { ok: false, error: "Run not found" });
+        return;
+      }
+      sendJson(res, 200, { run });
+      return;
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/neutron/bob/activity") {    try {
       const { collectBobActivity } = await import("../neutron/bob");
       const activity = collectBobActivity(opts.root);
       sendJson(res, 200, { ...activity, recent: activity.sessions?.slice(-5) || [] });
       return;
     } catch (e) {
       sendJson(res, 500, { ok: false, error: `Unable to read Bob activity: ${e instanceof Error ? e.message : String(e)}` });
+      return;
+    }
+  }
+
+  // Stateless chat completion for the /app Chat view. Works on the Node
+  // server AND on Vercel (see api-src/chat.ts). The request key (x-api-key
+  // header or apiKey body field) wins; otherwise the server's configured
+  // providers are used. Conversation history is kept client-side — nothing
+  // is stored here. Without any provider, the error is honest, never faked.
+  if (req.method === "POST" && url.pathname === "/api/chat") {
+    try {
+      const body = (await readJsonBody(req)) as {
+        messages?: Array<{ role?: string; content?: unknown }>;
+        model?: string;
+        provider?: string;
+        apiKey?: string;
+      };
+      const apiKey = extractRequestKey(req, body);
+      const providerId = extractRequestProvider(req, body);
+      const messages: ChatMessage[] = (Array.isArray(body.messages) ? body.messages : [])
+        .filter((m) => m && typeof m.content === "string" && (m.content as string).trim())
+        .slice(-20)
+        .map((m) => ({
+          role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
+          content: (m.content as string).slice(0, 8000),
+        }));
+      if (!messages.some((m) => m.role === "user")) {
+        sendJson(res, 400, { ok: false, error: "No user message provided" });
+        return;
+      }
+      const config = configForRequest(apiKey, providerId);
+      const api = new ApiSystem({ config, logger: silentLogger });
+      try {
+        const chatOpts: { model?: string; provider?: string } = {};
+        if (body.model) chatOpts.model = body.model;
+        if (providerId) chatOpts.provider = providerId;
+        const reply = await api.chat("general", messages, chatOpts);
+        sendJson(res, 200, { ok: true, text: reply.text, provider: reply.provider, model: reply.model });
+      } catch (err) {
+        sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    } catch (e) {
+      if (e instanceof BadRequestError) throw e;
+      sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
       return;
     }
   }
@@ -777,6 +889,19 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
       return;
     }
     sendJson(res, 404, { ok: false, error: "Demo UI not found. Rebuild with `npm run build`." });
+    return;
+  }
+
+  // NEUTRON app: full product SPA (dashboard, maintain, repos, reports, chat).
+  // Served alongside /demo and the existing dashboard at / — nothing existing moves.
+  if (req.method === "GET" && url.pathname === "/app") {
+    const webDir = resolveWebDir();
+    const appIndex = webDir ? join(webDir, "app", "index.html") : "";
+    if (appIndex && existsSync(appIndex)) {
+      sendHtml(res, readFileSync(appIndex, "utf8"));
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: "NEUTRON app not found. Rebuild with `npm run build`." });
     return;
   }
 
@@ -829,7 +954,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     });
     const write = (event: unknown) => res.write(`${JSON.stringify(event)}\n`);
     try {
-      const config = loadConfig();
+      const config = configForRequest(extractRequestKey(req, body), extractRequestProvider(req, body));
       const api = new ApiSystem({ config, logger: silentLogger });
       const agents = loadAgents(opts.root);
       const agentConfig = body.agent ? findAgent(agents, body.agent) : undefined;
@@ -874,7 +999,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
       return;
     }
     if (body.sessionId !== undefined) parseSessionId(body.sessionId);
-    const config = loadConfig();
+    const config = configForRequest(extractRequestKey(req, body), extractRequestProvider(req, body));
     const api = new ApiSystem({ config, logger: silentLogger });
     const agents = loadAgents(opts.root);
     const agentConfig = body.agent ? findAgent(agents, body.agent) : undefined;
@@ -909,7 +1034,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
       return;
     }
     try {
-      const config = loadConfig();
+      const config = configForRequest(extractRequestKey(req, body), extractRequestProvider(req, body));
       const api = new ApiSystem({ config, logger: silentLogger });
       const session = sessions.create(lastUser.content.slice(0, 60));
       const agent = new ChatAgent({

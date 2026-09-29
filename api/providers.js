@@ -4,6 +4,203 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/providers/catalog.ts
+var BUILTIN = [
+  {
+    id: "agentrouter",
+    displayName: "AgentRouter",
+    description: "AgentRouter gateway for many models",
+    baseUrl: "https://agentrouter.org/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["AGENTROUTER", "AGENT_ROUTER"],
+    docsUrl: "https://agentrouter.org",
+    color: "cyan"
+  },
+  {
+    id: "openrouter",
+    displayName: "OpenRouter",
+    description: "Aggregated access to hundreds of models",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["OPENROUTER"],
+    docsUrl: "https://openrouter.ai/docs",
+    color: "magenta"
+  },
+  {
+    id: "nous",
+    displayName: "NousResearch",
+    description: "NousResearch direct inference (Nous Portal). Portal auth is OAuth with short-lived JWTs \u2014 a pasted API key will NOT authenticate here. For Hermes models with an API key, use OpenRouter instead.",
+    baseUrl: "https://inference-api.nousresearch.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["NOUS", "NOUSRESEARCH"],
+    docsUrl: "https://github.com/NousResearch/hermes-agent",
+    color: "cyan"
+  },
+  {
+    id: "tokenharbor",
+    displayName: "Token Harbor",
+    description: "OpenAI-compatible model gateway",
+    baseUrl: "https://tokenharbor.ai/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["TOKENHARBOR", "TOKEN_HARBOR"],
+    docsUrl: "https://tokenharbor.ai",
+    color: "cyanBright"
+  },
+  {
+    id: "openai",
+    displayName: "OpenAI",
+    description: "OpenAI GPT models",
+    baseUrl: "https://api.openai.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["OPENAI"],
+    docsUrl: "https://platform.openai.com/docs",
+    color: "green"
+  },
+  {
+    id: "anthropic",
+    displayName: "Anthropic",
+    description: "Claude models via the Messages API",
+    baseUrl: "https://api.anthropic.com",
+    apiType: "anthropic",
+    auth: "x-api-key",
+    env: ["ANTHROPIC"],
+    docsUrl: "https://docs.anthropic.com",
+    color: "yellow"
+  },
+  {
+    id: "google",
+    displayName: "Google Gemini",
+    description: "Gemini models via the Generative Language API",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    apiType: "google",
+    auth: "query",
+    env: ["GOOGLE", "GEMINI", "GOOGLE_GEMINI"],
+    docsUrl: "https://ai.google.dev/docs",
+    color: "blue"
+  },
+  {
+    id: "groq",
+    displayName: "Groq",
+    description: "Ultra-fast inference on open models",
+    baseUrl: "https://api.groq.com/openai/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["GROQ"],
+    docsUrl: "https://console.groq.com/docs",
+    color: "red"
+  },
+  {
+    id: "mistral",
+    displayName: "Mistral",
+    description: "Mistral AI models",
+    baseUrl: "https://api.mistral.ai/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["MISTRAL"],
+    docsUrl: "https://docs.mistral.ai",
+    color: "yellowBright"
+  },
+  {
+    id: "deepseek",
+    displayName: "DeepSeek",
+    description: "DeepSeek chat and reasoning models",
+    baseUrl: "https://api.deepseek.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["DEEPSEEK"],
+    docsUrl: "https://api-docs.deepseek.com",
+    color: "blueBright"
+  },
+  {
+    id: "xai",
+    displayName: "xAI",
+    description: "Grok models from xAI",
+    baseUrl: "https://api.x.ai/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["XAI", "X_AI"],
+    docsUrl: "https://docs.x.ai",
+    color: "white"
+  },
+  {
+    id: "cohere",
+    displayName: "Cohere",
+    description: "Cohere Command models (compatibility API)",
+    baseUrl: "https://api.cohere.ai/compatibility/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["COHERE"],
+    docsUrl: "https://docs.cohere.com",
+    color: "greenBright"
+  },
+  {
+    id: "qwen",
+    displayName: "Alibaba Qwen",
+    description: "Qwen models via DashScope compatibility mode",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["QWEN", "DASHSCOPE", "ALIBABA"],
+    docsUrl: "https://help.aliyun.com/zh/model-studio",
+    color: "magentaBright"
+  },
+  {
+    id: "ollama",
+    displayName: "Ollama",
+    description: "Local models served by Ollama",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    apiType: "openai-compatible",
+    auth: "none",
+    env: ["OLLAMA"],
+    docsUrl: "https://ollama.com",
+    color: "white",
+    local: true
+  },
+  {
+    id: "free-llm",
+    displayName: "Free LLM",
+    description: "Local OpenAI-compatible gateway",
+    baseUrl: "http://localhost:3001/v1",
+    apiType: "openai-compatible",
+    auth: "none",
+    env: ["LLM", "FREE_LLM"],
+    docsUrl: "https://github.com/FreeLLMAPI",
+    color: "green",
+    local: true
+  },
+  {
+    id: "custom",
+    displayName: "Any Custom",
+    description: "Any OpenAI-compatible endpoint you host",
+    baseUrl: "",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["ANY", "CUSTOM"],
+    docsUrl: "",
+    color: "gray"
+  }
+];
+var registry = /* @__PURE__ */ new Map();
+for (const entry of BUILTIN) registry.set(entry.id, entry);
+function listCatalog() {
+  return [...registry.values()];
+}
+var DEFAULT_MODELS = {
+  openrouter: [
+    "nousresearch/hermes-4-405b",
+    "nousresearch/hermes-3-llama-3.1-405b",
+    "nousresearch/hermes-3-llama-3.1-70b"
+  ]
+};
+function defaultModelsFor(providerId) {
+  return [...DEFAULT_MODELS[providerId] ?? []];
+}
+
 // src/neutron/analyzer.ts
 var FRONTEND_MARKERS = ["pages", "components", "components/", "src/pages", "src/components", "app/"].map((m) => m.toLowerCase());
 var BACKEND_MARKERS = ["controllers", "routes", "services", "api", "middleware", "src/api", "src/services", "src/routes"].map((m) => m.toLowerCase());
@@ -4050,190 +4247,6 @@ var coerce = {
 };
 var NEVER = INVALID;
 
-// src/providers/catalog.ts
-var BUILTIN = [
-  {
-    id: "agentrouter",
-    displayName: "AgentRouter",
-    description: "AgentRouter gateway for many models",
-    baseUrl: "https://agentrouter.org/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["AGENTROUTER", "AGENT_ROUTER"],
-    docsUrl: "https://agentrouter.org",
-    color: "cyan"
-  },
-  {
-    id: "openrouter",
-    displayName: "OpenRouter",
-    description: "Aggregated access to hundreds of models",
-    baseUrl: "https://openrouter.ai/api/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["OPENROUTER"],
-    docsUrl: "https://openrouter.ai/docs",
-    color: "magenta"
-  },
-  {
-    id: "nous",
-    displayName: "NousResearch",
-    description: "NousResearch direct inference (Nous Portal). Portal auth is OAuth with short-lived JWTs \u2014 a pasted API key will NOT authenticate here. For Hermes models with an API key, use OpenRouter instead.",
-    baseUrl: "https://inference-api.nousresearch.com/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["NOUS", "NOUSRESEARCH"],
-    docsUrl: "https://github.com/NousResearch/hermes-agent",
-    color: "cyan"
-  },
-  {
-    id: "tokenharbor",
-    displayName: "Token Harbor",
-    description: "OpenAI-compatible model gateway",
-    baseUrl: "https://tokenharbor.ai/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["TOKENHARBOR", "TOKEN_HARBOR"],
-    docsUrl: "https://tokenharbor.ai",
-    color: "cyanBright"
-  },
-  {
-    id: "openai",
-    displayName: "OpenAI",
-    description: "OpenAI GPT models",
-    baseUrl: "https://api.openai.com/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["OPENAI"],
-    docsUrl: "https://platform.openai.com/docs",
-    color: "green"
-  },
-  {
-    id: "anthropic",
-    displayName: "Anthropic",
-    description: "Claude models via the Messages API",
-    baseUrl: "https://api.anthropic.com",
-    apiType: "anthropic",
-    auth: "x-api-key",
-    env: ["ANTHROPIC"],
-    docsUrl: "https://docs.anthropic.com",
-    color: "yellow"
-  },
-  {
-    id: "google",
-    displayName: "Google Gemini",
-    description: "Gemini models via the Generative Language API",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    apiType: "google",
-    auth: "query",
-    env: ["GOOGLE", "GEMINI", "GOOGLE_GEMINI"],
-    docsUrl: "https://ai.google.dev/docs",
-    color: "blue"
-  },
-  {
-    id: "groq",
-    displayName: "Groq",
-    description: "Ultra-fast inference on open models",
-    baseUrl: "https://api.groq.com/openai/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["GROQ"],
-    docsUrl: "https://console.groq.com/docs",
-    color: "red"
-  },
-  {
-    id: "mistral",
-    displayName: "Mistral",
-    description: "Mistral AI models",
-    baseUrl: "https://api.mistral.ai/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["MISTRAL"],
-    docsUrl: "https://docs.mistral.ai",
-    color: "yellowBright"
-  },
-  {
-    id: "deepseek",
-    displayName: "DeepSeek",
-    description: "DeepSeek chat and reasoning models",
-    baseUrl: "https://api.deepseek.com/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["DEEPSEEK"],
-    docsUrl: "https://api-docs.deepseek.com",
-    color: "blueBright"
-  },
-  {
-    id: "xai",
-    displayName: "xAI",
-    description: "Grok models from xAI",
-    baseUrl: "https://api.x.ai/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["XAI", "X_AI"],
-    docsUrl: "https://docs.x.ai",
-    color: "white"
-  },
-  {
-    id: "cohere",
-    displayName: "Cohere",
-    description: "Cohere Command models (compatibility API)",
-    baseUrl: "https://api.cohere.ai/compatibility/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["COHERE"],
-    docsUrl: "https://docs.cohere.com",
-    color: "greenBright"
-  },
-  {
-    id: "qwen",
-    displayName: "Alibaba Qwen",
-    description: "Qwen models via DashScope compatibility mode",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["QWEN", "DASHSCOPE", "ALIBABA"],
-    docsUrl: "https://help.aliyun.com/zh/model-studio",
-    color: "magentaBright"
-  },
-  {
-    id: "ollama",
-    displayName: "Ollama",
-    description: "Local models served by Ollama",
-    baseUrl: "http://127.0.0.1:11434/v1",
-    apiType: "openai-compatible",
-    auth: "none",
-    env: ["OLLAMA"],
-    docsUrl: "https://ollama.com",
-    color: "white",
-    local: true
-  },
-  {
-    id: "free-llm",
-    displayName: "Free LLM",
-    description: "Local OpenAI-compatible gateway",
-    baseUrl: "http://localhost:3001/v1",
-    apiType: "openai-compatible",
-    auth: "none",
-    env: ["LLM", "FREE_LLM"],
-    docsUrl: "https://github.com/FreeLLMAPI",
-    color: "green",
-    local: true
-  },
-  {
-    id: "custom",
-    displayName: "Any Custom",
-    description: "Any OpenAI-compatible endpoint you host",
-    baseUrl: "",
-    apiType: "openai-compatible",
-    auth: "bearer",
-    env: ["ANY", "CUSTOM"],
-    docsUrl: "",
-    color: "gray"
-  }
-];
-var registry = /* @__PURE__ */ new Map();
-for (const entry of BUILTIN) registry.set(entry.id, entry);
-
 // src/config.ts
 var configSchema = external_exports.object({
   api: external_exports.object({
@@ -4629,15 +4642,6 @@ describe("security posture", () => {
 `
 };
 
-// src/server/demo.ts
-var DemoError = class extends Error {
-  status;
-  constructor(message, status = 400) {
-    super(message);
-    this.status = status;
-  }
-};
-
 // api-src/_lib.ts
 function sendJson(res, status, body) {
   res.status(status).json(body);
@@ -4649,37 +4653,20 @@ function requireMethod(req, res, method) {
   }
   return true;
 }
-var SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-function parseId(value, what) {
-  if (typeof value === "string" && SESSION_ID_RE.test(value)) return value;
-  throw new DemoError(`Invalid ${what}`, 400);
-}
 var TOKEN_TTL_MS = 30 * 60 * 1e3;
-function handleApiError(res, err) {
-  if (err instanceof DemoError) {
-    sendJson(res, err.status, { ok: false, error: err.message });
-    return;
-  }
-  sendJson(res, 500, { ok: false, error: "Internal server error" });
-}
 
-// api-src/demo/jobs/[id].ts
-function jobIdFrom(req) {
-  const raw = req.query?.id;
-  const id = Array.isArray(raw) ? raw[0] : raw;
-  return parseId(id, "job id");
-}
+// api-src/providers.ts
 async function handler(req, res) {
   if (!requireMethod(req, res, "GET")) return;
-  try {
-    jobIdFrom(req);
-    sendJson(res, 404, {
-      ok: false,
-      error: "No jobs exist on this serverless demo. Full agent execution needs the persistent Node host \u2014 see docs/DEPLOYMENT.md."
-    });
-  } catch (err) {
-    handleApiError(res, err);
-  }
+  sendJson(res, 200, {
+    ok: true,
+    providers: listCatalog().map((e) => ({
+      id: e.id,
+      displayName: e.displayName,
+      description: e.description,
+      defaultModels: defaultModelsFor(e.id)
+    }))
+  });
 }
 export {
   handler as default

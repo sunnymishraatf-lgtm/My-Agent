@@ -33,6 +33,8 @@ export interface VercelRequest {
   body?: unknown;
   /** Route/query params, e.g. { id: "..." } for api/demo/jobs/[id].ts */
   query?: Record<string, string | string[] | undefined>;
+  /** Present on real Vercel invocations (the underlying Node request). */
+  headers?: Record<string, string | string[] | undefined>;
 }
 
 export interface VercelResponse {

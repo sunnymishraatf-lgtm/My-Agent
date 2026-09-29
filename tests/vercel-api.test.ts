@@ -27,6 +27,7 @@ import execute from "../api-src/demo/execute";
 import clone from "../api-src/demo/clone";
 import jobRoute from "../api-src/demo/jobs/[id]";
 import resultRoute from "../api-src/demo/jobs/[id]/result";
+import chat from "../api-src/chat";
 import { verifyApprovalToken } from "../api-src/_lib";
 import type { VercelRequest, VercelResponse } from "../api-src/_lib";
 
@@ -274,5 +275,70 @@ describe("vercel api: jobs & clone", () => {
     await clone(req("POST", { url: "https://github.com/octocat/Hello-World" }), res);
     expect(res.statusCode).toBe(400);
     expect(res.payload.ok).toBe(false);
+  });
+});
+
+describe("vercel api: chat (BYOK)", () => {
+  const ENV_KEY = "AGENTROUTER_API_KEY";
+  let saved: string | undefined;
+
+  function clearProviderEnv() {
+    saved = process.env[ENV_KEY];
+    delete process.env[ENV_KEY];
+  }
+  function restoreProviderEnv() {
+    if (saved === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = saved;
+  }
+
+  it("POST /api/chat returns an honest error with no provider and no key", async () => {
+    clearProviderEnv();
+    try {
+      const res = mockRes();
+      await chat({ method: "POST", body: { messages: [{ role: "user", content: "hi" }] } }, res);
+      expect(res.statusCode).toBe(502);
+      expect(res.payload.ok).toBe(false);
+      expect(String(res.payload.error)).toMatch(/No LLM provider configured/i);
+      noCanary(res.payload);
+    } finally {
+      restoreProviderEnv();
+    }
+  });
+
+  it("POST /api/chat rejects a missing user message with 400", async () => {
+    const res = mockRes();
+    await chat({ method: "POST", body: { messages: [] } }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.payload.ok).toBe(false);
+  });
+
+  it("POST /api/chat accepts the x-api-key header and never echoes a bad key", async () => {
+    const badKey = "byok-vercel-bad-1234567890";
+    const res = mockRes();
+    await chat(
+      {
+        method: "POST",
+        headers: { "x-api-key": badKey },
+        body: { messages: [{ role: "user", content: "hi" }] },
+      },
+      res,
+    );
+    // Upstream auth failure (or offline network error): honest 502, not a
+    // 500, and the key must not appear anywhere in the response.
+    expect(res.statusCode).toBe(502);
+    expect(JSON.stringify(res.payload)).not.toContain(badKey);
+    noCanary(res.payload);
+  }, 60000);
+
+  it("POST /api/demo/status reflects a request key honestly", async () => {
+    const res = mockRes();
+    await status(
+      { method: "GET", headers: { "x-api-key": "byok-status-key-1234567890" } },
+      res,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.payload.providerConfigured).toBe(true);
+    expect(String(res.payload.llmNote)).toMatch(/provided with this request/i);
+    expect(JSON.stringify(res.payload)).not.toContain("byok-status-key-1234567890");
   });
 });

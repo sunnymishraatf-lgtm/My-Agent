@@ -4078,6 +4078,17 @@ var BUILTIN = [
     color: "magenta"
   },
   {
+    id: "nous",
+    displayName: "NousResearch",
+    description: "NousResearch direct inference (Nous Portal). Portal auth is OAuth with short-lived JWTs \u2014 a pasted API key will NOT authenticate here. For Hermes models with an API key, use OpenRouter instead.",
+    baseUrl: "https://inference-api.nousresearch.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["NOUS", "NOUSRESEARCH"],
+    docsUrl: "https://github.com/NousResearch/hermes-agent",
+    color: "cyan"
+  },
+  {
     id: "tokenharbor",
     displayName: "Token Harbor",
     description: "OpenAI-compatible model gateway",
@@ -4241,6 +4252,12 @@ var configSchema = external_exports.object({
     maxIterations: external_exports.number().min(0).max(20).default(5)
   }).default({})
 });
+var keySet = /* @__PURE__ */ new Set();
+function registerSecrets(newKeys) {
+  for (const k of newKeys) {
+    if (k && k.length >= 8) keySet.add(k);
+  }
+}
 
 // src/neutron/demo.ts
 var TASKFLOW = {
@@ -4621,6 +4638,22 @@ describe("security posture", () => {
 `
 };
 
+// src/server/byok.ts
+var API_KEY_HEADER = "x-api-key";
+var PROVIDER_HEADER = "x-provider";
+function extractRequestKeyFromHeaders(headers) {
+  if (!headers) return void 0;
+  const h = headers[API_KEY_HEADER] ?? headers["X-Api-Key"] ?? headers["X-API-KEY"];
+  const v = Array.isArray(h) ? h[0] : h;
+  return typeof v === "string" && v.trim() ? v.trim() : void 0;
+}
+function extractRequestProviderFromHeaders(headers) {
+  if (!headers) return void 0;
+  const h = headers[PROVIDER_HEADER] ?? headers["X-Provider"] ?? headers["X-PROVIDER"];
+  const v = Array.isArray(h) ? h[0] : h;
+  return typeof v === "string" && v.trim() ? v.trim().toLowerCase() : void 0;
+}
+
 // src/server/demo.ts
 var DemoError = class extends Error {
   status;
@@ -4698,6 +4731,9 @@ function handleApiError(res, err) {
 async function handler(req, res) {
   if (!requireMethod(req, res, "POST")) return;
   try {
+    const requestKey = extractRequestKeyFromHeaders(req.headers);
+    const requestProvider = extractRequestProviderFromHeaders(req.headers);
+    if (requestKey) registerSecrets([requestKey]);
     const body = readJsonBody(req);
     const analysisId = parseId(body.analysisId, "analysis id");
     if (!verifyApprovalToken(body.approvalToken, analysisId)) {

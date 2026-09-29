@@ -229,7 +229,11 @@ export async function implementPlan(
   };
 
   const providers = readGlobalProviders();
-  const canRun = providers.some((p) => p.enabled && p.baseUrl) && !!opts.api;
+  // A request may carry its own provider (BYOK): the passed-in ApiSystem's
+  // registry is authoritative for this run; the global config is the fallback.
+  // Either way, an api instance is required — never fabricate a run.
+  const apiHasProviders = !!opts.api && opts.api.registry.ids().length > 0;
+  const canRun = apiHasProviders || (providers.some((p) => p.enabled && p.baseUrl) && !!opts.api);
 
   // Pre-snapshot every file that may be touched (to compute real diffs).
   const beforeMap = new Map<string, string>();

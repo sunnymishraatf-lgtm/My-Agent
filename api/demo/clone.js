@@ -5113,6 +5113,17 @@ var BUILTIN = [
     color: "magenta"
   },
   {
+    id: "nous",
+    displayName: "NousResearch",
+    description: "NousResearch direct inference (Nous Portal). Portal auth is OAuth with short-lived JWTs \u2014 a pasted API key will NOT authenticate here. For Hermes models with an API key, use OpenRouter instead.",
+    baseUrl: "https://inference-api.nousresearch.com/v1",
+    apiType: "openai-compatible",
+    auth: "bearer",
+    env: ["NOUS", "NOUSRESEARCH"],
+    docsUrl: "https://github.com/NousResearch/hermes-agent",
+    color: "cyan"
+  },
+  {
     id: "tokenharbor",
     displayName: "Token Harbor",
     description: "OpenAI-compatible model gateway",
@@ -7523,9 +7534,6 @@ function boundedChunks(items, cap) {
   }
   return chunks;
 }
-function hasProviderConfigured() {
-  return readGlobalProviders().some((p) => p.enabled && p.baseUrl);
-}
 async function implementPlan(opts, tasks) {
   const log = opts.log ?? (() => {
   });
@@ -7540,7 +7548,8 @@ async function implementPlan(opts, tasks) {
     noLlm: false
   };
   const providers = readGlobalProviders();
-  const canRun = providers.some((p) => p.enabled && p.baseUrl) && !!opts.api;
+  const apiHasProviders = !!opts.api && opts.api.registry.ids().length > 0;
+  const canRun = apiHasProviders || providers.some((p) => p.enabled && p.baseUrl) && !!opts.api;
   const beforeMap = /* @__PURE__ */ new Map();
   const touchSet = /* @__PURE__ */ new Set();
   for (const t of tasks) for (const f of t.files) touchSet.add(f);
@@ -8691,6 +8700,31 @@ var DEMO_REQUESTS = {
 var DEMO_DESCRIPTIONS = {
   taskflow: "TaskFlow \u2014 a task management app with email/login, user profiles, a REST API and tests. Add Google OAuth."
 };
+
+// src/server/byok.ts
+var DEFAULT_BYOK_PROVIDER = "agentrouter";
+function providerFromRequestKey(key, providerId) {
+  const k = (key ?? "").trim();
+  if (k.length < 8 || /\s/.test(k)) return void 0;
+  const wanted = (providerId ?? "").trim().toLowerCase();
+  const entry = (wanted ? getCatalogEntry(wanted) : void 0) ?? getCatalogEntry(DEFAULT_BYOK_PROVIDER);
+  if (!entry?.baseUrl) return void 0;
+  return {
+    id: entry.id,
+    baseUrl: entry.baseUrl,
+    apiKey: k,
+    models: [],
+    enabled: true
+  };
+}
+function configForRequest(apiKey, providerId) {
+  const provider = apiKey ? providerFromRequestKey(apiKey, providerId) : void 0;
+  if (provider?.apiKey) {
+    registerSecrets([provider.apiKey]);
+    return loadConfig({ providers: [provider] });
+  }
+  return loadConfig();
+}
 
 // src/providers/provider.ts
 function normalizeBaseUrl(baseUrl) {
@@ -9951,9 +9985,9 @@ var silentLogger = { debug: () => {
 }, warn: () => {
 }, error: () => {
 } };
-function buildApi() {
-  if (!hasProviderConfigured()) return {};
-  const config = loadConfig();
+function buildApi(apiKey, providerId) {
+  const config = configForRequest(apiKey, providerId);
+  if (!config.providers.some((p) => p.enabled && p.baseUrl)) return {};
   registerSecrets(config.providers.map((p) => p.apiKey).filter((k) => !!k));
   return { api: new ApiSystem({ config, logger: silentLogger }) };
 }
@@ -10043,7 +10077,7 @@ var DemoManager = class {
     }
     return n;
   }
-  execute(analysisId) {
+  execute(analysisId, apiKey, providerId) {
     const rec = this.getAnalysis(analysisId);
     const approvalAt = this.approvals.get(analysisId);
     if (!approvalAt) {
@@ -10064,9 +10098,9 @@ var DemoManager = class {
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     this.jobs.set(job.id, job);
-    void this.runJob(job, rec).catch((err) => {
+    void this.runJob(job, rec, apiKey, providerId).catch((err) => {
       job.status = "failed";
-      job.error = err instanceof Error ? err.message : String(err);
+      job.error = redact(err instanceof Error ? err.message : String(err));
       job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
       pushEvent(job, "job", `Job failed: ${job.error}`);
     });
@@ -10078,8 +10112,8 @@ var DemoManager = class {
     return job;
   }
   /* ---------------- job runner: the real NEUTRON stages ---------------- */
-  async runJob(job, rec) {
-    const { api } = buildApi();
+  async runJob(job, rec, apiKey, providerId) {
+    const { api } = buildApi(apiKey, providerId);
     const noLlm = !api;
     job.noLlm = noLlm;
     job.status = "running";

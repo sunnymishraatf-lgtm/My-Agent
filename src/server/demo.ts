@@ -43,7 +43,8 @@ import { NeutronStore } from "../neutron/store";
 import { RunRecorder } from "../neutron/record";
 import { scaffoldDemoProject, DEMO_REQUESTS, DEMO_DESCRIPTIONS } from "../neutron/demo";
 import { hasProviderConfigured } from "../neutron/agents";
-import { loadConfig, registerSecrets } from "../config";
+import { configForRequest, providerFromRequestKey } from "./byok";
+import { loadConfig, redact, registerSecrets } from "../config";
 import { ApiSystem } from "../api/api-manager";
 import type {
   ImpactGraph,
@@ -347,9 +348,12 @@ function freshStages(): DemoStage[] {
 
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
-function buildApi(): { api?: ApiSystem } {
-  if (!hasProviderConfigured()) return {};
-  const config = loadConfig();
+function buildApi(apiKey?: string, providerId?: string): { api?: ApiSystem } {
+  // BYOK: a request-scoped key builds a single-provider config for this call
+  // only. Without one, the server's normal configuration applies, unchanged.
+  // The key is never stored on the manager — it lives only in this call.
+  const config = configForRequest(apiKey, providerId);
+  if (!config.providers.some((p) => p.enabled && p.baseUrl)) return {};
   registerSecrets(config.providers.map((p) => p.apiKey).filter((k): k is string => !!k));
   return { api: new ApiSystem({ config, logger: silentLogger }) };
 }
@@ -467,7 +471,7 @@ export class DemoManager {
     return n;
   }
 
-  execute(analysisId: string): DemoJob {
+  execute(analysisId: string, apiKey?: string, providerId?: string): DemoJob {
     const rec = this.getAnalysis(analysisId);
     const approvalAt = this.approvals.get(analysisId);
     if (!approvalAt) {
@@ -490,9 +494,11 @@ export class DemoManager {
     };
     this.jobs.set(job.id, job);
     // Fire and forget: completion/failure is recorded on the job itself.
-    void this.runJob(job, rec).catch((err) => {
+    // The request key (if any) is passed as a call parameter only — it is
+    // never assigned to the manager or the job.
+    void this.runJob(job, rec, apiKey, providerId).catch((err) => {
       job.status = "failed";
-      job.error = err instanceof Error ? err.message : String(err);
+      job.error = redact(err instanceof Error ? err.message : String(err));
       job.finishedAt = new Date().toISOString();
       pushEvent(job, "job", `Job failed: ${job.error}`);
     });
@@ -507,8 +513,8 @@ export class DemoManager {
 
   /* ---------------- job runner: the real NEUTRON stages ---------------- */
 
-  private async runJob(job: DemoJob, rec: AnalysisRecord): Promise<void> {
-    const { api } = buildApi();
+  private async runJob(job: DemoJob, rec: AnalysisRecord, apiKey?: string, providerId?: string): Promise<void> {
+    const { api } = buildApi(apiKey, providerId);
     const noLlm = !api;
     job.noLlm = noLlm;
     job.status = "running";
@@ -815,8 +821,9 @@ export interface DemoStatus {
   llmNote: string;
 }
 
-export function getDemoStatus(manager: DemoManager): DemoStatus {
-  const providerConfigured = hasProviderConfigured();
+export function getDemoStatus(manager: DemoManager, opts?: { apiKey?: string; providerId?: string }): DemoStatus {
+  const requestKey = opts?.apiKey ? providerFromRequestKey(opts.apiKey, opts.providerId) : undefined;
+  const providerConfigured = hasProviderConfigured() || !!requestKey;
   return {
     ok: true,
     demoRepository: DEMO_PROJECT,
@@ -825,9 +832,11 @@ export function getDemoStatus(manager: DemoManager): DemoStatus {
     workspaceReady: existsSync(manager.workspace),
     providerConfigured,
     cloneEnabled: cloneAllowed(),
-    llmNote: providerConfigured
-      ? "An LLM provider is configured on this server: approving the plan will run the real agent implementation."
-      : "No LLM provider is configured on this server: the agent implementation step will be honestly skipped (nothing fabricated). Analysis, planning, tests, security, review and the release gate still run for real.",
+    llmNote: requestKey
+      ? `An API key was provided with this request for provider "${requestKey.id}": LLM steps will use it for this request only. The key is never stored on the server.`
+      : providerConfigured
+        ? "An LLM provider is configured on this server: approving the plan will run the real agent implementation."
+        : "No LLM provider is configured on this server: the agent implementation step will be honestly skipped (nothing fabricated). Analysis, planning, tests, security, review and the release gate still run for real.",
   };
 }
 

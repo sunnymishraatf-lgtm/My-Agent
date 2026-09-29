@@ -8,10 +8,19 @@ import {
   type VercelRequest,
   type VercelResponse,
 } from "../_lib";
+import { extractRequestKeyFromHeaders, extractRequestProviderFromHeaders } from "../../src/server/byok";
+import { registerSecrets } from "../../src/config";
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (!requireMethod(req, res, "POST")) return;
   try {
+    // BYOK plumbing: accept the request key and register it for redaction so
+    // it can never leak into logs or error text. The provider choice is
+    // accepted the same way (x-provider header). (Full agent execution stays
+    // honestly unsupported on serverless — neither changes that.)
+    const requestKey = extractRequestKeyFromHeaders(req.headers);
+    const requestProvider = extractRequestProviderFromHeaders(req.headers);
+    if (requestKey) registerSecrets([requestKey]);
     const body = readJsonBody(req);
     const analysisId = parseId(body.analysisId, "analysis id");
     // The approval gate is still enforced: without a valid signed approval
