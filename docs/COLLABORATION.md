@@ -46,12 +46,15 @@ Client → server: `ROOM_JOIN`, `ROOM_LEAVE`, `ROOM_RENAME`, `ROOM_DELETE`,
 (`to` + `payload`), `VOICE_JOIN`, `VOICE_LEAVE`, `VOICE_STATE {muted}`,
 `FILE_*` (list/create/rename/delete/open/close/snapshot), `YJS_SYNC`
 (step1/step2/update, y-protocols-compatible framing), `AWARENESS_UPDATE`,
-`VERSION_*`.
+`VERSION_*`, `AI_CONTEXT_REQUEST {requestId, fileId, selection}`, `AI_APPLY {fileId}`.
 
 Server → client: `JOINED` (room, you, members, chat, files, `ice`, `voice`),
 `LEFT`, `MEMBERS`, `CHAT_MESSAGE`, `CHAT_TYPING`, `VOICE_MEMBERS`,
 `WEBRTC_*` (with `from`/`fromName`), `FILE_*`, `YJS_SYNC`, `AWARENESS`,
-`ROOM_RENAMED`, `ROOM_DELETED`, `FILE_SNAPSHOT`, `VERSIONS`, `ERROR {code}`.
+`ROOM_RENAMED`, `ROOM_DELETED`, `FILE_SNAPSHOT`, `VERSIONS`,
+`AI_CONTEXT {requestId, ok, code?, path?, text?, truncated?}`,
+`ACTIVITY {event}`, `ERROR {code, message, fileId?}` (`fileId` is present on
+`FILE_TOO_LARGE` open refusals so the client can tear down its optimistic tab).
 
 Every message is membership-checked server-side: the server looks up the
 connection's own member id and only relays within the **same room**. A forged
@@ -116,6 +119,25 @@ to ~4/s, never persisted.
   Voice); all controls use theme variables and have `aria-label`s; join/leave
   is announced via the screen-reader live region.
 
+## AI in rooms (Phase 4)
+
+- **Server-authorized context**: the client never ships room files anywhere
+  itself. It sends `AI_CONTEXT_REQUEST {requestId, fileId, selection}`; the
+  server reads the file from its own `CollabFileStore` and replies
+  `AI_CONTEXT {requestId, ok, …}` — only for files in the requester's room.
+  Non-members get `ok: false`. Selection indices are validated and clamped
+  server-side; long files come back truncated with `truncated: true`.
+- **Approval gate**: AI edits are never applied silently. The client shows a
+  review UI (diff stats); only on explicit approval does it send `AI_APPLY`,
+  which the server logs to the activity feed. The edit itself flows through
+  the normal Yjs update path, so all collaborators converge.
+- **Activity feed**: `ACTIVITY` broadcasts (member join/leave, file
+  create/rename/delete, voice join/leave, AI apply, version restore) keep a
+  lightweight room timeline. Presence/cursor data is never persisted.
+- **Honest scope**: the AI answers with the room's files as context using the
+  user's own BYOK key (`x-api-key`, never stored server-side). It cannot see
+  other rooms' files, and it cannot act without the approval gate.
+
 ## Security model (honest)
 
 - No accounts: "user-specific" = this browser (same trust boundary as the
@@ -136,7 +158,11 @@ to ~4/s, never persisted.
 - **Scale**: in-memory room state + debounced disk snapshots. Fine for teams;
   not a multi-server design (no Redis adapter — out of scope).
 - **Voice**: mesh caps at 6; no screen sharing (not requested); no PSTN.
-- **No AI in rooms yet** (Phase 4), no activity feed (Phase 4).
+- **Files**: shared editing caps at 500K characters per file (`MAX_FILE_CHARS`).
+  Oversized files stop accepting edits but keep serving reads; opening one is
+  refused at the handshake with an honest message instead of freezing the client.
+- **AI**: answers with room-file context via the user's BYOK key; edits require
+  explicit approval through the gate — the AI never writes silently.
 
 ## Manual QA checklist
 
@@ -163,6 +189,14 @@ to ~4/s, never persisted.
       🔇 on B's screen and A is actually silent.
 - [ ] Speaking → green ring on the active speaker's chip (no flicker on pauses).
 - [ ] C joins mid-call → mesh forms without refresh (offerer rule, no glare).
+
+### AI + activity (Phase 4)
+- [ ] "Ask AI" on an open file → answer references the file; a second room's
+      files are never visible to the AI.
+- [ ] AI-proposed edit → review UI shows diff stats; Approve applies through
+      Yjs (everyone converges); Reject changes nothing.
+- [ ] Activity tab shows join/file/voice/AI events in order; refresh keeps it.
+- [ ] Opening a 500K+ char file → honest "too large" message, no frozen editor.
 - [ ] 7th joiner → "Voice is full in this room (6 max)."
 - [ ] A closes the tab → B's chip list drops A within seconds; A's mic
       indicator is off.
