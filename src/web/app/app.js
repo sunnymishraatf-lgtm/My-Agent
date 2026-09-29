@@ -865,7 +865,26 @@ async function mzExecute(body) {
       await maintainRender(body);
     } catch (e) {
       go.disabled = false; go.textContent = "Execute maintenance";
-      showError(e && e.message ? e.message : String(e));
+      if (e && e.requiresApproval) {
+        /* The single-use approval is gone (consumed, expired, or the wizard
+           was restored without one). Don't dead-end: send them back to the
+           approval step with a clear explanation. */
+        showError("That approval is no longer valid — approvals are single-use. Review the plan and approve it again, then execute.");
+        var old = p.querySelector(".approval-back-row");
+        if (old) old.parentNode.removeChild(old);
+        var backRow = el("div", "row approval-back-row");
+        var backBtn = el("button", "btn primary", "← Back to approval");
+        backBtn.onclick = async function () {
+          clearError();
+          mz.step = "APPROVAL";
+          persistWizard();
+          await maintainRender(body);
+        };
+        backRow.appendChild(backBtn);
+        p.appendChild(backRow);
+      } else {
+        showError(e && e.message ? e.message : String(e));
+      }
     }
   };
   row.appendChild(go);
