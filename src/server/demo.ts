@@ -32,7 +32,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { analyzeRepository } from "../neutron/analyzer";
@@ -220,6 +220,68 @@ export function listWorkspaceRepos(workspace: string): WorkspaceRepo[] {
     out.push({ name: e.name, files: countFilesCapped(join(workspace, e.name), REPO_FILE_COUNT_CAP) });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
+export interface RepoFileListing {
+  repo: string;
+  files: string[];
+  packageJson: string | null;
+  requirementsTxt: string | null;
+  truncated: boolean;
+}
+
+/* Directories never worth sending to the client for stack detection. */
+const REPO_FILES_SKIP_DIRS = new Set([
+  "node_modules", ".git", "dist", "build", ".next", ".nuxt", "coverage",
+  ".coverage", "vendor", ".venv", "venv", "__pycache__", ".idea", ".vscode",
+  "target", "out", ".turbo", ".parcel-cache",
+]);
+
+const REPO_FILES_CAP = 2000;
+const REPO_PKG_CAP = 50 * 1024;
+
+/* Lightweight file listing + key manifest contents for project auto-detect.
+   Returns relative paths only (never absolute server paths), skipping
+   dependency/build directories. The repo name must match a workspace repo —
+   callers validate it against listWorkspaceRepos() first. */
+export function listRepoFiles(workspace: string, repo: string): RepoFileListing {
+  const out: RepoFileListing = { repo, files: [], packageJson: null, requirementsTxt: null, truncated: false };
+  const dir = join(workspace, repo);
+  const stack: Array<{ abs: string; rel: string }> = [{ abs: dir, rel: "" }];
+  const readTextCapped = (abs: string): string | null => {
+    try {
+      const st = statSync(abs);
+      if (!st.isFile() || st.size > REPO_PKG_CAP) return null;
+      return readFileSync(abs, "utf8");
+    } catch {
+      return null;
+    }
+  };
+  while (stack.length && out.files.length < REPO_FILES_CAP) {
+    const cur = stack.pop()!;
+    let entries;
+    try {
+      entries = readdirSync(cur.abs, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const rel = cur.rel ? cur.rel + "/" + e.name : e.name;
+      if (e.isDirectory()) {
+        if (!REPO_FILES_SKIP_DIRS.has(e.name)) stack.push({ abs: join(cur.abs, e.name), rel });
+      } else if (e.isFile()) {
+        if (out.files.length >= REPO_FILES_CAP) { out.truncated = true; break; }
+        out.files.push(rel);
+      }
+    }
+  }
+  if (stack.length) out.truncated = true;
+  out.files.sort();
+  const pkg = readTextCapped(join(dir, "package.json"));
+  if (pkg) out.packageJson = pkg;
+  const req = readTextCapped(join(dir, "requirements.txt"));
+  if (req) out.requirementsTxt = req;
   return out;
 }
 

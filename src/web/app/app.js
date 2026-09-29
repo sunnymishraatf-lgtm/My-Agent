@@ -618,10 +618,650 @@ async function renderDashboard(view) {
   view.appendChild(actions);
 }
 
+/* ---------- projects (project brain) ---------- */
+
+/* Standalone modal (the history modal lives inside renderChat's closure). */
+function openProjModal(title, bodyEl, actions, invoker) {
+  closeProjModal();
+  var back = el("div", "hist-modal-back");
+  var modal = el("div", "hist-modal");
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", title);
+  modal.appendChild(el("div", "hist-modal-title", title));
+  modal.appendChild(bodyEl);
+  var row = el("div", "hist-modal-actions");
+  function close() {
+    closeProjModal();
+    if (invoker && invoker.focus) { try { invoker.focus(); } catch (e) {} }
+  }
+  actions.forEach(function (a) {
+    var b = el("button", "btn " + (a.kind || "ghost"), a.label);
+    b.onclick = function () {
+      var keep = a.onClick ? a.onClick() : undefined;
+      if (keep !== false) close();
+    };
+    row.appendChild(b);
+  });
+  modal.appendChild(row);
+  back.appendChild(modal);
+  back.addEventListener("mousedown", function (ev) { if (ev.target === back) close(); });
+  back.addEventListener("keydown", function (ev) { if (ev.key === "Escape") { ev.stopPropagation(); close(); } });
+  document.body.appendChild(back);
+  window.__projModal = { el: back, close: close };
+  var focusable = bodyEl.querySelector("input, textarea, select") || row.querySelector("button");
+  if (focusable) { try { focusable.focus(); } catch (e) {} }
+  return close;
+}
+function closeProjModal() {
+  var m = window.__projModal;
+  if (m) {
+    if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+    window.__projModal = null;
+  }
+}
+
+function projGo(id) { location.hash = "#/repos/project/" + encodeURIComponent(id); }
+
+function renderProjectsSection(view) {
+  var UI = window.NeutronUI;
+  var sec = el("section", "panel");
+  sec.appendChild(el("h2", null, "Projects"));
+  sec.appendChild(el("p", "muted small",
+    "Project memory: architecture, conventions, decisions, and notes the AI should know. Stored only in this browser. Attach a project to any chat and its memory rides along as context."));
+  var body = el("div", null);
+  sec.appendChild(body);
+
+  function paint() {
+    body.innerHTML = "";
+    var warn = el("div", null);
+    projectSecretWarnings.forEach(function (w) {
+      var n = el("div", "notice warn");
+      n.appendChild(el("strong", null, "⚠ Possible secret in project \"" + w.name + "\": "));
+      n.appendChild(document.createTextNode(
+        w.findings.map(function (f) { return f.section + " (" + f.pattern + ")"; }).join("; ") +
+        ". Review and remove it — secrets must never live in project memory."));
+      var open = el("button", "btn ghost sm", "Review");
+      open.onclick = function () { projGo(w.id); };
+      n.appendChild(open);
+      warn.appendChild(n);
+    });
+    body.appendChild(warn);
+
+    var ids = Object.keys(projectStore.items);
+    if (!ids.length) {
+      body.appendChild(el("p", "muted", "No projects yet. Create one to give the AI lasting context about your work."));
+    } else {
+      ids.sort(function (a, b) {
+        return (projectStore.items[b].updatedAt || 0) - (projectStore.items[a].updatedAt || 0);
+      });
+      var ul = el("ul", "list");
+      ids.forEach(function (id) {
+        var pr = projectStore.items[id];
+        var li = el("li");
+        var btn = el("button", "linklike proj-open");
+        var mem = UI.projectMemory(pr);
+        var filled = UI.PROJECT_TEXT_SECTIONS.filter(function (k) { return mem[k] && mem[k].trim(); }).length +
+          UI.PROJECT_LIST_SECTIONS.filter(function (k) { return mem[k] && mem[k].length; }).length;
+        btn.innerHTML = "";
+        btn.appendChild(el("span", "mono", pr.name || "(untitled)"));
+        btn.appendChild(el("span", "muted small",
+          " · " + UI.relativeTime(pr.updatedAt, Date.now()) +
+          " · " + filled + " memory sections" +
+          (pr.linkedConversationIds.length ? " · " + pr.linkedConversationIds.length + " chats" : "")));
+        btn.setAttribute("aria-label", "Open project " + (pr.name || "untitled"));
+        btn.onclick = function () { projGo(id); };
+        li.appendChild(btn);
+        ul.appendChild(li);
+      });
+      body.appendChild(ul);
+    }
+
+    var row = el("div", "row");
+    var nameIn = el("input", "input");
+    nameIn.placeholder = "New project name…";
+    nameIn.maxLength = 120;
+    nameIn.setAttribute("aria-label", "New project name");
+    var add = el("button", "btn primary", "+ New project");
+    function create() {
+      var name = nameIn.value.trim();
+      if (!name) { showError("Give the project a name first."); nameIn.focus(); return; }
+      var pr = UI.newProject(genProjectId(), name, Date.now());
+      projectStore.items[pr.id] = pr;
+      saveProjectStore();
+      toast("Project created.");
+      projGo(pr.id);
+    }
+    add.onclick = create;
+    nameIn.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); create(); } });
+    row.appendChild(nameIn);
+    row.appendChild(add);
+    body.appendChild(row);
+  }
+
+  try {
+    loadProjectStore();
+  } catch (e) {
+    body.appendChild(el("p", "muted", "Could not load projects."));
+    return;
+  }
+  paint();
+  view.appendChild(sec);
+}
+
+/* ----- project detail ----- */
+
+function projSecretGuardedSave(value, saveFn) {
+  if (!guardProjectSecret(value)) return false;
+  saveFn();
+  return true;
+}
+
+function renderProjectDetail(view, id) {
+  var UI = window.NeutronUI;
+  try { loadProjectStore(); } catch (e) {
+    view.appendChild(el("p", "muted", "Could not load projects."));
+    return;
+  }
+  var pr = UI.projectGet(projectStore, id);
+  if (!pr) {
+    view.appendChild(el("h1", null, "Project not found"));
+    var back = el("a", "linklike", "\u2190 Repositories");
+    back.href = "#/repos";
+    view.appendChild(back);
+    return;
+  }
+
+  var backLink = el("a", "linklike", "\u2190 Repositories");
+  backLink.href = "#/repos";
+  view.appendChild(backLink);
+
+  var headRow = el("div", "row proj-head");
+  headRow.appendChild(el("h1", null, pr.name || "(untitled)"));
+  var renameBtn = el("button", "btn ghost sm", "Rename");
+  renameBtn.onclick = function () {
+    var input = document.createElement("input");
+    input.type = "text"; input.className = "input"; input.value = pr.name || "";
+    input.maxLength = 120; input.setAttribute("aria-label", "Project name");
+    var wrap = el("div", "hist-modal-body"); wrap.appendChild(input);
+    openProjModal("Rename project", wrap, [
+      { label: "Cancel", kind: "ghost" },
+      { label: "Save", kind: "primary", onClick: function () {
+          if (!guardProjectSecret(input.value)) return false;
+          if (!UI.projectRename(projectStore, id, input.value)) { showError("Project name can't be empty."); return false; }
+          saveProjectStore(); toast("Project renamed."); render();
+        } },
+    ], renameBtn);
+  };
+  var chatBtn = el("button", "btn primary sm", "🧠 Chat with this project");
+  chatBtn.title = "Open chat with this project's memory attached as context";
+  chatBtn.onclick = function () {
+    window.__neutronPendingProject = id;
+    location.hash = "#/chat";
+  };
+  var delBtn = el("button", "btn danger sm", "Delete");
+  delBtn.onclick = function () {
+    var wrap = el("div", "hist-modal-body");
+    wrap.appendChild(el("p", null, "Delete this project?"));
+    wrap.appendChild(el("p", "hist-del-name", "\u201C" + pr.name + "\u201D"));
+    wrap.appendChild(el("p", "muted small", "Its memory, links, and auto-detected data are removed from this browser. Chats are kept."));
+    openProjModal("Delete project", wrap, [
+      { label: "Cancel", kind: "ghost" },
+      { label: "Delete", kind: "danger", onClick: function () {
+          UI.projectDelete(projectStore, id);
+          saveProjectStore(); toast("Project deleted.");
+          location.hash = "#/repos";
+        } },
+    ], delBtn);
+  };
+  headRow.appendChild(renameBtn);
+  headRow.appendChild(chatBtn);
+  headRow.appendChild(delBtn);
+  view.appendChild(headRow);
+
+  /* Secret findings for this project. */
+  var findings = UI.scanProjectSecrets(pr);
+  if (findings.length) {
+    var w = el("div", "notice warn");
+    w.appendChild(el("strong", null, "⚠ Possible secret(s) detected: "));
+    w.appendChild(document.createTextNode(findings.map(function (f) {
+      return f.section + (f.index === null ? "" : "[" + f.index + "]") + " (" + f.pattern + ")";
+    }).join("; ") + ". Remove them — project memory must never hold secrets."));
+    view.appendChild(w);
+  }
+
+  /* Description. */
+  var descCard = el("section", "panel");
+  descCard.appendChild(el("h2", null, "Description"));
+  var descTa = document.createElement("textarea");
+  descTa.className = "input"; descTa.rows = 2; descTa.maxLength = 2000;
+  descTa.value = pr.description || "";
+  descTa.setAttribute("aria-label", "Project description");
+  var descSave = el("button", "btn sm", "Save description");
+  descSave.onclick = function () {
+    if (!projSecretGuardedSave(descTa.value, function () {
+      pr.description = descTa.value.trim();
+      UI.projectTouch(projectStore, id, Date.now());
+      saveProjectStore();
+    })) return;
+    toast("Description saved.");
+  };
+  descCard.appendChild(descTa);
+  descCard.appendChild(descSave);
+  view.appendChild(descCard);
+
+  /* Free-text memory cards. */
+  var TEXT_LABELS = { architecture: "Architecture", framework: "Framework", database: "Database", deployment: "Deployment", docs: "Notes / docs" };
+  UI.PROJECT_TEXT_SECTIONS.forEach(function (section) {
+    var card = el("section", "panel");
+    card.appendChild(el("h2", null, TEXT_LABELS[section] || section));
+    var ta = document.createElement("textarea");
+    ta.className = "input"; ta.rows = 3; ta.maxLength = 2000;
+    ta.value = UI.projectMemory(pr)[section] || "";
+    ta.setAttribute("aria-label", TEXT_LABELS[section] || section);
+    var save = el("button", "btn sm", "Save");
+    save.onclick = function () {
+      if (!projSecretGuardedSave(ta.value, function () {
+        UI.projectMemorySetText(pr, section, ta.value);
+        saveProjectStore();
+      })) return;
+      toast("Saved.");
+    };
+    card.appendChild(ta);
+    card.appendChild(save);
+    view.appendChild(card);
+  });
+
+  /* List memory cards with add / inline-edit / remove. */
+  var LIST_LABELS = { languages: "Languages", conventions: "Conventions", decisions: "Decisions", knownBugs: "Known bugs", importantFiles: "Important files", apis: "APIs", tasks: "Tasks" };
+  UI.PROJECT_LIST_SECTIONS.forEach(function (section) {
+    view.appendChild(projListCard(pr, id, section, LIST_LABELS[section] || section));
+  });
+
+  /* Dependencies card. */
+  view.appendChild(projDepsCard(pr, id));
+
+  /* Auto-detect card. */
+  view.appendChild(projDetectCard(pr, id));
+
+  /* Links card. */
+  view.appendChild(projLinksCard(pr, id));
+}
+
+/* Editable string-list card. */
+function projListCard(pr, id, section, label) {
+  var UI = window.NeutronUI;
+  var card = el("section", "panel");
+  card.appendChild(el("h2", null, label));
+  var listBox = el("div", null);
+  card.appendChild(listBox);
+
+  function paint() {
+    listBox.innerHTML = "";
+    var items = UI.projectMemory(pr)[section] || [];
+    if (!items.length) listBox.appendChild(el("p", "muted small", "Nothing here yet."));
+    items.forEach(function (text, i) {
+      var row = el("div", "row proj-item");
+      var span = el("span", "proj-item-text", text);
+      span.title = "Click to edit";
+      span.setAttribute("role", "button");
+      span.setAttribute("tabindex", "0");
+      span.setAttribute("aria-label", "Edit " + label + " entry");
+      function startEdit() {
+        row.innerHTML = "";
+        var inp = document.createElement("input");
+        inp.type = "text"; inp.className = "input"; inp.value = text; inp.maxLength = 1000;
+        inp.setAttribute("aria-label", "Edit entry");
+        var ok = el("button", "btn sm primary", "Save");
+        var cancel = el("button", "btn sm ghost", "Cancel");
+        function finish(saveIt) {
+          if (saveIt) {
+            if (!guardProjectSecret(inp.value)) { inp.focus(); return; }
+            if (!UI.projectMemoryUpdate(pr, section, i, inp.value)) { showError("Entry can't be empty."); return; }
+            saveProjectStore();
+          }
+          paint();
+        }
+        ok.onclick = function () { finish(true); };
+        cancel.onclick = function () { finish(false); };
+        inp.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+          else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+        });
+        row.appendChild(inp); row.appendChild(ok); row.appendChild(cancel);
+        inp.focus(); inp.select();
+      }
+      span.onclick = startEdit;
+      span.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); startEdit(); }
+      });
+      var del = el("button", "icon-btn", "\u00D7");
+      del.setAttribute("aria-label", "Remove entry");
+      del.title = "Remove";
+      del.onclick = function () {
+        UI.projectMemoryRemove(pr, section, i);
+        saveProjectStore();
+        paint();
+      };
+      row.appendChild(span); row.appendChild(del);
+      listBox.appendChild(row);
+    });
+  }
+
+  var addRow = el("div", "row");
+  var inp = document.createElement("input");
+  inp.type = "text"; inp.className = "input"; inp.maxLength = 1000;
+  inp.placeholder = "Add " + label.toLowerCase() + "…";
+  inp.setAttribute("aria-label", "Add " + label);
+  var addBtn = el("button", "btn sm", "Add");
+  function add() {
+    if (!guardProjectSecret(inp.value)) { inp.focus(); return; }
+    if (UI.projectMemoryAdd(pr, section, inp.value) === -1) { showError("Entry can't be empty."); inp.focus(); return; }
+    saveProjectStore();
+    inp.value = "";
+    paint();
+  }
+  addBtn.onclick = add;
+  inp.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); add(); } });
+  addRow.appendChild(inp); addRow.appendChild(addBtn);
+  card.appendChild(addRow);
+  paint();
+  return card;
+}
+
+/* Dependencies card: name@version — note, with add / edit / remove. */
+function projDepsCard(pr, id) {
+  var UI = window.NeutronUI;
+  var card = el("section", "panel");
+  card.appendChild(el("h2", null, "Dependencies"));
+  var box = el("div", null);
+  card.appendChild(box);
+
+  function depRow(d, i) {
+    var row = el("div", "row proj-item");
+    row.appendChild(el("span", "mono", d.name + (d.version ? "@" + d.version : "")));
+    if (d.note) row.appendChild(el("span", "muted small", " — " + d.note));
+    var edit = el("button", "icon-btn", "\u270E");
+    edit.setAttribute("aria-label", "Edit dependency " + d.name);
+    edit.title = "Edit";
+    edit.onclick = function () { openDepDialog(d, i, edit); };
+    var del = el("button", "icon-btn", "\u00D7");
+    del.setAttribute("aria-label", "Remove dependency " + d.name);
+    del.title = "Remove";
+    del.onclick = function () {
+      UI.projectMemoryRemove(pr, "dependencies", i);
+      saveProjectStore(); paint();
+    };
+    row.appendChild(edit); row.appendChild(del);
+    return row;
+  }
+
+  function openDepDialog(existing, index, invoker) {
+    var nameIn = document.createElement("input");
+    nameIn.className = "input"; nameIn.maxLength = 200;
+    nameIn.setAttribute("aria-label", "Dependency name");
+    nameIn.placeholder = "name";
+    var verIn = document.createElement("input");
+    verIn.className = "input"; verIn.maxLength = 100;
+    verIn.setAttribute("aria-label", "Version");
+    verIn.placeholder = "version (optional)";
+    var noteIn = document.createElement("input");
+    noteIn.className = "input"; noteIn.maxLength = 1000;
+    noteIn.setAttribute("aria-label", "Note");
+    noteIn.placeholder = "note (optional)";
+    if (existing) { nameIn.value = existing.name; verIn.value = existing.version || ""; noteIn.value = existing.note || ""; }
+    var wrap = el("div", "hist-modal-body");
+    wrap.appendChild(field("NAME", nameIn));
+    wrap.appendChild(field("VERSION", verIn));
+    wrap.appendChild(field("NOTE", noteIn));
+    openProjModal(existing ? "Edit dependency" : "Add dependency", wrap, [
+      { label: "Cancel", kind: "ghost" },
+      { label: "Save", kind: "primary", onClick: function () {
+          var v = { name: nameIn.value, version: verIn.value, note: noteIn.value };
+          if (!guardProjectSecret(v.name + " " + v.version + " " + v.note)) return false;
+          if (existing) {
+            if (!UI.projectMemoryUpdate(pr, "dependencies", index, v)) { showError("Name can't be empty."); return false; }
+          } else {
+            if (UI.projectMemoryAdd(pr, "dependencies", v) === -1) { showError("Name can't be empty."); return false; }
+          }
+          saveProjectStore(); paint(); toast("Saved.");
+        } },
+    ], invoker);
+  }
+
+  function paint() {
+    box.innerHTML = "";
+    var deps = UI.projectMemory(pr).dependencies || [];
+    if (!deps.length) box.appendChild(el("p", "muted small", "No dependencies recorded."));
+    deps.forEach(function (d, i) { box.appendChild(depRow(d, i)); });
+  }
+  var addBtn = el("button", "btn sm", "+ Add dependency");
+  addBtn.onclick = function () { openDepDialog(null, -1, addBtn); };
+  card.appendChild(addBtn);
+  paint();
+  return card;
+}
+
+/* Auto-detect card: pick a workspace repo, preview the detected stack, apply. */
+function projDetectCard(pr, id) {
+  var UI = window.NeutronUI;
+  var card = el("section", "panel");
+  card.appendChild(el("h2", null, "Auto-detect from repository"));
+  card.appendChild(el("p", "muted small",
+    "Reads a real workspace repository (file list + package.json) and suggests framework, languages, key files, and dependencies. Every suggestion is marked as detected — review before keeping."));
+  var row = el("div", "row");
+  var sel = document.createElement("select");
+  sel.className = "input";
+  sel.setAttribute("aria-label", "Repository to analyze");
+  var preview = el("div", null);
+  card.appendChild(row); card.appendChild(preview);
+
+  function loadRepos() {
+    row.innerHTML = "";
+    row.appendChild(sel);
+    api("GET", "/api/demo/repos").then(function (rr) {
+      var repos = (rr && Array.isArray(rr.repos) ? rr.repos : []).map(function (r) { return r && r.name; }).filter(Boolean);
+      sel.innerHTML = "";
+      if (!repos.length) {
+        var o = document.createElement("option");
+        o.textContent = "No workspace repositories";
+        sel.appendChild(o); sel.disabled = true;
+        return;
+      }
+      repos.forEach(function (n) {
+        var o = document.createElement("option");
+        o.value = n; o.textContent = n;
+        if (pr.linkedRepoNames.indexOf(n) !== -1) o.textContent += " (linked)";
+        sel.appendChild(o);
+      });
+      /* Prefer the first linked repo. */
+      for (var i = 0; i < repos.length; i++) {
+        if (pr.linkedRepoNames.indexOf(repos[i]) !== -1) { sel.value = repos[i]; break; }
+      }
+    }).catch(function () {
+      sel.innerHTML = "";
+      var o = document.createElement("option");
+      o.textContent = "Could not list repositories";
+      sel.appendChild(o); sel.disabled = true;
+    });
+    var go = el("button", "btn sm primary", "Detect");
+    go.onclick = runDetect;
+    row.appendChild(go);
+  }
+
+  function runDetect() {
+    var repo = sel.value;
+    if (!repo || sel.disabled) return;
+    preview.innerHTML = "";
+    var sk = el("div", "skeleton sk-line");
+    sk.setAttribute("aria-busy", "true");
+    preview.appendChild(sk);
+    api("GET", "/api/demo/repo-files?repo=" + encodeURIComponent(repo)).then(function (r) {
+      preview.innerHTML = "";
+      var contents = {};
+      if (r.requirementsTxt) contents["requirements.txt"] = String(r.requirementsTxt).slice(0, 20000);
+      var det = UI.detectProjectStack(r.files || [], r.packageJson || null, contents);
+      var box = el("div", "notice");
+      box.appendChild(el("strong", null, "Detected from \"" + repo + "\" (review before keeping):"));
+      var ul = el("ul", "list");
+      function li(label, value) {
+        var item = el("li");
+        item.appendChild(el("span", null, label + ": "));
+        item.appendChild(el("strong", null, value));
+        ul.appendChild(item);
+      }
+      li("Framework", det.framework ? det.framework.name + " (" + det.framework.confidence + " confidence)" : "unknown");
+      li("Languages", det.languages.length ? det.languages.map(function (l) { return l.lang + " " + l.pct + "%"; }).join(", ") : "unknown");
+      li("Key files", det.importantFiles.length ? det.importantFiles.slice(0, 8).join(", ") + (det.importantFiles.length > 8 ? " (+" + (det.importantFiles.length - 8) + " more)" : "") : "none found");
+      li("Dependencies", det.dependencies.length ? det.dependencies.length + " found" : "none found");
+      box.appendChild(ul);
+      preview.appendChild(box);
+      var apply = el("button", "btn primary sm", "Apply detected stack");
+      apply.onclick = function () {
+        var applied = [];
+        if (det.framework) {
+          UI.projectMemorySetText(pr, "framework", det.framework.name + " (auto-detected)");
+          applied.push("framework: " + det.framework.name);
+        }
+        det.languages.forEach(function (l) {
+          var mem = UI.projectMemory(pr);
+          if (mem.languages.indexOf(l.lang) === -1 && UI.projectMemoryAdd(pr, "languages", l.lang) !== -1) applied.push("language: " + l.lang);
+        });
+        det.importantFiles.forEach(function (f) {
+          var mem = UI.projectMemory(pr);
+          if (mem.importantFiles.indexOf(f) === -1 && UI.projectMemoryAdd(pr, "importantFiles", f) !== -1) applied.push("file: " + f);
+        });
+        det.dependencies.forEach(function (d) {
+          var mem = UI.projectMemory(pr);
+          var dup = mem.dependencies.some(function (e) { return e.name === d.name; });
+          if (!dup && UI.projectMemoryAdd(pr, "dependencies", { name: d.name, version: d.version, note: "auto-detected" }) !== -1) applied.push("dependency: " + d.name);
+        });
+        if (!pr.linkedRepoNames.length) UI.linkRepo(pr, repo);
+        saveProjectStore();
+        toast(applied.length ? "Applied " + applied.length + " detected item(s) — review and edit as needed." : "Nothing new to apply.");
+        announce("Auto-detect applied " + applied.length + " items from " + repo + ".");
+        render();
+      };
+      preview.appendChild(apply);
+      announce("Detection complete for " + repo + ".");
+    }).catch(function (e) {
+      preview.innerHTML = "";
+      var msg = (e && e.message ? e.message : String(e));
+      if (e && e.status === 404) {
+        preview.appendChild(el("p", "muted",
+          "Auto-detect needs the Node server — this deployment can't read the workspace repository. Run the app with \u2018node dist/cli-entry.js web\u2019 for full project features."));
+      } else {
+        preview.appendChild(el("p", "muted", "Detection failed: " + msg));
+      }
+    });
+  }
+
+  loadRepos();
+  return card;
+}
+
+/* Links card: conversations + workspace repos. */
+function projLinksCard(pr, id) {
+  var UI = window.NeutronUI;
+  var card = el("section", "panel");
+  card.appendChild(el("h2", null, "Links"));
+
+  /* Conversations. */
+  card.appendChild(el("h3", null, "Conversations"));
+  var convBox = el("div", null);
+  card.appendChild(convBox);
+  function paintConvs() {
+    convBox.innerHTML = "";
+    try { loadConvStore(); } catch (e) { /* history unavailable */ }
+    var linked = pr.linkedConversationIds || [];
+    if (!linked.length) convBox.appendChild(el("p", "muted small", "No linked conversations."));
+    linked.forEach(function (cid) {
+      var row = el("div", "row proj-item");
+      var c = convStore && convStore.items[cid];
+      var open = el("button", "linklike", c ? UI.convDisplayTitle(c) : "(deleted conversation)");
+      if (c) open.onclick = function () { location.hash = "#/chat/" + encodeURIComponent(cid); };
+      else open.disabled = true;
+      var del = el("button", "icon-btn", "\u00D7");
+      del.setAttribute("aria-label", "Unlink conversation");
+      del.onclick = function () { UI.unlinkConversation(pr, cid); saveProjectStore(); paintConvs(); };
+      row.appendChild(open); row.appendChild(del);
+      convBox.appendChild(row);
+    });
+    /* Link picker. */
+    if (convStore) {
+      var others = Object.keys(convStore.items).filter(function (cid) {
+        return linked.indexOf(cid) === -1 && !convStore.items[cid].archived;
+      });
+      if (others.length) {
+        var r2 = el("div", "row");
+        var sel = document.createElement("select");
+        sel.className = "input"; sel.setAttribute("aria-label", "Conversation to link");
+        others.forEach(function (cid) {
+          var o = document.createElement("option");
+          o.value = cid; o.textContent = UI.convDisplayTitle(convStore.items[cid]);
+          sel.appendChild(o);
+        });
+        var link = el("button", "btn sm", "Link");
+        link.onclick = function () {
+          UI.linkConversation(pr, sel.value);
+          saveProjectStore(); paintConvs(); toast("Conversation linked.");
+        };
+        r2.appendChild(sel); r2.appendChild(link);
+        convBox.appendChild(r2);
+      }
+    }
+  }
+  paintConvs();
+
+  /* Repos. */
+  card.appendChild(el("h3", null, "Workspace repositories"));
+  var repoBox = el("div", null);
+  card.appendChild(repoBox);
+  function paintRepos() {
+    repoBox.innerHTML = "";
+    (pr.linkedRepoNames || []).forEach(function (n) {
+      var row = el("div", "row proj-item");
+      row.appendChild(el("span", "mono", n));
+      var del = el("button", "icon-btn", "\u00D7");
+      del.setAttribute("aria-label", "Unlink repository " + n);
+      del.onclick = function () { UI.unlinkRepo(pr, n); saveProjectStore(); paintRepos(); };
+      row.appendChild(del);
+      repoBox.appendChild(row);
+    });
+    var r3 = el("div", "row");
+    var nameIn = el("input", "input");
+    nameIn.placeholder = "Repository name…";
+    nameIn.maxLength = 200;
+    nameIn.setAttribute("aria-label", "Repository name to link");
+    var linkBtn = el("button", "btn sm", "Link");
+    function doLink() {
+      if (!nameIn.value.trim()) { showError("Enter a repository name."); return; }
+      UI.linkRepo(pr, nameIn.value);
+      saveProjectStore(); nameIn.value = ""; paintRepos(); toast("Repository linked.");
+    }
+    linkBtn.onclick = doLink;
+    nameIn.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); doLink(); } });
+    r3.appendChild(nameIn); r3.appendChild(linkBtn);
+    repoBox.appendChild(r3);
+    repoBox.appendChild(el("p", "muted small", "Tip: use the exact workspace name from \u201CWorkspace repositories\u201D below so auto-detect can read it."));
+  }
+  paintRepos();
+  return card;
+}
+
 /* ---------- repositories ---------- */
 
 async function renderRepos(view) {
+  /* Sub-route: #/repos/project/<id> shows the project detail view. */
+  var sub = (location.hash || "").replace(/^#\/?/, "").split("/");
+  if (sub.length >= 3 && sub[1] === "project" && sub[2]) {
+    try { renderProjectDetail(view, decodeURIComponent(sub[2])); }
+    catch (e) { view.appendChild(el("p", "muted", "Could not open the project.")); }
+    return;
+  }
   view.appendChild(el("h1", null, "Repositories"));
+  try { renderProjectsSection(view); }
+  catch (e) { /* projects are additive — never break the repos view */ }
   /* Skeleton while the status call is in flight — no blank screen. */
   var sk = el("section", "panel skeleton-card");
   sk.setAttribute("aria-busy", "true");
@@ -1491,6 +2131,87 @@ function persistChat() {
   saveConvStore();
 }
 
+/* ---------- project brain (device-local project intelligence) ----------
+   BYOK has no accounts: this browser IS the user. Projects live in
+   localStorage under neutron_projects — the same trust boundary as the API
+   key. No server, no auth, no mock. Secrets are NEVER stored: saves are
+   guarded by looksLikeSecret() and existing stores are scanned on load. */
+
+var PROJECT_STORAGE = "neutron_projects";
+var projectStore = null;
+/* [{id, name, findings}] — populated by loadProjectStore; the Projects UI
+   shows a warning banner. Flagged entries are never silently deleted. */
+var projectSecretWarnings = [];
+
+function genProjectId() {
+  return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+function saveProjectStore() {
+  if (!projectStore) return true;
+  try {
+    var UI = window.NeutronUI;
+    if (!UI) return false;
+    var items = {};
+    Object.keys(projectStore.items).forEach(function (id) {
+      var clean = UI.sanitizeProject(projectStore.items[id]);
+      /* Never silently drop a project: keep the raw item if sanitize
+         rejects it, so nothing is lost. */
+      items[id] = (clean && clean.id) ? clean : projectStore.items[id];
+    });
+    localStorage.setItem(PROJECT_STORAGE, JSON.stringify({
+      version: UI.PROJECT_STORE_VERSION || 1,
+      items: items,
+    }));
+    return true;
+  } catch (e) {
+    showError("Project changes couldn't be saved — browser storage may be full.");
+    return false;
+  }
+}
+
+function loadProjectStore() {
+  if (projectStore) return projectStore;
+  var UI = window.NeutronUI;
+  if (!UI) throw new Error("UI utilities failed to load.");
+  projectStore = { version: UI.PROJECT_STORE_VERSION || 1, items: {} };
+  projectSecretWarnings = [];
+  try {
+    var raw = localStorage.getItem(PROJECT_STORAGE);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.items && typeof parsed.items === "object") {
+        Object.keys(parsed.items).forEach(function (id) {
+          var clean = UI.sanitizeProject(parsed.items[id]);
+          if (clean && clean.id) projectStore.items[id] = clean;
+        });
+      }
+    }
+  } catch (e) { /* corrupt → start fresh; nothing else to recover from */ }
+  /* Scan on load and flag — never silently delete the user's data. */
+  try {
+    Object.keys(projectStore.items).forEach(function (id) {
+      var findings = UI.scanProjectSecrets(projectStore.items[id]);
+      if (findings.length) {
+        projectSecretWarnings.push({ id: id, name: projectStore.items[id].name, findings: findings });
+      }
+    });
+  } catch (e) { /* scanning is best-effort */ }
+  return projectStore;
+}
+
+/* Guard helper for project-memory saves. Returns true when the value is
+   safe to store; shows an honest error naming the detected pattern. */
+function guardProjectSecret(value) {
+  var UI = window.NeutronUI;
+  var label = UI && UI.looksLikeSecret ? UI.looksLikeSecret(value) : null;
+  if (label) {
+    showError("Not saved — that looks like a " + label + ". Never store secrets in project memory.");
+    return false;
+  }
+  return true;
+}
+
 /* Screen-reader announcements for workspace actions. */
 function announce(msg) {
   try {
@@ -1608,6 +2329,38 @@ async function renderChat(view) {
       chatState.messages = activeConv().messages;
     }
   } catch (e) { /* malformed hash — ignore */ }
+  /* Project deep link: set from a project's "Chat with this project" button.
+     Attaches the project to this conversation and links the two. */
+  try {
+    var pendPid = window.__neutronPendingProject;
+    window.__neutronPendingProject = null;
+    if (pendPid) {
+      loadProjectStore();
+      var UIpp = window.NeutronUI;
+      var pendProj = UIpp && UIpp.projectGet(projectStore, String(pendPid));
+      if (pendProj) {
+        var pc = activeConv();
+        pc.projectId = pendProj.id;
+        pc.projectContextOn = true;
+        UIpp.linkConversation(pendProj, pc.id);
+        saveConvStore();
+        saveProjectStore();
+        chatState.messages = pc.messages;
+        toast("Project \"" + pendProj.name + "\" attached — its memory rides along as context.");
+      }
+    }
+  } catch (e) { /* best-effort */ }
+  /* A linked project may have been deleted elsewhere: clear the stale link. */
+  try {
+    var _c = activeConv();
+    if (_c.projectId) {
+      loadProjectStore();
+      var _UI = window.NeutronUI;
+      if (_UI && !_UI.projectGet(projectStore, _c.projectId)) {
+        _c.projectId = ""; saveConvStore();
+      }
+    }
+  } catch (e) { /* best-effort */ }
   var providers = await fetchProviders();
   var byId = {};
   providers.forEach(function (pr) { byId[pr.id] = pr; });
@@ -1692,6 +2445,7 @@ async function renderChat(view) {
       var UI = window.NeutronUI;
       if (UI && chatTitleEl) chatTitleEl.textContent = UI.convDisplayTitle(c);
     } catch (e) {}
+    try { projBtnLabel(); paintProjChip(); } catch (e) {}
     paint();
     if (opts.focus) {
       try { input.focus({ preventScroll: true }); }
@@ -2170,8 +2924,119 @@ async function renderChat(view) {
   var hbtns = el("div", "chat-hbtns");
   hbtns.appendChild(detailsBtn);
   hbtns.appendChild(voiceBtn);
+  /* ----- project brain: attach project memory to this chat ----- */
+  var projBtn = el("button", "btn ghost sm", "🧠");
+  projBtn.setAttribute("aria-label", "Attach project memory");
+  projBtn.title = "Attach a project's memory as AI context";
+  function projBtnLabel() {
+    if (typeof projBtn === "undefined" || !projBtn) return;
+    try {
+      loadProjectStore();
+      var UIpb = window.NeutronUI;
+      var c = activeConv();
+      var pr = c.projectId && UIpb ? UIpb.projectGet(projectStore, c.projectId) : null;
+      projBtn.textContent = pr ? ("🧠 " + pr.name) : "🧠";
+      projBtn.classList.toggle("on", !!pr);
+      projBtn.title = pr ? ("Project: " + pr.name + (c.projectContextOn === false ? " (context off)" : " (context on)"))
+        : "Attach a project's memory as AI context";
+    } catch (e) { /* header not built yet */ }
+  }
+  projBtn.onclick = function () { openProjectPicker(projBtn); };
+  hbtns.appendChild(projBtn);
   hbtns.appendChild(newBtn);
   head.appendChild(hbtns);
+  projBtnLabel();
+
+  /* Project picker: choose a project (or none) + context on/off toggle. */
+  function openProjectPicker(invoker) {
+    var UIpk = window.NeutronUI;
+    try { loadProjectStore(); } catch (e) {
+      showError("Could not load projects."); return;
+    }
+    var wrap = el("div", "hist-modal-body");
+    var ids = Object.keys(projectStore.items);
+    if (!ids.length) {
+      wrap.appendChild(el("p", "muted", "No projects yet — create one under Repositories \u2192 Projects first."));
+    }
+    var c = activeConv();
+    ids.forEach(function (id) {
+      var pr = projectStore.items[id];
+      var b = el("button", "btn ghost proj-pick" + (c.projectId === id ? " on" : ""), (c.projectId === id ? "\u2713 " : "") + (pr.name || "(untitled)"));
+      b.setAttribute("aria-label", "Attach project " + (pr.name || "untitled"));
+      b.onclick = function () {
+        c.projectId = id;
+        c.projectContextOn = true;
+        UIpk.linkConversation(pr, c.id);
+        saveConvStore(); saveProjectStore();
+        projBtnLabel(); paintProjChip();
+        toast("Project \"" + pr.name + "\" attached.");
+        if (window.__projModal) window.__projModal.close();
+      };
+      wrap.appendChild(b);
+    });
+    var none = el("button", "btn ghost proj-pick", c.projectId ? "No project" : "\u2713 No project");
+    none.onclick = function () {
+      c.projectId = "";
+      saveConvStore();
+      projBtnLabel(); paintProjChip();
+      if (window.__projModal) window.__projModal.close();
+    };
+    wrap.appendChild(none);
+    if (c.projectId) {
+      var trow = el("label", "row proj-toggle");
+      var tgl = document.createElement("input");
+      tgl.type = "checkbox";
+      tgl.checked = c.projectContextOn !== false;
+      tgl.setAttribute("aria-label", "Attach project context to AI requests");
+      tgl.onchange = function () {
+        c.projectContextOn = tgl.checked;
+        saveConvStore();
+        projBtnLabel(); paintProjChip();
+        toast(tgl.checked ? "Project context on." : "Project context off for this chat.");
+      };
+      trow.appendChild(tgl);
+      trow.appendChild(document.createTextNode(" Attach project context to AI requests"));
+      wrap.appendChild(trow);
+    }
+    openProjModal("Project memory", wrap, [{ label: "Done", kind: "primary" }], invoker);
+  }
+
+  /* Indicator chip above the composer: what project context rides along.
+     Tapping it shows the exact text sent to the model — no hidden context. */
+  var lastProjectBlock = "";
+  var projChipWrap = el("div", "proj-chip-wrap");
+  function currentProjectBlock() {
+    try {
+      loadProjectStore();
+      var UIcb = window.NeutronUI;
+      var c = activeConv();
+      var pr = c.projectId && UIcb ? UIcb.projectGet(projectStore, c.projectId) : null;
+      if (!pr || c.projectContextOn === false) return { project: null, block: "" };
+      return { project: pr, block: UIcb.buildProjectContextBlock(pr) };
+    } catch (e) { return { project: null, block: "" }; }
+  }
+  function paintProjChip() {
+    projChipWrap.innerHTML = "";
+    var cb = currentProjectBlock();
+    if (!cb.project) return;
+    var chip = el("button", "chip proj-chip", "🧠 " + cb.project.name + " context attached");
+    chip.setAttribute("aria-label", "Project context attached. Activate to view exactly what is sent to the AI.");
+    chip.title = "Tap to see exactly what project context is sent";
+    chip.onclick = function () { openProjectContextDialog(chip); };
+    projChipWrap.appendChild(chip);
+  }
+  function openProjectContextDialog(invoker) {
+    var cb = currentProjectBlock();
+    if (!cb.project) return;
+    var wrap = el("div", "hist-modal-body");
+    var shown = lastProjectBlock || cb.block;
+    var pre = el("pre", "mono proj-context-pre", shown || "(empty)");
+    wrap.appendChild(pre);
+    wrap.appendChild(el("p", "muted small",
+      lastProjectBlock ? "This exact text was attached to your last send."
+        : "This exact text will be attached to your next send (condensed project memory, capped)."));
+    openProjModal("Project context sent", wrap, [{ label: "Close", kind: "primary" }], invoker);
+  }
   main.appendChild(head);
 
   /* ----- provider details panel ----- */
@@ -2661,6 +3526,17 @@ async function renderChat(view) {
     };
     var cm = storedModel();
     if (cm) chatBody.model = cm;
+    /* Project brain: condensed project memory rides along as system
+       context (server merges it with the artifact nudge). Additive —
+       a failure here must never break the send. */
+    try {
+      var UIpc3 = window.NeutronUI;
+      var cb2 = currentProjectBlock();
+      if (cb2.project && cb2.block && UIpc3) {
+        lastProjectBlock = cb2.block;
+        chatBody.projectContext = cb2.block;
+      }
+    } catch (e) { /* ignore */ }
     if (files.length) {
       chatBody.attachments = files.map(function (f) {
         return { name: f.name, mime: f.mime, kind: f.kind, data: f.data };
@@ -2734,6 +3610,8 @@ async function renderChat(view) {
   composer.appendChild(sendBtn);
   main.appendChild(log);
   main.appendChild(chips);
+  main.appendChild(projChipWrap);
+  paintProjChip();
   main.appendChild(fileInput);
   main.appendChild(composer);
   main.appendChild(el("p", "muted small chat-fine",

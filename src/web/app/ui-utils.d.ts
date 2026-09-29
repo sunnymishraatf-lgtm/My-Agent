@@ -46,6 +46,107 @@ export declare function renderMarkdown(src: string | null | undefined): string;
 export declare function stripMarkdownForSpeech(src: string | null | undefined): string;
 export declare function friendlyChatError(err: { message?: string; status?: number } | string | null | undefined): string;
 
+/* ----- project brain (device-local project intelligence) ----- */
+
+export declare const PROJECT_STORE_VERSION: number;
+export declare const PROJECT_CONTEXT_MAX: number;
+export declare const PROJECT_TEXT_SECTIONS: string[];
+export declare const PROJECT_LIST_SECTIONS: string[];
+
+export interface ProjectDependency {
+  name: string;
+  version: string;
+  note: string;
+}
+
+export interface ProjectMemory {
+  architecture: string;
+  framework: string;
+  database: string;
+  deployment: string;
+  docs: string;
+  languages: string[];
+  conventions: string[];
+  decisions: string[];
+  knownBugs: string[];
+  importantFiles: string[];
+  apis: string[];
+  tasks: string[];
+  dependencies: ProjectDependency[];
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: number;
+  updatedAt: number;
+  memory: ProjectMemory;
+  linkedConversationIds: string[];
+  linkedRepoNames: string[];
+}
+
+export interface ProjectStore {
+  version: number;
+  items: Record<string, Project>;
+}
+
+export interface DetectedFramework {
+  name: string;
+  confidence: "high" | "medium" | "low";
+}
+
+export interface DetectedLanguage {
+  lang: string;
+  files: number;
+  pct: number;
+}
+
+export interface DetectedDependency {
+  name: string;
+  version: string;
+}
+
+export interface DetectedStack {
+  framework: DetectedFramework | null;
+  languages: DetectedLanguage[];
+  importantFiles: string[];
+  dependencies: DetectedDependency[];
+}
+
+export interface SecretFinding {
+  section: string;
+  index: number | null;
+  pattern: string;
+}
+
+export declare function newProject(id: string, name: string, nowMs: number): Project;
+export declare function newProjectMemory(): ProjectMemory;
+export declare function projectGet(store: ProjectStore | null | undefined, id: string): Project | null;
+export declare function projectRename(store: ProjectStore, id: string, name: string): boolean;
+export declare function projectDelete(store: ProjectStore, id: string): boolean;
+export declare function projectTouch(store: ProjectStore, id: string, nowMs: number): boolean;
+export declare function projectMemory(project: Project | null | undefined): ProjectMemory;
+export declare function projectMemorySetText(project: Project, section: string, text: string): boolean;
+export declare function projectMemoryAdd(project: Project, section: string, entry: any): number;
+export declare function projectMemoryRemove(project: Project, section: string, index: number): boolean;
+export declare function projectMemoryUpdate(project: Project, section: string, index: number, value: any): boolean;
+export declare function linkConversation(project: Project, convId: string): boolean;
+export declare function unlinkConversation(project: Project, convId: string): boolean;
+export declare function linkRepo(project: Project, name: string): boolean;
+export declare function unlinkRepo(project: Project, name: string): boolean;
+export declare function sanitizeProject(item: any): Project | null;
+export declare function mostRecentProjectId(store: ProjectStore | null | undefined): string | null;
+export declare function looksLikeSecret(value: any): string | null;
+export declare function scanProjectSecrets(project: Project | null | undefined): SecretFinding[];
+export declare function detectProjectStack(
+  files: string[] | null | undefined,
+  packageJsonText?: string | null,
+  fileContents?: Record<string, string> | null
+): DetectedStack;
+export declare function parsePackageJson(text: string | null | undefined): any | null;
+export declare function buildProjectContextBlock(project: Project | null | undefined, maxChars?: number): string;
+
 /* ----- conversation workspace store (device-local, no accounts) ----- */
 
 export declare const CONV_STORE_VERSION: number;
@@ -80,6 +181,8 @@ export interface Conversation {
   provider: string;
   model: string;
   messages: ConvMessage[];
+  projectId: string;
+  projectContextOn: boolean;
 }
 
 export interface ConvStore {

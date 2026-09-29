@@ -5,7 +5,7 @@ var __export = (target, all) => {
 };
 
 // src/server/demo.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync7, readdirSync as readdirSync6, statSync as statSync5 } from "node:fs";
+import { existsSync as existsSync13, mkdirSync as mkdirSync7, readdirSync as readdirSync6, statSync as statSync5, readFileSync as readFileSync10 } from "node:fs";
 import { dirname as dirname4, join as join14, normalize, relative as relative6, resolve as resolve9, sep as sep3 } from "node:path";
 
 // src/neutron/analyzer.ts
@@ -9947,6 +9947,7 @@ var DemoError = class extends Error {
 function cloneAllowed() {
   return process.env.NEUTRON_DEMO_ALLOW_CLONE === "1";
 }
+var REPO_PKG_CAP = 50 * 1024;
 function prepareDemoRepo(workspace) {
   const dir = join14(workspace, DEMO_PROJECT);
   const reused = existsSync13(join14(dir, "package.json"));

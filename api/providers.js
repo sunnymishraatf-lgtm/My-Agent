@@ -4661,6 +4661,9 @@ describe("security posture", () => {
 `
 };
 
+// src/server/demo.ts
+var REPO_PKG_CAP = 50 * 1024;
+
 // api-src/_lib.ts
 function sendJson(res, status, body) {
   setCorsHeaders(res);

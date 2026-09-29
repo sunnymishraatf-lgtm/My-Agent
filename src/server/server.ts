@@ -30,6 +30,7 @@ import {
   serializeJob,
   cloneRepo,
   listWorkspaceRepos,
+  listRepoFiles,
   DemoError,
   type DemoManager,
 } from "./demo";
@@ -438,6 +439,17 @@ async function handleDemoApi(manager: DemoManager, req: IncomingMessage, res: Se
     }
     if (req.method === "GET" && path === "/api/demo/repos") {
       sendJson(res, 200, { ok: true, repos: listWorkspaceRepos(manager.workspace) });
+      return;
+    }
+    /* Lightweight file listing + manifests for project auto-detect (Node
+       only — serverless has no persistent workspace). The repo name is
+       validated against the workspace listing; only relative paths and
+       capped manifest text are returned, never absolute server paths. */
+    if (req.method === "GET" && path === "/api/demo/repo-files") {
+      const repo = url.searchParams.get("repo") || "";
+      const known = listWorkspaceRepos(manager.workspace).some((r) => r.name === repo);
+      if (!known) throw new BadRequestError("Unknown repository.");
+      sendJson(res, 200, { ok: true, ...listRepoFiles(manager.workspace, repo) });
       return;
     }
     if (req.method === "POST" && path === "/api/demo/clone") {
@@ -928,6 +940,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
         provider?: string;
         apiKey?: string;
         attachments?: unknown;
+        projectContext?: unknown;
       };
       const apiKey = extractRequestKey(req, body);
       const providerId = extractRequestProvider(req, body);
@@ -943,8 +956,14 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
         return;
       }
       // Teach the model the file-artifact convention (short, fixed nudge).
+      // An optional client-supplied PROJECT MEMORY block is appended to the
+      // same system message so the artifact convention always survives.
       if (!messages.some((m) => m.role === "system")) {
-        messages.unshift({ role: "system", content: ARTIFACT_SYSTEM_NUDGE });
+        let system = ARTIFACT_SYSTEM_NUDGE;
+        if (typeof body.projectContext === "string" && body.projectContext.trim()) {
+          system += "\n\n" + body.projectContext.slice(0, 6000);
+        }
+        messages.unshift({ role: "system", content: system });
       }
       // Attachments: validated + merged into the last user message here.
       // AttachmentError -> honest 400 (names/sizes only, never contents).

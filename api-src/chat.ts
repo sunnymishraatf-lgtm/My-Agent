@@ -56,8 +56,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       return;
     }
     // Teach the model the file-artifact convention (short, fixed nudge).
+    // An optional client-supplied PROJECT MEMORY block is appended to the
+    // same system message so the artifact convention always survives.
     if (!messages.some((m) => m.role === "system")) {
-      messages.unshift({ role: "system", content: ARTIFACT_SYSTEM_NUDGE });
+      let system = ARTIFACT_SYSTEM_NUDGE;
+      if (typeof body.projectContext === "string" && body.projectContext.trim()) {
+        system += "\n\n" + body.projectContext.slice(0, 6000);
+      }
+      messages.unshift({ role: "system", content: system });
     }
     // Attachments: validated + merged into the last user message here.
     // AttachmentError -> honest 400 (names/sizes only, never contents).

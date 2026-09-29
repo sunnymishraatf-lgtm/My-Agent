@@ -2174,3 +2174,30 @@ body.chat-full .view {
   .rm-body[data-mtab="chat"] .rm-subtabs .rm-tab { padding: 8px 4px; font-size: 13px; }
   .rm-ed-area { min-height: 46vh; }
 }
+
+/* ---------- project brain ---------- */
+.proj-chip-wrap { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.proj-chip-wrap:empty { display: none; }
+.proj-chip { border-color: var(--primary); color: var(--primary); }
+.proj-chip:hover { background: var(--primary-soft); }
+.proj-context-pre {
+  max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+  padding: 12px; font-size: 12px; line-height: 1.5; margin: 0 0 8px;
+}
+.proj-open { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; width: 100%; text-align: left; }
+.proj-head { align-items: center; gap: 8px; flex-wrap: wrap; }
+.proj-head h1 { margin: 0; margin-right: auto; }
+.proj-item { align-items: center; gap: 8px; }
+.proj-item-text { flex: 1; cursor: pointer; padding: 6px 8px; border-radius: var(--r-card); }
+.proj-item-text:hover, .proj-item-text:focus-visible { background: var(--surface); outline: 2px solid var(--primary); outline-offset: 1px; }
+.proj-item .input { flex: 1; }
+.proj-pick { display: block; width: 100%; text-align: left; margin-bottom: 6px; }
+.proj-pick.on { border-color: var(--primary); color: var(--primary); }
+.proj-toggle { align-items: center; gap: 8px; margin-top: 10px; cursor: pointer; }
+.linklike {
+  background: none; border: none; padding: 0; color: var(--primary);
+  font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.linklike:disabled { color: var(--text-2); cursor: default; text-decoration: none; }
+[data-theme^="glass-"] .proj-context-pre { background: var(--glass-bg); }

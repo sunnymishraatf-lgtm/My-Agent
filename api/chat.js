@@ -6366,6 +6366,7 @@ var DemoError = class extends Error {
     this.status = status;
   }
 };
+var REPO_PKG_CAP = 50 * 1024;
 
 // api-src/_lib.ts
 function sendJson(res, status, body) {
@@ -6451,7 +6452,11 @@ async function handler(req, res) {
       return;
     }
     if (!messages.some((m) => m.role === "system")) {
-      messages.unshift({ role: "system", content: ARTIFACT_SYSTEM_NUDGE });
+      let system = ARTIFACT_SYSTEM_NUDGE;
+      if (typeof body.projectContext === "string" && body.projectContext.trim()) {
+        system += "\n\n" + body.projectContext.slice(0, 6e3);
+      }
+      messages.unshift({ role: "system", content: system });
     }
     let outgoing;
     try {

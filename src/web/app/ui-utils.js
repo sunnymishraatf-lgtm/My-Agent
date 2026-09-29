@@ -379,6 +379,8 @@
       provider: "",
       model: "",
       messages: [],
+      projectId: "",
+      projectContextOn: true,
     };
   }
 
@@ -598,6 +600,8 @@
       provider: String(item.provider || "").slice(0, 100),
       model: String(item.model || "").slice(0, 200),
       messages: [],
+      projectId: String(item.projectId || "").slice(0, 100),
+      projectContextOn: item.projectContextOn !== false,
     };
     var budget = { left: CONV_MAX_ATTACH_DATA };
     var msgs = Array.isArray(item.messages) ? item.messages.slice(-CONV_MESSAGE_CAP) : [];
@@ -1366,6 +1370,484 @@
     return false;
   }
 
+  /* ================= project brain (Phase 1) =================
+     Device-local project intelligence: per-project memory the user owns,
+     stored in localStorage under neutron_projects (same trust boundary as
+     the API key). Pure helpers here; the SPA wires them in app.js.
+     NEVER store secrets in project memory — looksLikeSecret() guards saves
+     and scanProjectSecrets() flags anything already stored. */
+
+  var PROJECT_STORE_VERSION = 1;
+  var PROJECT_MAX_NAME = 120;
+  var PROJECT_MAX_TEXT = 2000;   /* description + free-text memory fields */
+  var PROJECT_MAX_ENTRY = 1000;  /* one list entry / dependency note */
+  var PROJECT_MAX_LIST = 200;    /* entries per list section */
+  var PROJECT_CONTEXT_MAX = 4000;/* chars of project memory sent to the model */
+
+  /* Free-text memory sections (single string each). */
+  var PROJECT_TEXT_SECTIONS = ["architecture", "framework", "database", "deployment", "docs"];
+  /* String-list memory sections. */
+  var PROJECT_LIST_SECTIONS = ["languages", "conventions", "decisions", "knownBugs",
+    "importantFiles", "apis", "tasks"];
+  /* dependencies is a list of {name, version, note} — handled separately. */
+
+  function newProjectMemory() {
+    return {
+      architecture: "", framework: "", database: "", deployment: "", docs: "",
+      languages: [], conventions: [], decisions: [], knownBugs: [],
+      importantFiles: [], apis: [], tasks: [],
+      dependencies: [],
+    };
+  }
+
+  function newProject(id, name, nowMs) {
+    return {
+      id: String(id),
+      name: String(name == null ? "" : name).slice(0, PROJECT_MAX_NAME),
+      description: "",
+      createdAt: nowMs, updatedAt: nowMs,
+      memory: newProjectMemory(),
+      linkedConversationIds: [],
+      linkedRepoNames: [],
+    };
+  }
+
+  function projectGet(store, id) {
+    if (!store || !store.items || typeof id !== "string") return null;
+    return store.items[id] || null;
+  }
+
+  /* Rename: trimmed, non-empty. Returns true on success. */
+  function projectRename(store, id, name) {
+    var p = projectGet(store, id);
+    if (!p) return false;
+    var n = String(name == null ? "" : name).trim();
+    if (!n) return false;
+    p.name = n.slice(0, PROJECT_MAX_NAME);
+    p.updatedAt = Date.now();
+    return true;
+  }
+
+  function projectDelete(store, id) {
+    if (!store || !store.items || !store.items[id]) return false;
+    delete store.items[id];
+    return true;
+  }
+
+  function projectTouch(store, id, nowMs) {
+    var p = projectGet(store, id);
+    if (!p) return false;
+    p.updatedAt = nowMs;
+    return true;
+  }
+
+  function projectMemory(project) {
+    if (!project || typeof project !== "object") return newProjectMemory();
+    var m = project.memory && typeof project.memory === "object" ? project.memory : {};
+    var out = newProjectMemory();
+    PROJECT_TEXT_SECTIONS.forEach(function (k) {
+      if (typeof m[k] === "string") out[k] = m[k];
+    });
+    PROJECT_LIST_SECTIONS.forEach(function (k) {
+      if (Array.isArray(m[k])) out[k] = m[k];
+    });
+    if (Array.isArray(m.dependencies)) out.dependencies = m.dependencies;
+    return out;
+  }
+
+  /* Set a free-text memory section. Returns true on success. */
+  function projectMemorySetText(project, section, text) {
+    if (!project || PROJECT_TEXT_SECTIONS.indexOf(section) === -1) return false;
+    project.memory = projectMemory(project);
+    project.memory[section] = String(text == null ? "" : text).slice(0, PROJECT_MAX_TEXT);
+    project.updatedAt = Date.now();
+    return true;
+  }
+
+  /* Add a string entry to a list section (or a dependency object).
+     Returns the index, or -1 on failure. */
+  function projectMemoryAdd(project, section, entry) {
+    if (!project) return -1;
+    project.memory = projectMemory(project);
+    if (section === "dependencies") {
+      if (!entry || typeof entry !== "object" || !String(entry.name || "").trim()) return -1;
+      if (project.memory.dependencies.length >= PROJECT_MAX_LIST) return -1;
+      project.memory.dependencies.push({
+        name: String(entry.name).trim().slice(0, 200),
+        version: String(entry.version || "").trim().slice(0, 100),
+        note: String(entry.note || "").trim().slice(0, PROJECT_MAX_ENTRY),
+      });
+      project.updatedAt = Date.now();
+      return project.memory.dependencies.length - 1;
+    }
+    if (PROJECT_LIST_SECTIONS.indexOf(section) === -1) return -1;
+    var v = String(entry == null ? "" : entry).trim();
+    if (!v) return -1;
+    if (project.memory[section].length >= PROJECT_MAX_LIST) return -1;
+    project.memory[section].push(v.slice(0, PROJECT_MAX_ENTRY));
+    project.updatedAt = Date.now();
+    return project.memory[section].length - 1;
+  }
+
+  function projectMemoryRemove(project, section, index) {
+    if (!project) return false;
+    project.memory = projectMemory(project);
+    var list = section === "dependencies" ? project.memory.dependencies
+      : (PROJECT_LIST_SECTIONS.indexOf(section) !== -1 ? project.memory[section] : null);
+    if (!Array.isArray(list) || index < 0 || index >= list.length) return false;
+    list.splice(index, 1);
+    project.updatedAt = Date.now();
+    return true;
+  }
+
+  /* Replace one entry (string for list sections, object for dependencies). */
+  function projectMemoryUpdate(project, section, index, value) {
+    if (!project) return false;
+    project.memory = projectMemory(project);
+    if (section === "dependencies") {
+      var d = project.memory.dependencies[index];
+      if (!d || !value || typeof value !== "object") return false;
+      if (typeof value.name === "string" && value.name.trim()) d.name = value.name.trim().slice(0, 200);
+      if (typeof value.version === "string") d.version = value.version.trim().slice(0, 100);
+      if (typeof value.note === "string") d.note = value.note.trim().slice(0, PROJECT_MAX_ENTRY);
+      project.updatedAt = Date.now();
+      return true;
+    }
+    var list = PROJECT_LIST_SECTIONS.indexOf(section) !== -1 ? project.memory[section] : null;
+    if (!Array.isArray(list) || index < 0 || index >= list.length) return false;
+    var v = String(value == null ? "" : value).trim();
+    if (!v) return false;
+    list[index] = v.slice(0, PROJECT_MAX_ENTRY);
+    project.updatedAt = Date.now();
+    return true;
+  }
+
+  function linkConversation(project, convId) {
+    if (!project || typeof convId !== "string" || !convId) return false;
+    if (!Array.isArray(project.linkedConversationIds)) project.linkedConversationIds = [];
+    if (project.linkedConversationIds.indexOf(convId) !== -1) return true;
+    if (project.linkedConversationIds.length >= 100) return false;
+    project.linkedConversationIds.push(convId);
+    project.updatedAt = Date.now();
+    return true;
+  }
+
+  function unlinkConversation(project, convId) {
+    if (!project || !Array.isArray(project.linkedConversationIds)) return false;
+    var i = project.linkedConversationIds.indexOf(convId);
+    if (i === -1) return false;
+    project.linkedConversationIds.splice(i, 1);
+    project.updatedAt = Date.now();
+    return true;
+  }
+
+  function linkRepo(project, name) {
+    if (!project || typeof name !== "string" || !name.trim()) return false;
+    if (!Array.isArray(project.linkedRepoNames)) project.linkedRepoNames = [];
+    var n = name.trim().slice(0, 200);
+    if (project.linkedRepoNames.indexOf(n) !== -1) return true;
+    if (project.linkedRepoNames.length >= 100) return false;
+    project.linkedRepoNames.push(n);
+    project.updatedAt = Date.now();
+    return true;
+  }
+
+  function unlinkRepo(project, name) {
+    if (!project || !Array.isArray(project.linkedRepoNames)) return false;
+    var i = project.linkedRepoNames.indexOf(name);
+    if (i === -1) return false;
+    project.linkedRepoNames.splice(i, 1);
+    project.updatedAt = Date.now();
+    return true;
+  }
+
+  function sanitizeProjectDep(d) {
+    if (!d || typeof d !== "object") return null;
+    var name = String(d.name || "").trim();
+    if (!name) return null;
+    return {
+      name: name.slice(0, 200),
+      version: String(d.version || "").slice(0, 100),
+      note: String(d.note || "").slice(0, PROJECT_MAX_ENTRY),
+    };
+  }
+
+  /* Quota-safe, JSON-safe copy for localStorage. Returns null for garbage. */
+  function sanitizeProject(item) {
+    if (!item || typeof item !== "object" || !item.id) return null;
+    var mem = projectMemory(item);
+    var out = {
+      id: String(item.id).slice(0, 100),
+      name: String(item.name || "").slice(0, PROJECT_MAX_NAME),
+      description: String(item.description || "").slice(0, PROJECT_MAX_TEXT),
+      createdAt: Number(item.createdAt) || 0,
+      updatedAt: Number(item.updatedAt) || 0,
+      memory: newProjectMemory(),
+      linkedConversationIds: [],
+      linkedRepoNames: [],
+    };
+    PROJECT_TEXT_SECTIONS.forEach(function (k) {
+      out.memory[k] = String(mem[k] || "").slice(0, PROJECT_MAX_TEXT);
+    });
+    PROJECT_LIST_SECTIONS.forEach(function (k) {
+      out.memory[k] = (Array.isArray(mem[k]) ? mem[k] : []).slice(0, PROJECT_MAX_LIST)
+        .map(function (e) { return String(e == null ? "" : e).slice(0, PROJECT_MAX_ENTRY); })
+        .filter(function (e) { return e.length > 0; });
+    });
+    out.memory.dependencies = (Array.isArray(mem.dependencies) ? mem.dependencies : [])
+      .slice(0, PROJECT_MAX_LIST).map(sanitizeProjectDep).filter(Boolean);
+    out.linkedConversationIds = (Array.isArray(item.linkedConversationIds) ? item.linkedConversationIds : [])
+      .slice(0, 100).map(function (id) { return String(id).slice(0, 100); }).filter(Boolean);
+    out.linkedRepoNames = (Array.isArray(item.linkedRepoNames) ? item.linkedRepoNames : [])
+      .slice(0, 100).map(function (n) { return String(n).slice(0, 200); }).filter(Boolean);
+    return out;
+  }
+
+  function mostRecentProjectId(store) {
+    if (!store || !store.items) return null;
+    var best = null, bestTs = -1;
+    Object.keys(store.items).forEach(function (id) {
+      var p = store.items[id];
+      var t = p && typeof p.updatedAt === "number" ? p.updatedAt : -1;
+      if (t > bestTs) { bestTs = t; best = id; }
+    });
+    return best;
+  }
+
+  /* ---------------- secret guard ----------------
+     Never store secrets as project memory. looksLikeSecret() returns the
+     matched pattern label (truthy) or null. Checked on every save; existing
+     stores are scanned on load and flagged (not silently deleted). */
+  var SECRET_PATTERNS = [
+    { id: "openai-key", label: "API key (sk-…)", re: /\bsk-[A-Za-z0-9]{16,}\b/ },
+    { id: "anthropic-key", label: "Anthropic API key (sk-ant-…)", re: /\bsk-ant-[A-Za-z0-9\-_]{16,}\b/ },
+    { id: "google-key", label: "Google API key (AIza…)", re: /\bAIza[0-9A-Za-z\-_]{30,}\b/ },
+    { id: "github-token", label: "GitHub token (ghp_/gho_/…)", re: /\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/ },
+    { id: "slack-token", label: "Slack token (xox…)", re: /\bxox[baprs]-[A-Za-z0-9\-]{10,}\b/ },
+    { id: "aws-key", label: "AWS access key (AKIA…)", re: /\bAKIA[0-9A-Z]{16}\b/ },
+    { id: "private-key", label: "Private key block", re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/ },
+    { id: "bearer", label: "Bearer token", re: /\bBearer\s+[A-Za-z0-9\-._~+/]{16,}={0,2}/ },
+    { id: "jwt", label: "JWT", re: /\beyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\b/ },
+    { id: "secret-assign", label: "Secret-like assignment", re: /\b(api[_-]?key|apikey|secret|passwd|password|pwd|auth[_-]?token|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*(?:"[^"]{8,}"|'[^']{8,}'|[\w\-./+]{12,})/i },
+  ];
+
+  function looksLikeSecret(value) {
+    var s = String(value == null ? "" : value);
+    if (!s) return null;
+    for (var i = 0; i < SECRET_PATTERNS.length; i++) {
+      if (SECRET_PATTERNS[i].re.test(s)) return SECRET_PATTERNS[i].label;
+    }
+    return null;
+  }
+
+  /* Scan every stored string in a project. Returns
+     [{section, index (null for text fields), pattern}] — never the value. */
+  function scanProjectSecrets(project) {
+    var findings = [];
+    if (!project) return findings;
+    function check(section, index, value) {
+      var label = looksLikeSecret(value);
+      if (label) findings.push({ section: section, index: index, pattern: label });
+    }
+    if (typeof project.description === "string") check("description", null, project.description);
+    if (typeof project.name === "string") check("name", null, project.name);
+    var mem = projectMemory(project);
+    PROJECT_TEXT_SECTIONS.forEach(function (k) { check(k, null, mem[k]); });
+    PROJECT_LIST_SECTIONS.forEach(function (k) {
+      (Array.isArray(mem[k]) ? mem[k] : []).forEach(function (e, i) { check(k, i, e); });
+    });
+    (Array.isArray(mem.dependencies) ? mem.dependencies : []).forEach(function (d, i) {
+      if (!d) return;
+      check("dependencies", i, d.name + " " + d.version + " " + d.note);
+    });
+    return findings;
+  }
+
+  /* ---------------- auto-detect (real data only) ----------------
+     Given a repo's relative file list + optional package.json text, suggest
+     framework, languages, important files, and dependencies. Everything is a
+     suggestion — the UI marks it detected and the user can edit/remove.
+     Never invents: unknown input → null/empty, honestly. */
+
+  var EXT_LANG = {
+    js: "JavaScript", mjs: "JavaScript", cjs: "JavaScript", jsx: "JavaScript",
+    ts: "TypeScript", mts: "TypeScript", cts: "TypeScript", tsx: "TypeScript",
+    py: "Python", pyi: "Python", rb: "Ruby", go: "Go", rs: "Rust",
+    java: "Java", kt: "Kotlin", kts: "Kotlin", swift: "Swift", php: "PHP",
+    cs: "C#", cpp: "C++", cxx: "C++", cc: "C++", c: "C", h: "C/C++",
+    hpp: "C++", m: "Objective-C", mm: "Objective-C++",
+    html: "HTML", htm: "HTML", css: "CSS", scss: "SCSS", sass: "SCSS",
+    less: "Less", vue: "Vue", svelte: "Svelte", astro: "Astro",
+    sql: "SQL", sh: "Shell", bash: "Shell", zsh: "Shell", ps1: "PowerShell",
+    md: "Markdown", mdx: "Markdown", json: "JSON", yaml: "YAML", yml: "YAML",
+    toml: "TOML", xml: "XML", ini: "INI", env: "Env",
+    dart: "Dart", lua: "Lua", r: "R", scala: "Scala", sc: "Scala",
+    ex: "Elixir", exs: "Elixir", erl: "Erlang", hs: "Haskell",
+    tf: "Terraform", dockerfile: "Docker",
+  };
+
+  function extOf(path) {
+    var base = String(path).split("/").pop() || "";
+    if (/^dockerfile(\.|$)/i.test(base)) return "dockerfile";
+    var dot = base.lastIndexOf(".");
+    if (dot <= 0) return "";
+    return base.slice(dot + 1).toLowerCase();
+  }
+
+  /* Ordered framework rules: {name, confidence, test(files, pkg)} — first
+     match wins so specific frameworks beat generic ones. */
+  var FRAMEWORK_RULES = [
+    { name: "Next.js", confidence: "high", test: function (f, p) { return hasDep(p, "next") || hasFile(f, /^next\.config\./); } },
+    { name: "Nuxt", confidence: "high", test: function (f, p) { return hasDep(p, "nuxt") || hasFile(f, /^nuxt\.config\./); } },
+    { name: "Gatsby", confidence: "high", test: function (f, p) { return hasDep(p, "gatsby"); } },
+    { name: "Angular", confidence: "high", test: function (f, p) { return hasDep(p, "@angular/core") || hasFile(f, /^angular\.json$/); } },
+    { name: "NestJS", confidence: "high", test: function (f, p) { return hasDep(p, "@nestjs/core"); } },
+    { name: "Vite", confidence: "medium", test: function (f, p) { return hasFile(f, /^vite\.config\./); } },
+    { name: "Vue", confidence: "medium", test: function (f, p) { return hasDep(p, "vue") || hasFile(f, /^vue\.config\./); } },
+    { name: "Svelte", confidence: "medium", test: function (f, p) { return hasDep(p, "svelte") || hasFile(f, /^svelte\.config\./); } },
+    { name: "React", confidence: "medium", test: function (f, p) { return hasDep(p, "react"); } },
+    { name: "Express", confidence: "medium", test: function (f, p) { return hasDep(p, "express"); } },
+    { name: "Fastify", confidence: "medium", test: function (f, p) { return hasDep(p, "fastify"); } },
+    { name: "Koa", confidence: "medium", test: function (f, p) { return hasDep(p, "koa"); } },
+    { name: "Django", confidence: "medium", test: function (f, p, c) { return /django/i.test(reqFile(c, "requirements.txt")); } },
+    { name: "Flask", confidence: "medium", test: function (f, p, c) { return /flask/i.test(reqFile(c, "requirements.txt")); } },
+  ];
+
+  /* Helpers used by FRAMEWORK_RULES — hoisted function declarations. */
+  function hasDep(pkg, name) {
+    if (!pkg || typeof pkg !== "object") return false;
+    var groups = [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies];
+    for (var i = 0; i < groups.length; i++) {
+      var g = groups[i];
+      if (g && typeof g === "object" && Object.prototype.hasOwnProperty.call(g, name)) return true;
+    }
+    return false;
+  }
+  function hasFile(files, re) {
+    for (var i = 0; i < files.length; i++) {
+      var base = String(files[i]).split("/").pop();
+      if (re.test(base)) return true;
+    }
+    return false;
+  }
+  /* Optional map of basename -> file content (capped by the caller), used
+     by rules that need to peek inside a file (e.g. requirements.txt). */
+  function reqFile(contents, basename) {
+    if (!contents || typeof contents !== "object") return "";
+    var v = contents[basename];
+    return typeof v === "string" ? v : "";
+  }
+
+  function parsePackageJson(text) {
+    if (!text || typeof text !== "string") return null;
+    try {
+      var o = JSON.parse(text);
+      return (o && typeof o === "object" && !Array.isArray(o)) ? o : null;
+    } catch (e) { return null; }
+  }
+
+  /* Detect the stack from a real file list + optional package.json text.
+     Returns { framework: {name, confidence} | null, languages: [{lang, files, pct}],
+     importantFiles: [paths], dependencies: [{name, version}] }. */
+  function detectProjectStack(files, packageJsonText, fileContents) {
+    var list = (Array.isArray(files) ? files : []).map(function (f) { return String(f); });
+    var pkg = parsePackageJson(packageJsonText);
+    var out = { framework: null, languages: [], importantFiles: [], dependencies: [] };
+
+    for (var i = 0; i < FRAMEWORK_RULES.length; i++) {
+      var rule = FRAMEWORK_RULES[i];
+      try {
+        if (rule.test(list, pkg, fileContents)) { out.framework = { name: rule.name, confidence: rule.confidence }; break; }
+      } catch (e) { /* a bad rule never breaks detection */ }
+    }
+    if (!out.framework) {
+      if (hasFile(list, /^go\.mod$/)) out.framework = { name: "Go", confidence: "medium" };
+      else if (hasFile(list, /^Cargo\.toml$/)) out.framework = { name: "Rust", confidence: "medium" };
+      else if (hasFile(list, /^(pom\.xml|build\.gradle(\.kts)?)$/)) out.framework = { name: "Java", confidence: "medium" };
+      else if (hasFile(list, /^requirements\.txt$/) || hasFile(list, /^pyproject\.toml$/)) out.framework = { name: "Python", confidence: "low" };
+    }
+
+    var counts = {}, total = 0;
+    list.forEach(function (f) {
+      var lang = EXT_LANG[extOf(f)];
+      if (!lang || lang === "Markdown" || lang === "JSON" || lang === "YAML" || lang === "TOML" || lang === "XML" || lang === "INI" || lang === "Env") return;
+      counts[lang] = (counts[lang] || 0) + 1;
+      total++;
+    });
+    out.languages = Object.keys(counts).map(function (lang) {
+      return { lang: lang, files: counts[lang], pct: total ? Math.round(counts[lang] * 100 / total) : 0 };
+    }).sort(function (a, b) { return b.files - a.files; }).slice(0, 5);
+
+    var importantRes = [
+      /^README(\.|$)/i, /^(package\.json|tsconfig\.json|pyproject\.toml|go\.mod|Cargo\.toml|pom\.xml)$/,
+      /^(Dockerfile|docker-compose\.ya?ml)$/i,
+      /(^|\/)(index|main|app)\.(js|jsx|ts|tsx|py|go|rs|java)$/i,
+      /(^|\/)App\.(jsx|tsx)$/,
+    ];
+    var seen = {};
+    list.forEach(function (f) {
+      var base = String(f).split("/").pop();
+      for (var k = 0; k < importantRes.length; k++) {
+        if (importantRes[k].test(base) && !seen[f] && out.importantFiles.length < 20) {
+          seen[f] = true;
+          out.importantFiles.push(f);
+          break;
+        }
+      }
+    });
+
+    if (pkg) {
+      ["dependencies", "devDependencies"].forEach(function (group) {
+        var g = pkg[group];
+        if (g && typeof g === "object") {
+          Object.keys(g).slice(0, 100).forEach(function (name) {
+            out.dependencies.push({ name: name, version: String(g[name]).slice(0, 100) });
+          });
+        }
+      });
+      out.dependencies = out.dependencies.slice(0, 100);
+    }
+    return out;
+  }
+
+  /* ---------------- AI context injection ----------------
+     Condensed PROJECT MEMORY block for the system prompt. Only non-empty
+     sections; hard-capped (default 4000 chars) with an honest truncation
+     marker. The UI shows this exact text on demand — no hidden context. */
+  function buildProjectContextBlock(project, maxChars) {
+    var cap = (typeof maxChars === "number" && maxChars > 0) ? maxChars : PROJECT_CONTEXT_MAX;
+    if (!project) return "";
+    var mem = projectMemory(project);
+    var lines = ["PROJECT MEMORY — \"" + String(project.name || "untitled") + "\"",
+      "(Background context about the user's project. Use it to give relevant answers; the user can correct it.)"];
+    function add(label, value) {
+      if (value && String(value).trim()) lines.push(label + ": " + String(value).trim());
+    }
+    add("Architecture", mem.architecture);
+    add("Framework", mem.framework);
+    add("Languages", mem.languages.join(", "));
+    add("Database", mem.database);
+    add("Deployment", mem.deployment);
+    if (mem.conventions.length) lines.push("Conventions:\n- " + mem.conventions.join("\n- "));
+    if (mem.decisions.length) lines.push("Decisions:\n- " + mem.decisions.join("\n- "));
+    if (mem.knownBugs.length) lines.push("Known bugs:\n- " + mem.knownBugs.join("\n- "));
+    if (mem.importantFiles.length) lines.push("Important files: " + mem.importantFiles.join(", "));
+    if (mem.apis.length) lines.push("APIs: " + mem.apis.join(", "));
+    if (mem.dependencies.length) {
+      lines.push("Dependencies: " + mem.dependencies.map(function (d) {
+        return d.name + (d.version ? "@" + d.version : "");
+      }).join(", "));
+    }
+    if (mem.tasks.length) lines.push("Open tasks:\n- " + mem.tasks.join("\n- "));
+    add("Notes", mem.docs);
+    if (project.description) lines.push("Project: " + String(project.description).trim());
+    var text = lines.join("\n");
+    if (text.length > cap) {
+      text = text.slice(0, cap - 20).replace(/\s+\S*$/, "") + "\n…[truncated]";
+    }
+    return text;
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -1388,6 +1870,33 @@
     sanitizeCollabName: sanitizeCollabName,
     sanitizeCollabText: sanitizeCollabText,
     timeAgo: timeAgo,
+    /* project brain */
+    PROJECT_STORE_VERSION: PROJECT_STORE_VERSION,
+    PROJECT_CONTEXT_MAX: PROJECT_CONTEXT_MAX,
+    PROJECT_TEXT_SECTIONS: PROJECT_TEXT_SECTIONS,
+    PROJECT_LIST_SECTIONS: PROJECT_LIST_SECTIONS,
+    newProject: newProject,
+    newProjectMemory: newProjectMemory,
+    projectGet: projectGet,
+    projectRename: projectRename,
+    projectDelete: projectDelete,
+    projectTouch: projectTouch,
+    projectMemory: projectMemory,
+    projectMemorySetText: projectMemorySetText,
+    projectMemoryAdd: projectMemoryAdd,
+    projectMemoryRemove: projectMemoryRemove,
+    projectMemoryUpdate: projectMemoryUpdate,
+    linkConversation: linkConversation,
+    unlinkConversation: unlinkConversation,
+    linkRepo: linkRepo,
+    unlinkRepo: unlinkRepo,
+    sanitizeProject: sanitizeProject,
+    mostRecentProjectId: mostRecentProjectId,
+    looksLikeSecret: looksLikeSecret,
+    scanProjectSecrets: scanProjectSecrets,
+    detectProjectStack: detectProjectStack,
+    parsePackageJson: parsePackageJson,
+    buildProjectContextBlock: buildProjectContextBlock,
     /* conversation workspace */
     CONV_STORE_VERSION: CONV_STORE_VERSION,
     newConversation: newConversation,

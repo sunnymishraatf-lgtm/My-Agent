@@ -6,7 +6,7 @@ var __export = (target, all) => {
 
 // src/server/demo.ts
 import { execFile } from "node:child_process";
-import { existsSync as existsSync13, mkdirSync as mkdirSync7, readdirSync as readdirSync6, statSync as statSync5 } from "node:fs";
+import { existsSync as existsSync13, mkdirSync as mkdirSync7, readdirSync as readdirSync6, statSync as statSync5, readFileSync as readFileSync10 } from "node:fs";
 import { dirname as dirname4, join as join14, normalize, relative as relative6, resolve as resolve9, sep as sep3 } from "node:path";
 
 // src/neutron/analyzer.ts
@@ -9961,6 +9961,7 @@ function shortErr(err) {
   const msg = err instanceof Error ? err.message : String(err);
   return msg.split("\n")[0].slice(0, 200);
 }
+var REPO_PKG_CAP = 50 * 1024;
 function prepareDemoRepo(workspace) {
   const dir = join14(workspace, DEMO_PROJECT);
   const reused = existsSync13(join14(dir, "package.json"));
