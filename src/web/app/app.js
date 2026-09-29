@@ -1154,6 +1154,9 @@ async function renderChat(view) {
 
   /* ----- message log ----- */
   var log = el("div", "chat-log full");
+  log.setAttribute("role", "log");
+  log.setAttribute("aria-live", "polite");
+  log.setAttribute("aria-label", "Chat messages");
 
   function artifactCards(artifacts) {
     var wrap = el("div", "artifact-list");
