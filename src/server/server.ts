@@ -570,6 +570,12 @@ async function handleAgentApi(
   const sub = path.slice("/api/agent/".length);
   const seg = sub.split("/");
   try {
+    /* Newest-first run summaries (Node only — runs live in server memory).
+       Powers the universal search palette's agent-run results. */
+    if (req.method === "GET" && sub === "runs") {
+      sendJson(res, 200, { ok: true, runs: manager.list() });
+      return;
+    }
     if (req.method === "POST" && sub === "runs") {
       const ip = req.socket.remoteAddress ?? "unknown";
       if (agentCreateRateLimited(ip)) {
@@ -1519,6 +1525,28 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
      which serverless hosting doesn't have). */
   if (url.pathname === "/api/git" || url.pathname.startsWith("/api/git/")) {
     await handleGitApi(getAgentManager(opts.demoWorkspace).workspace, req, res, url);
+    return;
+  }
+
+  /* Workspace file-name listing for the universal search palette (Node
+     server only — no persistent workspace on serverless). Aggregates the
+     existing per-repo file lister across all workspace repos; returns only
+     relative paths, never absolute server paths. Bounded output. */
+  if (req.method === "GET" && url.pathname === "/api/workspace/files") {
+    const workspace = getAgentManager(opts.demoWorkspace).workspace;
+    const repos = listWorkspaceRepos(workspace);
+    const files: Array<{ repo: string; path: string }> = [];
+    let truncated = false;
+    for (const r of repos) {
+      const listing = listRepoFiles(workspace, r.name);
+      for (const p of listing.files) {
+        if (files.length >= 3000) { truncated = true; break; }
+        files.push({ repo: r.name, path: p });
+      }
+      if (truncated) break;
+      if (listing.truncated) truncated = true;
+    }
+    sendJson(res, 200, { ok: true, files, truncated });
     return;
   }
 

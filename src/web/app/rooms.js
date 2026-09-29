@@ -2841,5 +2841,6 @@
   window.NeutronRooms = {
     renderRooms: renderRooms,
     teardown: teardown,
+    listKnownRooms: loadKnownRooms,
   };
 })();

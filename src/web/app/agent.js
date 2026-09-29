@@ -74,6 +74,23 @@
     var runPanel = el("div", "ag-run");
     wrap.appendChild(runPanel);
     S.runPanel = runPanel;
+    /* Open a historical run (e.g. from the universal search palette):
+       sessionStorage "neutron_pending_run" holds the run id. The run panel
+       renders it; polling starts only while it is still active. */
+    try {
+      var pendingRun = sessionStorage.getItem("neutron_pending_run");
+      if (pendingRun) {
+        sessionStorage.removeItem("neutron_pending_run");
+        api("GET", "/api/agent/runs/" + encodeURIComponent(pendingRun)).then(function (r) {
+          if (!r || !r.run) return;
+          S.runId = r.run.id;
+          S.run = r.run;
+          paintRun();
+          if (!isTerminal(r.run.status)) startPolling();
+          announce("Opened agent run.");
+        }).catch(function () { /* unknown id — stay on the new-run form */ });
+      }
+    } catch (e) { /* private mode — ignore */ }
     if (window.NeutronCheckpoints) {
       var cpWrap = el("div", "ag-checkpoints");
       wrap.appendChild(cpWrap);

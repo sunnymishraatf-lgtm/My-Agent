@@ -211,6 +211,21 @@ class AgentManager {
     return run;
   }
 
+  /** Newest-first run summaries for the universal search palette. Bounded. */
+  list(): Array<{ id: string; goal: string; repo: string; status: string; createdAt: string; finishedAt: string | null }> {
+    return [...this.runs.values()]
+      .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+      .slice(0, 50)
+      .map((r) => ({
+        id: r.id,
+        goal: r.goal,
+        repo: r.repo,
+        status: r.status,
+        createdAt: r.createdAt,
+        finishedAt: r.finishedAt ?? null,
+      }));
+  }
+
   stop(id: string): AgentRun {
     const run = this.get(id);
     if (!isTerminal(run.status)) {

@@ -2849,6 +2849,12 @@ async function renderChat(view) {
     if (!histOpen) setHistOpen(true);
     try { histSearch.focus(); } catch (e) {}
   };
+  ChatHooks.focusComposer = function () {
+    try {
+      var ta = document.querySelector(".composer-input");
+      if (ta) ta.focus();
+    } catch (e) {}
+  };
   ChatHooks.closeOverlays = function () {
     if (histModal) { histModal.close(); return; }
     if (histItemMenu) { closeHistMenu(); return; }
@@ -2862,6 +2868,18 @@ async function renderChat(view) {
   paintHistoryLoading();
   setHistOpen(histOpen);
   requestAnimationFrame(function () { paintHistory(); });
+  /* Palette deep actions: focus the composer or the history search when the
+     palette navigated here with a pending focus request. */
+  try {
+    if (window.__neutronFocusComposer) {
+      window.__neutronFocusComposer = null;
+      setTimeout(function () { if (ChatHooks.focusComposer) ChatHooks.focusComposer(); }, 60);
+    }
+    if (window.__neutronFocusHistSearch) {
+      window.__neutronFocusHistSearch = null;
+      setTimeout(function () { if (ChatHooks.focusHistorySearch) ChatHooks.focusHistorySearch(); }, 60);
+    }
+  } catch (e) { /* best-effort */ }
   /* ================= end history workspace ================= */
 
 
@@ -4059,11 +4077,10 @@ function bindChatKeys() {
     if (currentRoute() !== "chat") return;
     var mod = ev.ctrlKey || ev.metaKey;
     var key = ev.key;
-    if (mod && !ev.shiftKey && (key === "k" || key === "K")) {
-      ev.preventDefault();
-      if (ChatHooks.focusHistorySearch) ChatHooks.focusHistorySearch();
-      return;
-    }
+    /* NOTE: Ctrl/Cmd+K opens the global command palette (bound in
+       palette.js) on every route — including chat. The history search
+       input stays clickable/focusable, and the palette has a
+       "Search Chat History" command that focuses it. */
     if (mod && ev.shiftKey && (key === "N" || key === "n")) {
       ev.preventDefault();
       if (ChatHooks.newTask) ChatHooks.newTask();
@@ -4082,6 +4099,79 @@ function bindChatKeys() {
     }
   });
 }
+
+/* ---------- app bridge for the command palette (palette.js) ----------
+   Small, explicit surface: the palette needs read access to the
+   device-local stores and a few global actions. Everything here is real —
+   no invented data. */
+window.NeutronApp = {
+  getConversationIndex: function () {
+    loadConvStore();
+    var out = [];
+    Object.keys(convStore.items || {}).forEach(function (id) {
+      var it = convStore.items[id];
+      if (!it || it.archived) return;
+      var excerpt = "";
+      try {
+        excerpt = (it.messages || []).map(function (m) {
+          return m && m.text ? String(m.text) : "";
+        }).join("\n").slice(0, 600);
+      } catch (e) {}
+      out.push({
+        id: id, title: it.title, updatedAt: it.updatedAt,
+        createdAt: it.createdAt, archived: it.archived, excerpt: excerpt,
+      });
+    });
+    return out;
+  },
+  getProjectIndex: function () {
+    loadProjectStore();
+    var NU = window.NeutronUI;
+    var out = [];
+    Object.keys((projectStore && projectStore.items) || {}).forEach(function (id) {
+      var p = projectStore.items[id];
+      if (!p) return;
+      var mem = "";
+      try { if (NU && NU.buildProjectContextBlock) mem = NU.buildProjectContextBlock(p).slice(0, 600); } catch (e) {}
+      out.push({ id: id, name: p.name, updatedAt: p.updatedAt, createdAt: p.createdAt, memoryText: mem });
+    });
+    return out;
+  },
+  newChat: function () {
+    if (currentRoute() === "chat" && ChatHooks.newTask) { ChatHooks.newTask(); return; }
+    loadConvStore();
+    var NU = window.NeutronUI;
+    var id = genConvId();
+    var item = NU ? NU.convCreate(convStore, id, Date.now()) : null;
+    if (item) {
+      item.provider = storedProvider();
+      item.model = storedModel();
+      saveConvStore();
+    }
+    if (currentRoute() !== "chat") location.hash = "#/chat";
+    else render();
+  },
+  askAi: function () {
+    window.__neutronFocusComposer = true;
+    if (currentRoute() !== "chat") location.hash = "#/chat";
+    else if (ChatHooks.focusComposer) ChatHooks.focusComposer();
+  },
+  searchHistory: function () {
+    window.__neutronFocusHistSearch = true;
+    if (currentRoute() !== "chat") location.hash = "#/chat";
+    else if (ChatHooks.focusHistorySearch) ChatHooks.focusHistorySearch();
+  },
+  cycleTheme: function () {
+    var ids = ["system"].concat(THEME_IDS);
+    var cur = storedTheme();
+    var next = ids[(ids.indexOf(cur) + 1) % ids.length] || "system";
+    setStoredTheme(next);
+    applyTheme();
+    var label = next === "system" ? "System" :
+      (THEMES.filter(function (t) { return t.id === next; })[0] || {}).name || next;
+    toast("Theme: " + label);
+  },
+};
 
 document.addEventListener("DOMContentLoaded", function () {
   if (!location.hash) location.hash = "#/dashboard";

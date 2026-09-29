@@ -848,6 +848,270 @@
   }
 
   /* ========================================================================
+     Universal search + command palette (Phases 14+15) — pure helpers.
+     The DOM overlay lives in palette.js. Indexes are built once per
+     palette open from the device-local stores; excerpts are capped so no
+     full message bodies sit in the index, and snippets are extracted from
+     the capped excerpt on demand.
+     ======================================================================== */
+
+  /**
+   * Group order + labels for universal search results.
+   */
+  var PALETTE_GROUPS = [
+    { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
+    { id: "chats", label: "Chats", icon: "\uD83D\uDCAC" },
+    { id: "files", label: "Files", icon: "\uD83D\uDCC4" },
+    { id: "rooms", label: "Rooms", icon: "\uD83D\uDC65" },
+    { id: "runs", label: "Agent runs", icon: "\uD83E\uDD16" },
+    { id: "checkpoints", label: "Checkpoints", icon: "\uD83D\uDCF8" },
+    { id: "github", label: "GitHub", icon: "\uD83D\uDC19" },
+  ];
+
+  function paletteGroupDef(id) {
+    for (var i = 0; i < PALETTE_GROUPS.length; i++) {
+      if (PALETTE_GROUPS[i].id === id) return PALETTE_GROUPS[i];
+    }
+    return { id: id, label: id, icon: "\u2022" };
+  }
+
+  function paletteStr(v, cap) {
+    var s = String(v == null ? "" : v);
+    return cap && s.length > cap ? s.slice(0, cap) : s;
+  }
+
+  /**
+   * Build a flat lightweight index from prepared source arrays.
+   * sources: {
+   *   conversations: [{id,title,updatedAt,archived,excerpt}],
+   *   projects: [{id,name,updatedAt,memoryText}],
+   *   rooms: [{code,name}],
+   *   runs: [{id,goal,repo,status,createdAt}],
+   *   checkpoints: [{id,label,repo,createdAt}],
+   *   files: [{repo,path}],
+   *   githubRepos: [{fullName,description,htmlUrl}]
+   * }
+   * Entry: {key,group,title,detail,text,body,ts,ref}. `text` is the
+   * lowercased haystack; `body` is capped original text for snippets.
+   */
+  function paletteBuildIndex(sources) {
+    var s = sources || {};
+    var entries = [];
+    function push(group, key, title, detail, bodyText, ts, ref) {
+      var t = paletteStr(title, 200) || "(untitled)";
+      var body = paletteStr(bodyText, 400);
+      entries.push({
+        key: group + ":" + key,
+        group: group,
+        title: t,
+        detail: paletteStr(detail, 160),
+        text: (t + " " + body).toLowerCase(),
+        body: body,
+        ts: Number(ts) || 0,
+        ref: ref || null,
+      });
+    }
+    (s.conversations || []).forEach(function (c) {
+      if (!c || c.archived) return;
+      var nowMs = Date.now();
+      push("chats", c.id, c.title || "Untitled chat",
+        "Chat" + (c.updatedAt ? " \u00B7 " + relativeTime(c.updatedAt, nowMs) : ""),
+        c.excerpt, c.updatedAt || c.createdAt, { id: c.id });
+    });
+    (s.projects || []).forEach(function (p) {
+      if (!p) return;
+      push("projects", p.id, p.name || "Untitled project", "Project",
+        p.memoryText, p.updatedAt || p.createdAt, { id: p.id });
+    });
+    (s.rooms || []).forEach(function (r) {
+      if (!r || !r.code) return;
+      push("rooms", r.code, r.name || r.code, "Room \u00B7 " + r.code,
+        r.code + " " + (r.name || ""), 0, { code: r.code });
+    });
+    (s.runs || []).forEach(function (r) {
+      if (!r || !r.id) return;
+      push("runs", r.id, paletteStr(r.goal, 120) || "Agent run",
+        "Agent run" + (r.status ? " \u00B7 " + r.status : "") + (r.repo ? " \u00B7 " + r.repo : ""),
+        r.goal, Date.parse(r.createdAt) || 0, { id: r.id });
+    });
+    (s.checkpoints || []).forEach(function (c) {
+      if (!c || !c.id) return;
+      push("checkpoints", c.repo + ":" + c.id, c.label || "Checkpoint",
+        "Checkpoint" + (c.repo ? " \u00B7 " + c.repo : ""),
+        c.label, Date.parse(c.createdAt) || 0, { id: c.id, repo: c.repo });
+    });
+    (s.files || []).forEach(function (f, i) {
+      if (!f || !f.path) return;
+      var label = (f.repo ? f.repo + "/" : "") + f.path;
+      push("files", i + ":" + label, f.path.split("/").pop(), label,
+        label, 0, { repo: f.repo, path: f.path });
+    });
+    (s.githubRepos || []).forEach(function (g) {
+      if (!g || !g.fullName) return;
+      push("github", g.fullName, g.fullName, g.description || "GitHub repository",
+        g.fullName + " " + (g.description || ""), 0, { fullName: g.fullName, htmlUrl: g.htmlUrl });
+    });
+    return entries;
+  }
+
+  /**
+   * Score a (title, haystack) pair against a raw query. 0 = no match.
+   * Title matches beat body matches; prefix/word-boundary beats substring.
+   */
+  function paletteScore(title, haystack, query) {
+    var q = String(query == null ? "" : query).trim().toLowerCase();
+    if (!q) return 0;
+    var t = String(title || "").toLowerCase();
+    var h = String(haystack || "").toLowerCase();
+    if (t === q) return 100;
+    if (t.indexOf(q) === 0) return 80;
+    var words = t.split(/[^a-z0-9]+/);
+    for (var i = 0; i < words.length; i++) {
+      if (words[i].indexOf(q) === 0 && words[i]) return 70;
+    }
+    if (t.indexOf(q) !== -1) return 60;
+    if (h.indexOf(q) !== -1) return 30;
+    return 0;
+  }
+
+  /**
+   * Extract a ~90-char snippet around the first case-insensitive match.
+   * Returns "" when there is no match.
+   */
+  function paletteSnippet(text, query, len) {
+    var s = String(text == null ? "" : text);
+    var q = String(query == null ? "" : query).trim().toLowerCase();
+    if (!s || !q) return "";
+    var idx = s.toLowerCase().indexOf(q);
+    if (idx === -1) return "";
+    var n = len || 90;
+    var half = Math.floor((n - q.length) / 2);
+    var start = Math.max(0, idx - half);
+    var end = Math.min(s.length, idx + q.length + half);
+    var out = s.slice(start, end).replace(/\s+/g, " ").trim();
+    if (start > 0) out = "\u2026" + out;
+    if (end < s.length) out = out + "\u2026";
+    return out;
+  }
+
+  /**
+   * Search flat entries. Returns [{group, items:[{entry,score,snippet}]}]
+   * in PALETTE_GROUPS order, non-empty groups only. opts.perGroup caps
+   * items per group (default 5).
+   */
+  function paletteSearch(entries, query, opts) {
+    var q = String(query == null ? "" : query).trim();
+    if (!q) return [];
+    var perGroup = (opts && opts.perGroup) || 5;
+    var scored = [];
+    (entries || []).forEach(function (e) {
+      if (!e) return;
+      var score = paletteScore(e.title, e.text, q);
+      if (score > 0) scored.push({ entry: e, score: score });
+    });
+    scored.sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      var tl = a.entry.title.length - b.entry.title.length;
+      if (tl !== 0) return tl;
+      return (b.entry.ts || 0) - (a.entry.ts || 0);
+    });
+    var byGroup = {};
+    scored.forEach(function (r) {
+      var g = r.entry.group;
+      if (!byGroup[g]) byGroup[g] = [];
+      if (byGroup[g].length < perGroup) {
+        r.snippet = paletteSnippet(r.entry.body || r.entry.title, q);
+        byGroup[g].push(r);
+      }
+    });
+    var out = [];
+    PALETTE_GROUPS.forEach(function (g) {
+      if (byGroup[g.id] && byGroup[g.id].length) {
+        out.push({ group: g, items: byGroup[g.id] });
+      }
+    });
+    return out;
+  }
+
+  /**
+   * Static command metadata for the palette's `>` command mode.
+   * Runners live in palette.js (they need the DOM + app bridge); this is
+   * pure data so filtering stays unit-testable.
+   */
+  var PALETTE_COMMAND_DEFS = [
+    { id: "new-chat", title: "New Chat", hint: "Ctrl+Shift+N", keywords: "chat conversation new task start" },
+    { id: "ask-ai", title: "Ask AI", hint: "", keywords: "ai ask assistant question chat" },
+    { id: "search-history", title: "Search Chat History", hint: "", keywords: "history search find chat" },
+    { id: "new-project", title: "New Project", hint: "", keywords: "project create new workspace brain" },
+    { id: "new-agent-run", title: "New Agent Run", hint: "", keywords: "agent run autonomous goal implement" },
+    { id: "review-changes", title: "Review Changes", hint: "", keywords: "review diff changes agent approve" },
+    { id: "create-checkpoint", title: "Create Checkpoint", hint: "", keywords: "checkpoint snapshot save backup" },
+    { id: "create-room", title: "Create Room", hint: "", keywords: "room create collaboration share" },
+    { id: "join-room", title: "Join Room", hint: "", keywords: "room join collaborate code invite" },
+    { id: "open-terminal", title: "Open Terminal", hint: "", keywords: "terminal shell command console" },
+    { id: "run-tests", title: "Run Tests", hint: "", keywords: "test lab run tests verify" },
+    { id: "start-maintain", title: "Start Maintenance", hint: "", keywords: "maintain maintenance analyze plan" },
+    { id: "open-dashboard", title: "Open Dashboard", hint: "", keywords: "dashboard home overview" },
+    { id: "open-reports", title: "Open Reports", hint: "", keywords: "reports jobs history results" },
+    { id: "open-security", title: "Open Security Center", hint: "", keywords: "security vulnerabilities scan findings" },
+    { id: "open-deps", title: "Open Dependencies", hint: "", keywords: "dependencies packages updates outdated" },
+    { id: "open-health", title: "Open Project Health", hint: "", keywords: "health status project dashboard" },
+    { id: "toggle-theme", title: "Toggle Theme", hint: "", keywords: "theme dark light appearance color" },
+    { id: "open-settings", title: "Open Settings", hint: "", keywords: "settings preferences configuration" },
+  ];
+
+  /**
+   * Filter command defs by a query (the `>` prefix is stripped by the
+   * caller). Empty query → all defs in order. Ranked: title-prefix >
+   * title-substring > keyword match.
+   */
+  function paletteFilterCommands(defs, query) {
+    var list = Array.isArray(defs) ? defs : PALETTE_COMMAND_DEFS;
+    var q = String(query == null ? "" : query).replace(/^>\s*/, "").trim().toLowerCase();
+    if (!q) return list.slice();
+    var out = [];
+    list.forEach(function (c) {
+      if (!c || !c.id) return;
+      var t = String(c.title || "").toLowerCase();
+      var k = String(c.keywords || "").toLowerCase();
+      var score = 0;
+      if (t.indexOf(q) === 0) score = 3;
+      else if (t.indexOf(q) !== -1) score = 2;
+      else if (k.split(/\s+/).some(function (w) { return w.indexOf(q) === 0; })) score = 1;
+      else if (k.indexOf(q) !== -1) score = 1;
+      if (score > 0) out.push({ def: c, score: score });
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out.map(function (r) { return r.def; });
+  }
+
+  /**
+   * Pure list-navigation for the palette: move `delta` steps from `cur`
+   * within [0, count). `cur` of -1 means "nothing selected" — moving down
+   * selects the first item. Returns -1 when count is 0.
+   */
+  function paletteMoveSelection(cur, delta, count) {
+    if (!count || count <= 0) return -1;
+    var next = (typeof cur === "number" ? cur : -1) + delta;
+    if (next < 0) next = 0;
+    if (next > count - 1) next = count - 1;
+    return next;
+  }
+
+  /**
+   * Heuristic: does the query look like a filename/path? The palette only
+   * fetches the (Node-only) workspace file listing for such queries, so
+   * plain word searches never pay for it.
+   */
+  function looksLikeFileQuery(q) {
+    var s = String(q == null ? "" : q).trim();
+    if (!s) return false;
+    if (s.indexOf("/") !== -1 || s.indexOf("\\") !== -1) return true;
+    /* "app.tsx", ".gitignore", "Dockerfile." — a dot with text around it. */
+    return /\.[a-z0-9]{1,8}$/i.test(s) || /^\.[a-z0-9]+/i.test(s);
+  }
+
+  /* ========================================================================
      Collaborative editing (Phase 2) — pure helpers for the Yjs binding.
      ======================================================================== */
 
@@ -2319,6 +2583,17 @@
     convDuplicate: convDuplicate,
     convTouch: convTouch,
     mostRecentConvId: mostRecentConvId,
+    /* universal search + command palette (Phases 14+15) */
+    PALETTE_GROUPS: PALETTE_GROUPS,
+    PALETTE_COMMAND_DEFS: PALETTE_COMMAND_DEFS,
+    paletteGroupDef: paletteGroupDef,
+    paletteBuildIndex: paletteBuildIndex,
+    paletteScore: paletteScore,
+    paletteSnippet: paletteSnippet,
+    paletteSearch: paletteSearch,
+    paletteFilterCommands: paletteFilterCommands,
+    paletteMoveSelection: paletteMoveSelection,
+    looksLikeFileQuery: looksLikeFileQuery,
     /* collaborative editing (Phase 2) */
     b64encodeBytes: b64encodeBytes,
     b64decodeBytes: b64decodeBytes,

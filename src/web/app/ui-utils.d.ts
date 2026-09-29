@@ -258,6 +258,41 @@ export declare function convTouch(
   firstUserFiles?: Array<{ name?: string } | null> | null
 ): boolean;
 
+/* Universal search + command palette (Phases 14+15). */
+export interface PaletteGroupDef { id: string; label: string; icon: string }
+export interface PaletteEntry {
+  key: string; group: string; title: string; detail: string;
+  text: string; body: string; ts: number; ref: any;
+}
+export interface PaletteHit { entry: PaletteEntry; score: number; snippet: string }
+export interface PaletteGroup { group: PaletteGroupDef; items: PaletteHit[] }
+export interface PaletteCommandDef { id: string; title: string; hint: string; keywords: string }
+export declare const PALETTE_GROUPS: PaletteGroupDef[];
+export declare const PALETTE_COMMAND_DEFS: PaletteCommandDef[];
+export declare function paletteGroupDef(id: string): PaletteGroupDef;
+export declare function paletteBuildIndex(sources: {
+  conversations?: Array<{ id: string; title?: string; updatedAt?: number; createdAt?: number; archived?: boolean; excerpt?: string }>;
+  projects?: Array<{ id: string; name?: string; updatedAt?: number; createdAt?: number; memoryText?: string }>;
+  rooms?: Array<{ code: string; name?: string }>;
+  runs?: Array<{ id: string; goal?: string; repo?: string; status?: string; createdAt?: string }>;
+  checkpoints?: Array<{ id: string; label?: string; repo?: string; createdAt?: string }>;
+  files?: Array<{ repo?: string; path?: string }>;
+  githubRepos?: Array<{ fullName: string; description?: string; htmlUrl?: string }>;
+}): PaletteEntry[];
+export declare function paletteScore(title: string, haystack: string, query: string | null | undefined): number;
+export declare function paletteSnippet(text: string | null | undefined, query: string | null | undefined, len?: number): string;
+export declare function paletteSearch(
+  entries: PaletteEntry[] | null | undefined,
+  query: string | null | undefined,
+  opts?: { perGroup?: number }
+): PaletteGroup[];
+export declare function paletteFilterCommands(
+  defs: PaletteCommandDef[] | null | undefined,
+  query: string | null | undefined
+): PaletteCommandDef[];
+export declare function paletteMoveSelection(cur: number, delta: number, count: number): number;
+export declare function looksLikeFileQuery(q: string | null | undefined): boolean;
+
 /* Collaboration rooms (Phase 1): pure client helpers. */
 export declare function normalizeRoomCode(code: unknown): string;
 export declare function isValidRoomCode(code: unknown): boolean;
