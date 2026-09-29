@@ -181,3 +181,64 @@ describe("stripAttachmentData", () => {
     expect(stripAttachmentData(42)).toBe(42);
   });
 });
+
+describe("copyText", () => {
+  const { copyText } = uiUtils;
+
+  it("uses navigator.clipboard.writeText when available", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const ok = await copyText("hello", { navigator: { clipboard: { writeText } } });
+    expect(ok).toBe(true);
+    expect(writeText).toHaveBeenCalledWith("hello");
+  });
+
+  it("falls back to execCommand when clipboard.writeText rejects", async () => {
+    const removed: any[] = [];
+    const ta = {
+      value: "",
+      style: {} as any,
+      setAttribute: vi.fn(),
+      select: vi.fn(),
+      parentNode: { removeChild: vi.fn((c: any) => { removed.push(c); }) },
+    };
+    const fakeDoc = {
+      createElement: vi.fn(() => ta),
+      body: { appendChild: vi.fn() },
+      execCommand: vi.fn(() => true),
+    };
+    const ok = await copyText("fallback", {
+      navigator: { clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } },
+      document: fakeDoc,
+    });
+    expect(ok).toBe(true);
+    expect(ta.value).toBe("fallback");
+    expect(fakeDoc.execCommand).toHaveBeenCalledWith("copy");
+    expect(removed).toContain(ta);
+  });
+
+  it("falls back to execCommand when no clipboard API exists", async () => {
+    const ta: any = {
+      value: "", style: {}, setAttribute: vi.fn(), select: vi.fn(),
+      parentNode: null,
+    };
+    const fakeDoc = {
+      createElement: vi.fn(() => ta),
+      body: { appendChild: vi.fn() },
+      execCommand: vi.fn(() => false),
+    };
+    const ok = await copyText("x", { navigator: {}, document: fakeDoc });
+    expect(ok).toBe(false);
+  });
+
+  it("returns false when nothing is available", async () => {
+    const ok = await copyText("x", { navigator: {}, document: undefined });
+    expect(ok).toBe(false);
+  });
+
+  it("coerces non-string input", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const ok = await copyText(null as any, { navigator: { clipboard: { writeText } } });
+    expect(ok).toBe(true);
+    expect(writeText).toHaveBeenCalledWith("");
+  });
+});

@@ -702,6 +702,13 @@ body.chat-full .view {
 }
 .chat-fine { margin: 0; }
 .msg .retry-btn { margin-top: 8px; align-self: flex-start; }
+.msg .msg-copy {
+  margin-top: 6px;
+  align-self: flex-start;
+  padding: 4px 12px;
+  font-size: 12px;
+  min-height: 0;
+}
 
 /* ---- file artifact cards ---- */
 .artifact-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }

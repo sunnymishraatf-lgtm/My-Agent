@@ -27,3 +27,8 @@ export declare function fetchWithTimeout(
 ): Promise<any>;
 
 export declare function stripAttachmentData<T>(value: T): T;
+
+export declare function copyText(
+  text: string | null | undefined,
+  deps?: { navigator?: any; document?: any }
+): Promise<boolean>;

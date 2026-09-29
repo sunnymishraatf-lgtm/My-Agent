@@ -1225,6 +1225,24 @@ async function renderChat(view) {
       });
     }
     wrap.appendChild(bubble);
+    if (m.role === "assistant" && m.text) {
+      var copyBtn = el("button", "btn ghost sm msg-copy", "Copy");
+      copyBtn.setAttribute("aria-label", "Copy message to clipboard");
+      copyBtn.onclick = function () {
+        var UI = window.NeutronUI;
+        var btn = copyBtn;
+        function done(ok) {
+          btn.textContent = ok ? "Copied ✓" : "Copy failed";
+          setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+        }
+        if (UI && UI.copyText) {
+          UI.copyText(m.text).then(done, function () { done(false); });
+        } else {
+          done(false);
+        }
+      };
+      wrap.appendChild(copyBtn);
+    }
     if (m.role === "assistant" && m.artifacts && m.artifacts.length) {
       wrap.appendChild(artifactCards(m.artifacts));
     }

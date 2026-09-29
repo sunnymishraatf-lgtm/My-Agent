@@ -120,6 +120,51 @@
     return value;
   }
 
+  /**
+   * Copy text to the clipboard. Tries the async Clipboard API first, then
+   * falls back to a hidden textarea + execCommand (for older WebViews /
+   * non-secure contexts). `deps` lets tests inject fakes:
+   * { navigator, document }. Resolves true on success, false otherwise.
+   */
+  function copyText(text, deps) {
+    deps = deps || {};
+    var nav = deps.navigator || (typeof navigator !== "undefined" ? navigator : undefined);
+    var doc = deps.document || (typeof document !== "undefined" ? document : undefined);
+    var s = text == null ? "" : String(text);
+    function viaExecCommand() {
+      try {
+        if (!doc || !doc.createElement || !doc.body) return false;
+        var ta = doc.createElement("textarea");
+        ta.value = s;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        doc.body.appendChild(ta);
+        if (typeof ta.select === "function") ta.select();
+        var ok = false;
+        try {
+          ok = doc.execCommand ? !!doc.execCommand("copy") : false;
+        } catch (e) { ok = false; }
+        if (ta.parentNode) ta.parentNode.removeChild(ta);
+        return ok;
+      } catch (e) { return false; }
+    }
+    try {
+      if (nav && nav.clipboard && typeof nav.clipboard.writeText === "function") {
+        return Promise.resolve().then(function () {
+          return nav.clipboard.writeText(s);
+        }).then(function () { return true; }, function () {
+          return viaExecCommand();
+        });
+      }
+    } catch (e) { /* fall through to execCommand */ }
+    try {
+      return Promise.resolve(viaExecCommand());
+    } catch (e) {
+      return Promise.resolve(false);
+    }
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -127,5 +172,6 @@
     shouldRefreshPill: shouldRefreshPill,
     fetchWithTimeout: fetchWithTimeout,
     stripAttachmentData: stripAttachmentData,
+    copyText: copyText,
   };
 });
