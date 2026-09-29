@@ -1605,7 +1605,10 @@ async function renderChat(view) {
     if (!voiceSpeakEnabled() || !synthSupported) return;
     try {
       window.speechSynthesis.cancel();
-      var u = new SpeechSynthesisUtterance(String(text || "").slice(0, 1200));
+      /* Read words, not markdown syntax. */
+      var UI = window.NeutronUI;
+      var plain = (UI && UI.stripMarkdownForSpeech) ? UI.stripMarkdownForSpeech(text) : String(text || "");
+      var u = new SpeechSynthesisUtterance(plain.slice(0, 1200));
       window.speechSynthesis.speak(u);
     } catch (e) { /* unsupported voice */ }
   }

@@ -388,3 +388,28 @@ describe("renderMarkdown", () => {
     expect(out).toContain("<strong>bold</strong>");
   });
 });
+
+describe("stripMarkdownForSpeech", () => {
+  const { stripMarkdownForSpeech } = uiUtils;
+  it("drops bold/italic markers", () => {
+    expect(stripMarkdownForSpeech("This is **bold** and *italic* text")).toBe("This is bold and italic text");
+  });
+  it("replaces fenced code blocks with a placeholder", () => {
+    const out = stripMarkdownForSpeech("Here:\n```js\nconst x = 1;\n```\nDone");
+    expect(out).toContain("[code block]");
+    expect(out).not.toContain("const x = 1");
+  });
+  it("strips inline code backticks but keeps the words", () => {
+    expect(stripMarkdownForSpeech("Use `npm run build` now")).toBe("Use npm run build now");
+  });
+  it("reads links as their text", () => {
+    expect(stripMarkdownForSpeech("See [the docs](https://example.com/x)")).toBe("See the docs");
+  });
+  it("strips headings and bullets", () => {
+    expect(stripMarkdownForSpeech("## Title\n- one\n- two")).toBe("Title\none\ntwo");
+  });
+  it("handles null/undefined", () => {
+    expect(stripMarkdownForSpeech(null)).toBe("");
+    expect(stripMarkdownForSpeech(undefined)).toBe("");
+  });
+});

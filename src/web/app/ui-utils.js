@@ -297,6 +297,26 @@
     return s;
   }
 
+  /* Strip markdown syntax for text-to-speech: the voice reader must hear
+     words, not "asterisk asterisk". Fenced code blocks become a short
+     placeholder; inline formatting is dropped; links read as their text. */
+  function stripMarkdownForSpeech(src) {
+    var s = String(src == null ? "" : src);
+    s = s.replace(/```[\s\S]*?```/g, " [code block] ");
+    s = s.replace(/`([^`]*)`/g, "$1");
+    s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+    s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1");
+    s = s.replace(/(\*\*|__)(.*?)\1/g, "$2");
+    s = s.replace(/(^|\W)\*(\S[^*]*\S)\*(?=\W|$)/g, "$1$2");
+    s = s.replace(/(^|\W)_(\S[^_]*\S)_(?=\W|$)/g, "$1$2");
+    s = s.replace(/^#{1,6}\s+/gm, "");
+    s = s.replace(/^>\s?/gm, "");
+    s = s.replace(/^\s*[-*+]\s+/gm, "");
+    s = s.replace(/[ \t]+/g, " ");
+    s = s.replace(/\n{3,}/g, "\n\n");
+    return s.trim();
+  }
+
 
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
@@ -311,5 +331,6 @@
     isValidWizardState: isValidWizardState,
     sanitizeChatHistory: sanitizeChatHistory,
     renderMarkdown: renderMarkdown,
+    stripMarkdownForSpeech: stripMarkdownForSpeech,
   };
 });

@@ -42,3 +42,5 @@ export declare function isValidWizardState(obj: any, validSteps: string[]): bool
 export declare function sanitizeChatHistory(messages: any, cap?: number): any[];
 
 export declare function renderMarkdown(src: string | null | undefined): string;
+
+export declare function stripMarkdownForSpeech(src: string | null | undefined): string;
