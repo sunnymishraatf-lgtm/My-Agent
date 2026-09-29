@@ -165,6 +165,20 @@
     }
   }
 
+  /**
+   * Format a millisecond epoch as a local "HH:MM" 24h clock string.
+   * Returns "" for invalid input. Pure — safe to test.
+   */
+  function fmtTime(ts) {
+    try {
+      if (ts === null || ts === undefined || ts === "") return "";
+      var d = new Date(Number(ts));
+      if (isNaN(d.getTime())) return "";
+      function p(n) { return (n < 10 ? "0" : "") + n; }
+      return p(d.getHours()) + ":" + p(d.getMinutes());
+    } catch (e) { return ""; }
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -173,5 +187,6 @@
     fetchWithTimeout: fetchWithTimeout,
     stripAttachmentData: stripAttachmentData,
     copyText: copyText,
+    fmtTime: fmtTime,
   };
 });

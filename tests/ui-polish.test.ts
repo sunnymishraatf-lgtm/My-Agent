@@ -242,3 +242,25 @@ describe("copyText", () => {
     expect(writeText).toHaveBeenCalledWith("");
   });
 });
+
+describe("fmtTime", () => {
+  const { fmtTime } = uiUtils;
+
+  it("formats an epoch as HH:MM", () => {
+    // 2026-09-29T14:05:00 local — construct from parts to avoid TZ issues
+    const d = new Date(2026, 8, 29, 14, 5, 0);
+    expect(fmtTime(d.getTime())).toBe("14:05");
+  });
+
+  it("zero-pads single digits", () => {
+    const d = new Date(2026, 8, 29, 9, 7, 0);
+    expect(fmtTime(d.getTime())).toBe("09:07");
+  });
+
+  it("returns empty string for invalid input", () => {
+    expect(fmtTime(NaN)).toBe("");
+    expect(fmtTime(null as any)).toBe("");
+    expect(fmtTime(undefined as any)).toBe("");
+    expect(fmtTime("garbage")).toBe("");
+  });
+});

@@ -32,3 +32,5 @@ export declare function copyText(
   text: string | null | undefined,
   deps?: { navigator?: any; document?: any }
 ): Promise<boolean>;
+
+export declare function fmtTime(ts: number | string | null | undefined): string;

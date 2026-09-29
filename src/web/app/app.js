@@ -1217,7 +1217,12 @@ async function renderChat(view) {
      paint() does a full render with a cap for very long histories. ----- */
   function buildMsgEl(m) {
     var wrap = el("div", "msg " + m.role);
-    wrap.appendChild(el("div", "who", m.role === "user" ? "YOU" : "NEUTRON"));
+    var whoRow = el("div", "who-row");
+    whoRow.appendChild(el("span", "who", m.role === "user" ? "YOU" : "NEUTRON"));
+    var UI = window.NeutronUI;
+    var tstr = (UI && UI.fmtTime) ? UI.fmtTime(m.ts) : "";
+    if (tstr) whoRow.appendChild(el("span", "msg-ts", tstr));
+    wrap.appendChild(whoRow);
     var bubble = el("div", "bubble", m.text);
     if (m.role === "user" && m.files && m.files.length) {
       m.files.forEach(function (f) {
@@ -1501,14 +1506,14 @@ async function renderChat(view) {
     /* No silent default: chat needs an explicit provider choice. */
     if (!storedProvider()) {
       var hint = "Please select a provider in Settings first — NEUTRON never picks one for you.";
-      chatState.messages.push({ role: "user", text: text || "(attachment)" });
+      chatState.messages.push({ role: "user", text: text || "(attachment)", ts: Date.now() });
       appendMsg(chatState.messages[chatState.messages.length - 1]);
-      chatState.messages.push({ role: "assistant", text: hint });
+      chatState.messages.push({ role: "assistant", text: hint, ts: Date.now() });
       appendMsg(chatState.messages[chatState.messages.length - 1]);
       showError(hint);
       return;
     }
-    var umsg = { role: "user", text: text || "(sent with attachments)" };
+    var umsg = { role: "user", text: text || "(sent with attachments)", ts: Date.now() };
     if (files.length) {
       umsg.files = files.map(function (f) { return { name: f.name, size: f.size }; });
     }
@@ -1541,7 +1546,7 @@ async function renderChat(view) {
     showTyping();
     try {
       var res = await api("POST", "/api/chat", chatBody);
-      var amsg = { role: "assistant", text: res.text || "(empty reply)" };
+      var amsg = { role: "assistant", text: res.text || "(empty reply)", ts: Date.now() };
       if (res.artifacts && res.artifacts.length) amsg.artifacts = res.artifacts;
       chatState.messages.push(amsg);
       clearError();
@@ -1549,7 +1554,7 @@ async function renderChat(view) {
       speak(amsg.text);
     } catch (e) {
       var msg = e && e.message ? e.message : String(e);
-      chatState.messages.push({ role: "assistant", text: "Error: " + msg, failed: true });
+      chatState.messages.push({ role: "assistant", text: "Error: " + msg, failed: true, ts: Date.now() });
       showError(msg);
       lastFailedBody = chatBody;
       /* Never read error text aloud — only real replies get spoken. */

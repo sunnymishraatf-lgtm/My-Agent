@@ -496,6 +496,12 @@ ul.list li.warn { border-color: #F0C98A; background: #FFFBEB; }
   box-shadow: var(--shadow-md);
 }
 .msg { margin-bottom: 16px; max-width: 85%; }
+.msg .who-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
 .msg .who {
   font-family: var(--mono);
   font-size: 11px;
@@ -503,7 +509,12 @@ ul.list li.warn { border-color: #F0C98A; background: #FFFBEB; }
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-3);
-  margin-bottom: 6px;
+}
+.msg .msg-ts {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  opacity: 0.75;
 }
 .msg .bubble {
   border-radius: var(--r-card);
