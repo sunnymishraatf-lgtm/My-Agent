@@ -336,6 +336,19 @@ describe("sanitizeChatHistory", () => {
     expect(out[0].artifacts[0].path).toBe("f.txt");
   });
 
+  it("preserves attachment file metadata (names/sizes only)", () => {
+    const out: any = sanitizeChatHistory([{
+      role: "user", text: "",
+      files: [
+        { name: "a.png", size: 1234 },
+        { name: "b.zip", size: 5678, data: "should-be-stripped" },
+      ],
+    }]);
+    expect(out[0].files.length).toBe(2);
+    expect(out[0].files[0]).toEqual({ name: "a.png", size: 1234 });
+    expect(out[0].files[1].data).toBeUndefined();
+  });
+
   it("returns [] for invalid input", () => {
     expect(sanitizeChatHistory(null as any)).toEqual([]);
     expect(sanitizeChatHistory("x" as any)).toEqual([]);

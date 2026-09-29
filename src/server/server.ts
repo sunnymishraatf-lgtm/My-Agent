@@ -323,6 +323,12 @@ function parseExecution(value: unknown, fallback: "plan-only" | "implement-and-t
   );
 }
 
+/** True when a chat body carries attachments — an attachment-only request
+    (no text message) is valid; the merger synthesizes a user turn. */
+function hasChatAttachments(b: { attachments?: unknown }): boolean {
+  return Array.isArray(b.attachments) && (b.attachments as unknown[]).length > 0;
+}
+
 /** Session/snapshot ids are `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`; anything else is a 400, never a filesystem path. */
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -860,7 +866,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
           role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
           content: (m.content as string).slice(0, 8000),
         }));
-      if (!messages.some((m) => m.role === "user")) {
+      if (!messages.some((m) => m.role === "user") && !hasChatAttachments(body)) {
         sendJson(res, 400, { ok: false, error: "No user message provided" });
         return;
       }

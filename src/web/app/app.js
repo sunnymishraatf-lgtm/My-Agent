@@ -1384,7 +1384,13 @@ async function renderChat(view) {
     if (m.role === "assistant" && UI && UI.renderMarkdown) {
       bubble.innerHTML = UI.renderMarkdown(m.text);
     } else {
-      bubble.textContent = m.text;
+      /* Textless attachment sends show a display-only label; the raw
+         text stays "" so no placeholder leaks into the LLM context. */
+      var displayText = m.text;
+      if (!displayText && m.role === "user" && m.files && m.files.length) {
+        displayText = "(sent with attachments)";
+      }
+      bubble.textContent = displayText;
     }
     if (m.role === "user" && m.files && m.files.length) {
       m.files.forEach(function (f) {
@@ -1673,25 +1679,34 @@ async function renderChat(view) {
     /* No silent default: chat needs an explicit provider choice. */
     if (!storedProvider()) {
       var hint = "Please select a provider in Settings first — NEUTRON never picks one for you.";
-      chatState.messages.push({ role: "user", text: text || "(attachment)", ts: Date.now() });
+      chatState.messages.push({ role: "user", text: text, ts: Date.now(), local: true });
       appendMsg(chatState.messages[chatState.messages.length - 1]);
       chatState.messages.push({ role: "assistant", text: hint, ts: Date.now(), local: true });
       appendMsg(chatState.messages[chatState.messages.length - 1]);
       showError(hint);
       return;
     }
-    var umsg = { role: "user", text: text || "(sent with attachments)", ts: Date.now() };
+    var umsg = { role: "user", text: text, ts: Date.now() };
     if (files.length) {
       umsg.files = files.map(function (f) { return { name: f.name, size: f.size }; });
     }
     chatState.messages.push(umsg);
     appendMsg(umsg);
     /* Failed sends and local-only hints are display-only: never let the
-       model see "Error: ..." as if it were its own prior reply. */
+       model see "Error: ..." as if it were its own prior reply.
+       Textless attachment sends keep text "" here — the "(sent with
+       attachments)" label is display-only (buildMsgEl). History turns
+       get an honest file list instead of a fake placeholder. */
     var chatBody = {
       messages: chatState.messages
         .filter(function (m) { return !m.failed && !m.local; })
-        .map(function (m) { return { role: m.role, content: m.text }; }),
+        .map(function (m) {
+          var content = m.text;
+          if (!content && m.files && m.files.length) {
+            content = "[attached files: " + m.files.map(function (f) { return f.name; }).join(", ") + "]";
+          }
+          return { role: m.role, content: content };
+        }),
     };
     var cm = storedModel();
     if (cm) chatBody.model = cm;

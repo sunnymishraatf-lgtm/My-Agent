@@ -321,3 +321,25 @@ describe("NeutronZip round-trip", () => {
     expect(out.notes.join("\n")).toContain("bundle.zip: 2 file(s)");
   });
 });
+
+describe("attachment-only sends (no text)", () => {
+  it("synthesizes a user turn when messages are empty but attachments exist", () => {
+    const { messages } = applyAttachmentsToMessages([], [
+      { name: "a.txt", mime: "text/plain", kind: "text", data: b64("hello") },
+    ]);
+    expect(messages.length).toBe(1);
+    expect(messages[0]!.role).toBe("user");
+    expect(messages[0]!.content as string).toContain("[file: a.txt]");
+    expect(messages[0]!.content as string).toContain("hello");
+  });
+
+  it("never includes UI placeholder text in the merged content", () => {
+    // The client used to send "(sent with attachments)" as literal content.
+    const { messages } = applyAttachmentsToMessages(
+      [{ role: "user" as const, content: "" }],
+      [{ name: "a.txt", mime: "text/plain", kind: "text", data: b64("x") }],
+    );
+    const c = messages[messages.length - 1]!.content as string;
+    expect(c).not.toContain("(sent with attachments)");
+  });
+});

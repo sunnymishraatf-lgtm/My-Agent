@@ -23,6 +23,12 @@ import { handleApiError, readJsonBody, requireMethod, sendJson, type VercelReque
 
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
+/** True when the body carries attachments — an attachment-only request is
+    valid even with no text message (the merger synthesizes a user turn). */
+function hasAttachments(body: { attachments?: unknown }): boolean {
+  return Array.isArray(body.attachments) && body.attachments.length > 0;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (handlePreflight(req, res)) return;
   if (!requireMethod(req, res, "POST")) return;
@@ -45,7 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         role: m.role === "assistant" ? ("assistant" as const) : m.role === "system" ? ("system" as const) : ("user" as const),
         content: m.content.slice(0, 8000),
       }));
-    if (!messages.some((m) => m.role === "user")) {
+    if (!messages.some((m) => m.role === "user") && !hasAttachments(body)) {
       sendJson(res, 400, { ok: false, error: "No user message provided" });
       return;
     }

@@ -6428,6 +6428,9 @@ var silentLogger = { debug: () => {
 }, warn: () => {
 }, error: () => {
 } };
+function hasAttachments(body) {
+  return Array.isArray(body.attachments) && body.attachments.length > 0;
+}
 async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   if (!requireMethod(req, res, "POST")) return;
@@ -6443,7 +6446,7 @@ async function handler(req, res) {
       role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
       content: m.content.slice(0, 8e3)
     }));
-    if (!messages.some((m) => m.role === "user")) {
+    if (!messages.some((m) => m.role === "user") && !hasAttachments(body)) {
       sendJson(res, 400, { ok: false, error: "No user message provided" });
       return;
     }

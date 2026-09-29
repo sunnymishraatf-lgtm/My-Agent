@@ -238,6 +238,13 @@
       if (typeof m.ts === "number") out.ts = m.ts;
       if (m.failed === true) out.failed = true;
       if (m.local === true) out.local = true;
+      if (Array.isArray(m.files)) {
+        out.files = m.files.slice(0, 5).map(function (f) {
+          if (!f || typeof f !== "object") return null;
+          return { name: String(f.name || "").slice(0, 200), size: Number(f.size) || 0 };
+        }).filter(Boolean);
+        if (!out.files.length) delete out.files;
+      }
       if (Array.isArray(m.artifacts)) {
         out.artifacts = m.artifacts.slice(0, 10).map(function (a) {
           if (!a || typeof a !== "object") return null;
