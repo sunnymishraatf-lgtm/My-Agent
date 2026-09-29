@@ -371,6 +371,16 @@ async function render() {
   void view.offsetWidth;
   view.classList.add("view-enter");
   refreshServerPill();
+  /* Move keyboard/screen-reader focus to the new view's main heading.
+     (Chat is skipped: focusing its composer would pop the mobile keyboard
+     on entry, and its log is already an aria-live region.) */
+  try {
+    var target = route === "chat" ? null : view.querySelector("h1");
+    if (target) {
+      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+      target.focus({ preventScroll: true });
+    }
+  } catch (e) { /* focus is best-effort */ }
 }
 
 window.addEventListener("hashchange", render);

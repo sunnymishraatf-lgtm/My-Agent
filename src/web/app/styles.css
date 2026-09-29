@@ -372,6 +372,9 @@ select.input { cursor: pointer; }
   box-shadow: 0 0 0 3px rgba(204, 128, 102, 0.22);
 }
 
+/* Programmatic route-change focus on headings must not show an outline. */
+h1:focus:not(:focus-visible) { outline: none; }
+
 /* ---- key/value, tables, lists ---- */
 .kv-grid {
   display: grid;
