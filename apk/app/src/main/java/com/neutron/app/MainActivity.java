@@ -9,11 +9,17 @@ import android.webkit.WebViewClient;
 /** NEUTRON — thin native shell around the live NEUTRON web app. */
 public class MainActivity extends Activity {
 
-    private static final String HOME_URL =
-            "https://neutron-agent-9e2rs2rjw-sunny-mishras-projects-7798fe35.vercel.app/app";
+    private static final String FALLBACK_URL =
+            "https://neutron-agent-bpa51fzlt-sunny-mishras-projects-7798fe35.vercel.app/app";
 
     private WebView web;
     private UpdateManager updater;
+
+    /** Backend URL: last resolved deployment, or the baked-in fallback. */
+    private String homeUrl() {
+        return getSharedPreferences("neutron_update", MODE_PRIVATE)
+                .getString(UpdateManager.KEY_BACKEND_URL, FALLBACK_URL);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -32,7 +38,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
         } else {
-            web.loadUrl(HOME_URL);
+            web.loadUrl(homeUrl());
         }
 
         // Self-updater: silently checks GitHub releases for a newer build.

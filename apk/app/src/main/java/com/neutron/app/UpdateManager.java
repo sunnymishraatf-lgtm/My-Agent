@@ -36,6 +36,7 @@ public class UpdateManager {
     private static final long CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000;
     private static final String PREFS = "neutron_update";
     private static final String KEY_LAST_CHECK = "last_check";
+    public static final String KEY_BACKEND_URL = "backend_url";
 
     private final Activity activity;
     private long pendingDownloadId = -1;
@@ -53,6 +54,11 @@ public class UpdateManager {
         if (System.currentTimeMillis() - last < CHECK_INTERVAL_MS) return;
 
         new Thread(() -> {
+            // Keep the backend URL fresh: newest successful deployment wins.
+            String backend = BackendResolver.resolve();
+            if (backend != null) {
+                prefs.edit().putString(KEY_BACKEND_URL, backend).apply();
+            }
             try {
                 HttpURLConnection c =
                         (HttpURLConnection) new URL(RELEASES_URL).openConnection();
