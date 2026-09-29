@@ -702,6 +702,12 @@ label.field { display: block; margin-bottom: 16px; }
 .key-wrap { display: flex; gap: 8px; align-items: center; }
 .key-wrap .input { flex: 1; min-width: 0; }
 .key-wrap .btn { flex: none; }
+/* Dashboard recent-activity lists. */
+.act-list { list-style: none; margin: 0; padding: 0; }
+.act-list li { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.act-list li:last-child { border-bottom: none; }
+.act-list a { color: var(--text); text-decoration: none; font-weight: 600; }
+.act-list a:hover { color: var(--primary); text-decoration: underline; }
 label.field > span {
   display: block;
   font-family: var(--mono);

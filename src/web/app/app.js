@@ -523,6 +523,68 @@ async function renderDashboard(view) {
   mid.appendChild(how);
   view.appendChild(mid);
 
+  /* Recent activity — real data from this browser: latest conversations
+     and maintain runs. Gives the dashboard depth beyond server status. */
+  var UI0 = window.NeutronUI;
+  var act = el("section", "panel");
+  act.appendChild(el("h2", null, "Recent activity"));
+  var actGrid = el("div", "grid cols-2");
+  var nowMs = Date.now();
+
+  var convCol = el("div", null);
+  convCol.appendChild(el("h3", null, "CONVERSATIONS"));
+  try {
+    loadConvStore();
+    var convs = Object.keys(convStore.items || {})
+      .map(function (id) { return convStore.items[id]; })
+      .filter(function (c) { return c && !c.archived; })
+      .sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); })
+      .slice(0, 4);
+    if (!convs.length) {
+      convCol.appendChild(el("p", "muted small", "No conversations yet."));
+    } else {
+      var cl = el("ul", "act-list");
+      convs.forEach(function (c) {
+        var li = el("li", null);
+        var a = el("a", null, UI0 ? UI0.convDisplayTitle(c) : (c.title || "Untitled"));
+        a.href = "#/chat/" + encodeURIComponent(c.id);
+        li.appendChild(a);
+        li.appendChild(el("span", "muted small", " · " + (UI0 ? UI0.relativeTime(c.updatedAt, nowMs) : "")));
+        cl.appendChild(li);
+      });
+      convCol.appendChild(cl);
+    }
+  } catch (e) {
+    convCol.appendChild(el("p", "muted small", "Could not load conversations."));
+  }
+  actGrid.appendChild(convCol);
+
+  var runCol = el("div", null);
+  runCol.appendChild(el("h3", null, "MAINTAIN RUNS"));
+  var runs = jobHistory().slice(0, 4);
+  if (!runs.length) {
+    runCol.appendChild(el("p", "muted small", "No runs recorded yet."));
+  } else {
+    var rl = el("ul", "act-list");
+    runs.forEach(function (x) {
+      var li = el("li", null);
+      var a = el("a", null, (x.request || "Untitled run").slice(0, 42));
+      a.href = "#/reports/" + encodeURIComponent(x.jobId || "");
+      li.appendChild(a);
+      var when = "";
+      if (UI0 && x.createdAt) {
+        var t = Date.parse(x.createdAt);
+        if (!isNaN(t)) when = UI0.relativeTime(t, nowMs);
+      }
+      li.appendChild(el("span", "muted small", " · " + when));
+      rl.appendChild(li);
+    });
+    runCol.appendChild(rl);
+  }
+  actGrid.appendChild(runCol);
+  act.appendChild(actGrid);
+  view.appendChild(act);
+
   var actions = el("section", "panel");
   actions.appendChild(el("h2", null, "Quick actions"));
   var row = el("div", "row");
@@ -1375,6 +1437,17 @@ async function renderChat(view) {
     return;
   }
   chatState.messages = activeConv().messages;
+  /* Deep link: #/chat/<conversationId> opens that conversation
+     (e.g. from the dashboard's recent activity). Unknown or archived
+     ids are ignored — the active conversation stays. */
+  try {
+    var UIdeep = window.NeutronUI;
+    var sub = (location.hash || "").replace(/^#\/?/, "").split("/");
+    if (sub.length > 1 && sub[1] && UIdeep && UIdeep.convSetActive(convStore, decodeURIComponent(sub[1]))) {
+      saveConvStore();
+      chatState.messages = activeConv().messages;
+    }
+  } catch (e) { /* malformed hash — ignore */ }
   var providers = await fetchProviders();
   var byId = {};
   providers.forEach(function (pr) { byId[pr.id] = pr; });

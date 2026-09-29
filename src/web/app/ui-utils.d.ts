@@ -131,6 +131,8 @@ export declare function migrateLegacyChat(
 
 export declare function convGet(store: ConvStore | null | undefined, id: string): Conversation | null;
 
+export declare function convSetActive(store: ConvStore | null | undefined, id: string): boolean;
+
 export declare function mostRecentConvId(store: ConvStore | null | undefined, excludeId: string | null): string | null;
 
 export declare function convCreate(store: ConvStore, id: string, nowMs: number): Conversation | null;

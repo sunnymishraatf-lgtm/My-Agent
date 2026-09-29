@@ -460,3 +460,25 @@ describe("mostRecentConvId", () => {
     expect(ui.mostRecentConvId(null, null)).toBe(null);
   });
 });
+
+describe("convSetActive", () => {
+  it("activates an existing live conversation", () => {
+    const store = mkStore([mkConv("s1"), mkConv("s2")], "s1");
+    expect(ui.convSetActive(store, "s2")).toBe(true);
+    expect(store.activeId).toBe("s2");
+  });
+  it("rejects missing ids and keeps the current active", () => {
+    const store = mkStore([mkConv("s1")], "s1");
+    expect(ui.convSetActive(store, "nope")).toBe(false);
+    expect(store.activeId).toBe("s1");
+  });
+  it("rejects archived conversations", () => {
+    const store = mkStore([mkConv("s1"), mkConv("s2", { archived: true })], "s1");
+    expect(ui.convSetActive(store, "s2")).toBe(false);
+    expect(store.activeId).toBe("s1");
+  });
+  it("handles null store / id safely", () => {
+    expect(ui.convSetActive(null, "x")).toBe(false);
+    expect(ui.convSetActive(mkStore([mkConv("s1")], "s1"), "")).toBe(false);
+  });
+});

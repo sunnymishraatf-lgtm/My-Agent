@@ -677,6 +677,15 @@
     return store.items[id] || null;
   }
 
+  /** Set the active conversation. Returns true only when the id exists
+      and is not archived. Pure — safe to test. */
+  function convSetActive(store, id) {
+    var it = convGet(store, id);
+    if (!it || it.archived) return false;
+    store.activeId = id;
+    return true;
+  }
+
   /** Most recently updated non-archived conversation id (or null). */
   function mostRecentConvId(store, excludeId) {
     if (!store || !store.items) return null;
@@ -1228,6 +1237,7 @@
     sanitizeConversation: sanitizeConversation,
     migrateLegacyChat: migrateLegacyChat,
     convGet: convGet,
+    convSetActive: convSetActive,
     convCreate: convCreate,
     convRename: convRename,
     convSetPinned: convSetPinned,
