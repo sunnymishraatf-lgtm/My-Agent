@@ -1012,6 +1012,79 @@
     return root.children;
   }
 
+  /* ==========================================================================
+     Voice calls (Phase 3) — pure helpers, no DOM / no WebRTC objects.
+     ========================================================================== */
+
+  /** Mesh voice cap: one RTCPeerConnection per other participant. */
+  var MAX_VOICE_PARTICIPANTS = 6;
+
+  /** Public STUN servers tried by every client (server may advertise more). */
+  var DEFAULT_STUN_URLS = ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"];
+
+  /**
+   * Deterministic offerer rule for the voice mesh: the member with the
+   * lexicographically smaller id creates the offer. Both sides compute the
+   * same answer, so there is never glare (double-offer).
+   */
+  function shouldInitiateVoiceOffer(myId, peerId) {
+    var a = String(myId == null ? "" : myId);
+    var b = String(peerId == null ? "" : peerId);
+    if (!a || !b || a === b) return false;
+    return a < b;
+  }
+
+  /**
+   * Map an RTCPeerConnectionState to the small UI vocabulary the voice panel
+   * shows. Pure so the state machine is unit-testable.
+   */
+  function voicePeerUiState(connState) {
+    switch (String(connState || "")) {
+      case "new":
+      case "connecting":
+        return "connecting";
+      case "connected":
+        return "connected";
+      case "disconnected":
+        return "reconnecting";
+      case "failed":
+        return "failed";
+      case "closed":
+        return "idle";
+      default:
+        return "connecting";
+    }
+  }
+
+  /**
+   * Speaking detection from an analyser RMS level (0..1). The threshold keeps
+   * background hiss from lighting the ring; the client smooths with a small
+   * hold so the ring doesn't flicker on pauses.
+   */
+  var VOICE_SPEAK_THRESHOLD = 0.02;
+  function isSpeakingRms(rms, threshold) {
+    var t = typeof threshold === "number" ? threshold : VOICE_SPEAK_THRESHOLD;
+    var r = Number(rms);
+    if (!isFinite(r) || r < 0) return false;
+    return r >= t;
+  }
+
+  /**
+   * Diff two voice-member lists by id for aria-live announcements.
+   * Returns {joined: [...], left: [...]} with the member records.
+   */
+  function diffVoiceMembers(prev, next) {
+    var before = {};
+    (prev || []).forEach(function (m) { if (m && m.id) before[m.id] = m; });
+    var after = {};
+    (next || []).forEach(function (m) { if (m && m.id) after[m.id] = m; });
+    var joined = [];
+    var left = [];
+    Object.keys(after).forEach(function (id) { if (!before[id]) joined.push(after[id]); });
+    Object.keys(before).forEach(function (id) { if (!after[id]) left.push(before[id]); });
+    return { joined: joined, left: left };
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -1064,5 +1137,13 @@
     sanitizeCollabPath: sanitizeCollabPath,
     pickPresenceColor: pickPresenceColor,
     buildFileTree: buildFileTree,
+    /* voice calls (Phase 3) */
+    MAX_VOICE_PARTICIPANTS: MAX_VOICE_PARTICIPANTS,
+    DEFAULT_STUN_URLS: DEFAULT_STUN_URLS,
+    VOICE_SPEAK_THRESHOLD: VOICE_SPEAK_THRESHOLD,
+    shouldInitiateVoiceOffer: shouldInitiateVoiceOffer,
+    voicePeerUiState: voicePeerUiState,
+    isSpeakingRms: isSpeakingRms,
+    diffVoiceMembers: diffVoiceMembers,
   };
 });

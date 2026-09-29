@@ -164,6 +164,9 @@ export type ClientMessage =
   | { type: "CHAT_MESSAGE"; text: string }
   | { type: "CHAT_TYPING"; typing: boolean }
   | { type: "WEBRTC_OFFER" | "WEBRTC_ANSWER" | "WEBRTC_ICE"; to: string; payload: unknown }
+  | { type: "VOICE_JOIN" }
+  | { type: "VOICE_LEAVE" }
+  | { type: "VOICE_STATE"; muted: boolean }
   | { type: "FILE_LIST" }
   | { type: "FILE_CREATE"; path: string }
   | { type: "FILE_RENAME"; fileId: string; newPath: string }
@@ -184,12 +187,13 @@ export type ClientMessage =
   | { type: "VERSION_RESTORE"; fileId: string; ts: number };
 
 export type ServerMessage =
-  | { type: "JOINED"; room: RoomPublic; you: { id: string; displayName: string; role: string }; members: MemberPublic[]; chat: CollabChatMsg[]; files: CollabFileMeta[] }
+  | { type: "JOINED"; room: RoomPublic; you: { id: string; displayName: string; role: string }; members: MemberPublic[]; chat: CollabChatMsg[]; files: CollabFileMeta[]; ice: IceServerConfig[]; voice: VoiceMemberPublic[] }
   | { type: "LEFT" }
   | { type: "MEMBERS"; members: MemberPublic[] }
   | { type: "CHAT_MESSAGE"; msg: CollabChatMsg }
   | { type: "CHAT_TYPING"; memberId: string; displayName: string; typing: boolean }
   | { type: "WEBRTC_OFFER" | "WEBRTC_ANSWER" | "WEBRTC_ICE"; from: string; fromName: string; payload: unknown }
+  | { type: "VOICE_MEMBERS"; members: VoiceMemberPublic[] }
   | { type: "FILE_LIST_RESULT"; files: CollabFileMeta[] }
   | { type: "FILE_EVENT"; event: "created" | "renamed" | "deleted"; file?: CollabFileMeta; fileId?: string }
   | { type: "YJS_SYNC"; fileId: string; kind: "step1" | "step2" | "update"; data: string }
@@ -209,6 +213,20 @@ export type ServerMessage =
   | { type: "VERSION_TEXT"; fileId: string; ts: number; text: string }
   | { type: "ERROR"; code: string; message: string };
 
+/** Voice-call participant as seen by the room (ephemeral, never persisted). */
+export interface VoiceMemberPublic {
+  id: string;
+  displayName: string;
+  muted: boolean;
+}
+
+/** TURN/STUN server entry advertised to joined room members. */
+export interface IceServerConfig {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
 export type ErrorCode =
   | "INVALID_MESSAGE"
   | "INVALID_PAYLOAD"
@@ -224,6 +242,7 @@ export type ErrorCode =
   | "FILE_TOO_LARGE"
   | "UPDATE_TOO_LARGE"
   | "VERSION_NOT_FOUND"
+  | "VOICE_FULL"
   | "RATE_LIMITED";
 
 // ----- rate limiting -------------------------------------------------------
@@ -291,12 +310,22 @@ export interface CollabServerOptions {
   dataRoot?: string;
   /** Inject a file store (tests). */
   fileStore?: CollabFileStore;
+  /**
+   * ICE servers (STUN/TURN) advertised to joined room members inside the
+   * JOINED message. TURN credentials therefore only ever travel to validated
+   * members of the room, never on a public endpoint. Built from
+   * NEUTRON_STUN_URL / NEUTRON_TURN_* env vars in server.ts.
+   */
+  iceServers?: IceServerConfig[];
   /** Log sink for operational events. Never receives tokens or message text. */
   log?: (msg: string) => void;
   now?: () => number;
   heartbeatMs?: number;
   sweepMs?: number;
 }
+
+/** Mesh voice cap: one RTCPeerConnection per other participant. */
+export const MAX_VOICE_PARTICIPANTS = 6;
 
 const FILE_OP_ERROR_TEXT: Record<FileOpError, ErrorCode> = {
   INVALID_PATH: "INVALID_PATH",
@@ -322,6 +351,7 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   FILE_TOO_LARGE: "That file exceeded the 500KB shared-editing limit.",
   UPDATE_TOO_LARGE: "That update was too large.",
   VERSION_NOT_FOUND: "That version is no longer available.",
+  VOICE_FULL: "Voice is full in this room (6 max). Try again later.",
   RATE_LIMITED: "You're sending messages too fast. Slow down a little.",
 };
 
@@ -333,6 +363,12 @@ export class CollabServer {
   private log: (msg: string) => void;
   private now: () => number;
   private files: CollabFileStore;
+  /**
+   * Ephemeral voice-call membership: roomCode -> memberId -> {displayName, muted}.
+   * Tied to the WebSocket connection's membership; cleared on leave/close/
+   * sweep/room-delete. Never persisted, never logged with names.
+   */
+  private voice = new Map<string, Map<string, { displayName: string; muted: boolean }>>();
 
   constructor(private opts: CollabServerOptions) {
     this.path = opts.path ?? COLLAB_WS_PATH;
@@ -502,6 +538,15 @@ export class CollabServer {
       case "WEBRTC_ICE":
         this.handleSignal(ws, state, msg, now);
         break;
+      case "VOICE_JOIN":
+        this.handleVoiceJoin(ws, state, now);
+        break;
+      case "VOICE_LEAVE":
+        this.handleVoiceLeave(ws, state, now);
+        break;
+      case "VOICE_STATE":
+        this.handleVoiceState(ws, state, msg, now);
+        break;
       case "FILE_LIST":
         this.handleFileList(ws, state);
         break;
@@ -579,6 +624,9 @@ export class CollabServer {
       members: this.opts.manager.listMembers(roomId),
       chat: this.opts.manager.getChat(roomId),
       files: this.files.listFiles(roomId),
+      // ICE config goes only to validated room members, over this socket.
+      ice: this.opts.iceServers ?? [],
+      voice: this.voiceList(roomId),
     });
     this.broadcast(roomId, { type: "MEMBERS", members: this.opts.manager.listMembers(roomId) }, ws);
     this.log(`join room=${roomId} members=${res.members.length + 1}`);
@@ -602,6 +650,7 @@ export class CollabServer {
     // IMPORTANT: look up membership by the connection's own member id, never
     // trust a client-supplied id.
     this.opts.manager.leaveRoom(code, state.id);
+    this.dropVoiceMember(code, state.id);
     state.roomCode = null;
     state.openFiles.clear();
     if (notifySelf) this.send(ws, { type: "LEFT" });
@@ -725,6 +774,103 @@ export class CollabServer {
     this.send(target, { type: msg.type, from: state.id, fromName: state.displayName, payload: msg.payload });
   }
 
+  // ----- voice calls (Phase 3) -------------------------------------------
+
+  private voiceSet(code: string): Map<string, { displayName: string; muted: boolean }> {
+    let set = this.voice.get(code);
+    if (!set) {
+      set = new Map();
+      this.voice.set(code, set);
+    }
+    return set;
+  }
+
+  private voiceList(code: string): VoiceMemberPublic[] {
+    const set = this.voice.get(code);
+    if (!set) return [];
+    const out: VoiceMemberPublic[] = [];
+    for (const [id, v] of set) out.push({ id, displayName: v.displayName, muted: v.muted });
+    return out;
+  }
+
+  private broadcastVoice(code: string): void {
+    this.broadcast(code, { type: "VOICE_MEMBERS", members: this.voiceList(code) });
+  }
+
+  /** Remove a member from the room's voice set; broadcast when it changed. */
+  private dropVoiceMember(code: string, memberId: string): boolean {
+    const set = this.voice.get(code);
+    if (!set || !set.has(memberId)) return false;
+    set.delete(memberId);
+    if (set.size === 0) {
+      // Nobody left to notify; the leaver already knows they left.
+      this.voice.delete(code);
+    } else {
+      this.broadcastVoice(code);
+    }
+    return true;
+  }
+
+  private handleVoiceJoin(ws: WebSocket, state: ConnState, now: number): void {
+    const code = this.requireRoom(ws, state);
+    if (!code) return;
+    if (!state.buckets.signal.take(now)) {
+      this.fail(ws, "RATE_LIMITED");
+      return;
+    }
+    const set = this.voiceSet(code);
+    if (set.has(state.id)) {
+      // Idempotent re-join (e.g. after a socket reconnect): just re-broadcast.
+      this.send(ws, { type: "VOICE_MEMBERS", members: this.voiceList(code) });
+      return;
+    }
+    if (set.size >= MAX_VOICE_PARTICIPANTS) {
+      this.fail(ws, "VOICE_FULL");
+      return;
+    }
+    set.set(state.id, { displayName: state.displayName, muted: false });
+    this.broadcastVoice(code);
+    this.log(`voice join room=${code} n=${set.size}`);
+  }
+
+  private handleVoiceLeave(ws: WebSocket, state: ConnState, now: number): void {
+    const code = this.requireRoom(ws, state);
+    if (!code) return;
+    if (!state.buckets.signal.take(now)) {
+      this.fail(ws, "RATE_LIMITED");
+      return;
+    }
+    if (this.dropVoiceMember(code, state.id)) {
+      this.log(`voice leave room=${code} n=${this.voice.get(code)?.size ?? 0}`);
+    }
+  }
+
+  private handleVoiceState(
+    ws: WebSocket,
+    state: ConnState,
+    msg: Extract<ClientMessage, { type: "VOICE_STATE" }>,
+    now: number,
+  ): void {
+    const code = this.requireRoom(ws, state);
+    if (!code) return;
+    if (!state.buckets.signal.take(now)) {
+      this.fail(ws, "RATE_LIMITED");
+      return;
+    }
+    if (typeof msg.muted !== "boolean") {
+      this.fail(ws, "INVALID_PAYLOAD");
+      return;
+    }
+    const set = this.voice.get(code);
+    const rec = set?.get(state.id);
+    if (!rec) {
+      this.fail(ws, "INVALID_PAYLOAD");
+      return;
+    }
+    rec.muted = msg.muted;
+    this.broadcastVoice(code);
+  }
+
   /** Broadcast to room members that currently have a file open. */
   private broadcastFileOpeners(roomCode: string, fileId: string, msg: ServerMessage, exclude?: WebSocket): void {
     const body = JSON.stringify(msg);
@@ -794,6 +940,7 @@ export class CollabServer {
       return;
     }
     this.files.deleteRoomData(code);
+    this.voice.delete(code);
     this.broadcast(code, { type: "ROOM_DELETED" });
     // Drop every connection from the deleted room.
     for (const [cand, st] of this.conns) {
@@ -1094,6 +1241,7 @@ export class CollabServer {
     if (state.roomCode) {
       const code = state.roomCode;
       this.opts.manager.leaveRoom(code, state.id);
+      this.dropVoiceMember(code, state.id);
       state.roomCode = null;
       this.broadcast(code, { type: "MEMBERS", members: this.opts.manager.listMembers(code) });
       this.maybeReleaseRoom(code);
@@ -1113,6 +1261,7 @@ export class CollabServer {
         if (state.roomCode) {
           const code = state.roomCode;
           this.opts.manager.leaveRoom(code, state.id);
+          this.dropVoiceMember(code, state.id);
           this.broadcast(code, { type: "MEMBERS", members: this.opts.manager.listMembers(code) });
           this.maybeReleaseRoom(code);
         }
@@ -1130,6 +1279,7 @@ export class CollabServer {
   private sweep(): void {
     const removed = this.opts.manager.sweepPresence(this.now());
     for (const r of removed) {
+      for (const mid of r.removed) this.dropVoiceMember(r.roomId, mid);
       this.broadcast(r.roomId, { type: "MEMBERS", members: this.opts.manager.listMembers(r.roomId) });
       // Drop any connections whose membership was swept.
       for (const [ws, st] of this.conns) {

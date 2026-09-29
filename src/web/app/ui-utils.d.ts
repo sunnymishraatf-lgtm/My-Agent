@@ -159,3 +159,17 @@ export declare function collabBackoffMs(attempt: number): number;
 export declare function sanitizeCollabName(name: unknown): string;
 export declare function sanitizeCollabText(text: unknown): string;
 export declare function timeAgo(ts: number, nowMs: number): string;
+
+/* Voice calls (Phase 3): pure client helpers. */
+export declare const MAX_VOICE_PARTICIPANTS: number;
+export declare const DEFAULT_STUN_URLS: string[];
+export declare const VOICE_SPEAK_THRESHOLD: number;
+export declare function shouldInitiateVoiceOffer(myId: unknown, peerId: unknown): boolean;
+export declare function voicePeerUiState(
+  connState: unknown
+): "connecting" | "connected" | "reconnecting" | "failed" | "idle";
+export declare function isSpeakingRms(rms: unknown, threshold?: number): boolean;
+export declare function diffVoiceMembers(
+  prev: Array<{ id: string } | null | undefined> | null | undefined,
+  next: Array<{ id: string } | null | undefined> | null | undefined
+): { joined: Array<{ id: string }>; left: Array<{ id: string }> };

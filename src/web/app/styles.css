@@ -1295,7 +1295,8 @@ body.chat-full .view {
   [data-theme^="glass-"] .theme-swatch,
   [data-theme^="glass-"] .history-panel,
   [data-theme^="glass-"] .hist-menu,
-  [data-theme^="glass-"] .hist-modal {
+  [data-theme^="glass-"] .hist-modal,
+  [data-theme^="glass-"] .rm-voice-strip {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -1839,6 +1840,56 @@ body.chat-full .view {
   .rm-head .rm-title { flex-basis: 100%; }
 }
 
+/* ---- Phase 3: voice calls ---- */
+
+.rm-voice-strip {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.rm-voice-label { font-weight: 700; font-size: 13px; color: var(--text); flex: none; }
+.rm-voice-hint { font-size: 12px; color: var(--text-3); }
+.rm-voice-err { font-size: 13px; color: var(--red); flex: 1; min-width: 200px; }
+.rm-voice-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex: 1; min-width: 0; }
+.rm-voice-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 5px 10px;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.rm-voice-chip.speaking { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.rm-voice-name {
+  font-weight: 600;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-voice-muted { font-size: 12px; flex: none; }
+.rm-danger-btn { color: var(--red); }
+
+/* glass themes: frosted voice strip */
+[data-theme^="glass-"] .rm-voice-strip {
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-inset), 0 12px 30px -14px rgba(0, 0, 0, 0.6);
+}
+[data-theme^="glass-"] .rm-voice-chip { background: var(--glass-bg-soft, var(--glass-bg)); }
+
 /* ---- Phase 2: collaborative editing ---- */
 
 .rm-admin { display: inline-flex; gap: 8px; }
@@ -1999,6 +2050,12 @@ body.chat-full .view {
 @media (max-width: 760px) {
   .rm-maintabs { display: flex; }
   .rm-subtabs { display: none; }
+  /* Voice is its own mobile panel via the "voice" tab. */
+  .rm-voice-strip { display: none; }
+  .rm-body[data-mtab="voice"] .rm-voice-strip { display: flex; }
+  .rm-body[data-mtab="voice"] .rm-files-panel,
+  .rm-body[data-mtab="voice"] .rm-editor-panel,
+  .rm-body[data-mtab="voice"] .rm-side { display: none; }
   .rm-body[data-mtab="files"] .rm-editor-panel,
   .rm-body[data-mtab="files"] .rm-side,
   .rm-body[data-mtab="editor"] .rm-files-panel,

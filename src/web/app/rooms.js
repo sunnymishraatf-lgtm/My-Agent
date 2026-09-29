@@ -49,6 +49,20 @@
       collapsedDirs: {}, // dir path -> true
       editAnnounce: {}, // fileId -> timestamp of last aria-live edit note
       myColor: null,
+      /* Phase 3: voice calls */
+      iceServers: [], // server-advertised STUN/TURN (from JOINED)
+      voice: {
+        want: false, // user asked to be in the call (survives socket reconnects)
+        active: false, // server currently has us in the voice set
+        joining: false, // getUserMedia() in flight
+        muted: false,
+        mic: null, // local MediaStream — requested ONLY at join time
+        members: [], // VoiceMemberPublic[] from the server
+        peers: {}, // memberId -> {pc, ui, stream, analyser, buf, speaking, holdUntil}
+        audioCtx: null, // shared AudioContext for speaking detection (analysis only)
+        speakTimer: null,
+        err: "", // join error text shown in the strip
+      },
     };
   }
 
@@ -110,6 +124,7 @@
   }
 
   function teardown() {
+    leaveVoice(true);
     stopTimers();
     closeSocket();
     disposeAllEditors();
@@ -140,6 +155,7 @@
   function closeSocket() {
     stopTimers();
     disposeAllEditors();
+    dropVoicePeers(); // keep the mic: a reconnect rejoins the call seamlessly
     var ws = S.ws;
     S.ws = null;
     S.joined = false;
@@ -200,6 +216,11 @@
     // Yjs docs are bound to this socket's sync session; drop them but keep
     // the tab list so a reconnect re-opens the same files.
     disposeAllEditors();
+    // Voice peer connections are bound to this socket's signaling session.
+    // The mic stays open so a reconnect can rejoin the call seamlessly.
+    dropVoicePeers();
+    S.voice.active = false;
+    paintVoice();
     if (S.screen !== "workspace" || !S.code) return;
     if (was && S.reconnectAttempt >= MAX_RECONNECT) {
       setConn("failed");
@@ -236,12 +257,22 @@
         S.members = Array.isArray(msg.members) ? msg.members : [];
         S.chat = Array.isArray(msg.chat) ? msg.chat.slice(-200) : [];
         S.files = Array.isArray(msg.files) ? msg.files : [];
+        S.iceServers = Array.isArray(msg.ice) ? msg.ice : [];
+        onVoiceMembers(msg.voice, true);
         setConn("connected");
         startHeartbeat();
         paintMembers();
         paintChat(true);
         paintFiles();
         paintRoomAdmin();
+        paintVoice();
+        // Rejoin an in-progress voice call after a socket reconnect. The mic
+        // stays open across reconnects; ordered delivery means the server
+        // adds us to the voice set before applying our restored mute state.
+        if (S.voice.want && S.voice.mic && !S.voice.active) {
+          sendMsg({ type: "VOICE_JOIN" });
+          sendMsg({ type: "VOICE_STATE", muted: S.voice.muted });
+        }
         // Re-open the tabs that were open before a reconnect.
         var reopen = S.openFileIds.slice();
         S.openFileIds = [];
@@ -310,7 +341,18 @@
       case "VERSION_TEXT":
         if (msg.fileId) renderVersionPreview(msg.fileId, msg.ts, msg.text || "");
         break;
-      /* WEBRTC_* relays arrive here in Phase 3; ignore until then. */
+      case "VOICE_MEMBERS":
+        onVoiceMembers(msg.members, false);
+        break;
+      case "WEBRTC_OFFER":
+        onVoiceOffer(msg);
+        break;
+      case "WEBRTC_ANSWER":
+        onVoiceAnswer(msg);
+        break;
+      case "WEBRTC_ICE":
+        onVoiceIce(msg);
+        break;
       default:
         break;
     }
@@ -324,6 +366,9 @@
     } else if (code === "ROOM_FULL") {
       showError("This room has reached its member limit.");
       setConn("failed");
+    } else if (code === "VOICE_FULL") {
+      showError("Voice is full in this room (6 max). Try again later.");
+      abortVoiceJoin();
     } else {
       showError(msg.message || "The room server reported an error.");
     }
@@ -596,6 +641,7 @@
   }
 
   function leaveToList() {
+    leaveVoice(true);
     var code = S.code;
     if (code) {
       var kr = knownRoom(code);
@@ -615,7 +661,7 @@
     var head = el("div", "rm-head panel");
     var back = el("button", "btn ghost sm", "← Rooms");
     back.setAttribute("aria-label", "Back to room list");
-    back.onclick = function () { closeSocket(); S = freshState(); render(); };
+    back.onclick = function () { leaveVoice(true); closeSocket(); S = freshState(); render(); };
     head.appendChild(back);
     var titleEl = el("h2", "rm-title", S.roomName || S.code);
     titleEl.id = "rm-room-title";
@@ -654,12 +700,12 @@
       return;
     }
 
-    /* Mobile main tabs: Files | Editor | Chat | Members. */
+    /* Mobile main tabs: Files | Editor | Chat | Members | Voice. */
     var mtabs = el("div", "rm-tabs rm-maintabs");
     mtabs.setAttribute("role", "tablist");
     mtabs.setAttribute("aria-label", "Room panels");
     var mtabBtns = {};
-    ["files", "editor", "chat", "members"].forEach(function (name) {
+    ["files", "editor", "chat", "members", "voice"].forEach(function (name) {
       var b = el("button", "rm-tab" + (S.mtab === name ? " on" : ""), name.charAt(0).toUpperCase() + name.slice(1));
       b.setAttribute("role", "tab");
       b.setAttribute("aria-selected", S.mtab === name ? "true" : "false");
@@ -682,6 +728,12 @@
     var body = el("div", "rm-body");
     body.id = "rm-body";
     body.dataset.mtab = S.mtab;
+
+    /* Voice strip: spans all columns on desktop; the voice "panel" on mobile. */
+    var vstrip = el("div", "rm-voice-strip");
+    vstrip.id = "rm-voice-strip";
+    vstrip.setAttribute("aria-label", "Voice call");
+    body.appendChild(vstrip);
 
     /* Files panel. */
     var filesPanel = el("aside", "rm-files-panel panel");
@@ -808,6 +860,7 @@
     paintEdTabs();
     paintEditor();
     paintRoomAdmin();
+    paintVoice();
     if (reuse) {
       setConn("connected");
     } else {
@@ -1627,6 +1680,548 @@
     admin.appendChild(del);
   }
 
+  /* ---------- voice calls (Phase 3) --------------------------------------
+     Mesh WebRTC audio: one RTCPeerConnection per other voice member
+     (cap 6). Signaling (offer/answer/ICE) rides the existing server relay;
+     VOICE_JOIN/LEAVE/STATE broadcasts carry call membership + mute state.
+     Non-trickle ICE: the full candidate set travels inside the SDP, so the
+     20/min signaling bucket is never the bottleneck.
+     ---------------------------------------------------------------------- */
+
+  var VOICE_ICE_TIMEOUT_MS = 3500;
+
+  /** Server-advertised ICE entries, shape-validated (never trust blindly). */
+  function voiceTurnServers() {
+    var out = [];
+    (S.iceServers || []).forEach(function (s) {
+      if (!s || !s.urls) return;
+      var urls = (Array.isArray(s.urls) ? s.urls : [s.urls]).filter(function (u) {
+        return typeof u === "string" && /^(stun|turn|turns):/i.test(u);
+      });
+      if (!urls.length) return;
+      var entry = { urls: urls };
+      if (typeof s.username === "string" && s.username) entry.username = s.username;
+      if (typeof s.credential === "string" && s.credential) entry.credential = s.credential;
+      out.push(entry);
+    });
+    return out;
+  }
+
+  function voiceIceConfig() {
+    var cfg = [{ urls: (UI.DEFAULT_STUN_URLS || []).slice() }];
+    voiceTurnServers().forEach(function (s) { cfg.push(s); });
+    return cfg;
+  }
+
+  function voiceMicErrorText(err) {
+    var name = err && err.name;
+    if (name === "NotAllowedError" || name === "SecurityError")
+      return "Microphone blocked. Click the lock/tune icon in the address bar, allow the microphone for this site, then try again.";
+    if (name === "NotFoundError" || name === "OverconstrainedError")
+      return "No microphone found. Connect a microphone and try again.";
+    if (name === "NotReadableError")
+      return "The microphone is busy in another app. Close that app and try again.";
+    return "Couldn't access the microphone (" + (name || "unknown error") + "). Check the browser's site settings and try again.";
+  }
+
+  function joinVoice() {
+    var v = S.voice;
+    if (v.joining || v.want) return;
+    if (!S.joined) { showError("Not connected yet — wait for the green dot."); return; }
+    if (typeof RTCPeerConnection === "undefined") {
+      v.err = "Voice calls aren't supported in this browser. Try a recent Chrome, Edge, Firefox, or Safari.";
+      paintVoice();
+      return;
+    }
+    var maxV = UI.MAX_VOICE_PARTICIPANTS || 6;
+    if (v.members.length >= maxV) {
+      showError("Voice is full in this room (" + maxV + " max). Try again later.");
+      return;
+    }
+    var gUM = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+      ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices) : null;
+    if (!gUM) {
+      v.err = "Voice calls need microphone support. Try a recent Chrome, Edge, Firefox, or Safari.";
+      paintVoice();
+      return;
+    }
+    // Mic permission is requested ONLY here, at join time — never before.
+    // The AudioContext is created inside this user gesture so speaking
+    // detection can actually run (a suspended context analyzes silence).
+    ensureVoiceAudio();
+    v.joining = true;
+    v.err = "";
+    paintVoice();
+    if (typeof announce === "function") announce("Requesting microphone access…");
+    gUM({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false })
+      .then(function (stream) {
+        if (S.screen !== "workspace" || !S.voice) {
+          try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+          return;
+        }
+        v.mic = stream;
+        v.joining = false;
+        v.want = true;
+        v.muted = false;
+        v.err = "";
+        stream.getAudioTracks().forEach(function (t) {
+          t.onended = function () {
+            // Mic unplugged or permission revoked mid-call: leave cleanly.
+            showError("Microphone disconnected. You left the voice call.");
+            leaveVoice(true);
+          };
+        });
+        sendMsg({ type: "VOICE_JOIN" });
+        paintVoice();
+        if (typeof announce === "function") announce("Microphone on. Joining voice…");
+      })
+      .catch(function (err) {
+        v.joining = false;
+        v.want = false;
+        v.err = voiceMicErrorText(err);
+        paintVoice();
+        showError(v.err);
+      });
+  }
+
+  /** Give up on a join that the server rejected (e.g. VOICE_FULL). */
+  function abortVoiceJoin() {
+    var v = S.voice;
+    v.joining = false;
+    v.want = false;
+    v.err = "";
+    stopMic();
+    dropVoicePeers();
+    paintVoice();
+  }
+
+  /**
+   * Leave the call. silent=true skips the VOICE_LEAVE send (socket already
+   * dead or we're tearing down) — the server drops voice membership on
+   * socket close anyway.
+   */
+  function leaveVoice(silent) {
+    var v = S.voice;
+    var wasIn = v.want || v.active;
+    v.want = false;
+    v.active = false;
+    v.joining = false;
+    v.muted = false;
+    v.err = "";
+    if (!silent && wasIn) sendMsg({ type: "VOICE_LEAVE" });
+    dropVoicePeers();
+    stopMic();
+    paintVoice();
+    if (wasIn && typeof announce === "function") announce("You left the voice call.");
+  }
+
+  /** Close peer connections + analysers, but keep the mic for reconnects. */
+  function dropVoicePeers() {
+    var v = S.voice;
+    Object.keys(v.peers).forEach(closePeerSilent);
+    v.peers = {};
+    if (v.speakTimer) { clearInterval(v.speakTimer); v.speakTimer = null; }
+    if (v.audioCtx) { try { v.audioCtx.close(); } catch (e) {} v.audioCtx = null; }
+  }
+
+  function closePeerSilent(memberId) {
+    var v = S.voice;
+    var peer = v.peers[memberId];
+    if (!peer) return;
+    delete v.peers[memberId];
+    try { peer.pc.close(); } catch (e) {}
+  }
+
+  function closePeer(memberId) {
+    closePeerSilent(memberId);
+    paintVoice();
+  }
+
+  function stopMic() {
+    var v = S.voice;
+    if (v.mic) {
+      try {
+        v.mic.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+      } catch (e) {}
+      v.mic = null; // the OS mic indicator goes off here
+    }
+  }
+
+  function toggleVoiceMute() {
+    var v = S.voice;
+    if (!v.active || !v.mic) return;
+    v.muted = !v.muted;
+    try {
+      v.mic.getAudioTracks().forEach(function (t) { t.enabled = !v.muted; });
+    } catch (e) {}
+    sendMsg({ type: "VOICE_STATE", muted: v.muted });
+    paintVoice();
+    if (typeof announce === "function") announce(v.muted ? "You are muted." : "You are unmuted.");
+  }
+
+  function retryVoicePeer(memberId) {
+    closePeerSilent(memberId);
+    var v = S.voice;
+    if (v.active && v.mic && typeof RTCPeerConnection !== "undefined") createVoicePeer(memberId);
+    paintVoice();
+  }
+
+  /* ----- membership ----- */
+
+  function voiceDisplayName(memberId) {
+    var v = S.voice;
+    for (var i = 0; i < v.members.length; i++) {
+      if (v.members[i].id === memberId) return v.members[i].displayName || "Someone";
+    }
+    return "Someone";
+  }
+
+  function onVoiceMembers(members, silent) {
+    var v = S.voice;
+    var next = Array.isArray(members) ? members : [];
+    var prev = v.members;
+    v.members = next;
+    var me = null;
+    next.forEach(function (m) { if (m && m.id === S.memberId) me = m; });
+    v.active = !!me;
+    if (!silent && typeof announce === "function" && UI.diffVoiceMembers) {
+      var diff = UI.diffVoiceMembers(prev, next);
+      diff.joined.forEach(function (m) {
+        if (m.id !== S.memberId) announce((m.displayName || "Someone") + " joined the voice call.");
+      });
+      diff.left.forEach(function (m) {
+        announce((m.displayName || "Someone") + " left the voice call.");
+      });
+    }
+    syncVoicePeers();
+    paintVoice();
+  }
+
+  /** Rebuild the peer set from the authoritative server member list. */
+  function syncVoicePeers() {
+    var v = S.voice;
+    if (!v.active || !v.mic || typeof RTCPeerConnection === "undefined") return;
+    var seen = {};
+    v.members.forEach(function (m) {
+      if (!m || !m.id || m.id === S.memberId) return;
+      seen[m.id] = true;
+      if (!v.peers[m.id]) createVoicePeer(m.id);
+    });
+    Object.keys(v.peers).forEach(function (id) {
+      if (!seen[id]) closePeerSilent(id);
+    });
+  }
+
+  /* ----- peer connections ----- */
+
+  function createVoicePeer(memberId) {
+    var v = S.voice;
+    if (v.peers[memberId] || !v.mic || typeof RTCPeerConnection === "undefined") return null;
+    var pc;
+    try {
+      pc = new RTCPeerConnection({ iceServers: voiceIceConfig() });
+    } catch (e) {
+      showError("Couldn't start the voice connection (WebRTC unavailable).");
+      return null;
+    }
+    var peer = {
+      pc: pc, ui: "connecting", stream: null,
+      analyser: null, buf: null, speaking: false, holdUntil: 0,
+    };
+    v.peers[memberId] = peer;
+    try {
+      v.mic.getAudioTracks().forEach(function (t) { pc.addTrack(t, v.mic); });
+    } catch (e) {}
+    pc.ontrack = function (ev) {
+      var stream = ev.streams && ev.streams[0];
+      if (stream) attachRemoteStream(memberId, stream);
+    };
+    pc.onconnectionstatechange = function () {
+      var p = S.voice.peers[memberId];
+      if (!p) return;
+      p.ui = UI.voicePeerUiState ? UI.voicePeerUiState(pc.connectionState) : "connecting";
+      paintVoice();
+    };
+    // Deterministic offerer rule (smaller member id offers): both sides agree,
+    // so there is never signaling glare.
+    if (UI.shouldInitiateVoiceOffer && UI.shouldInitiateVoiceOffer(S.memberId, memberId)) {
+      makeVoiceOffer(memberId);
+    }
+    return peer;
+  }
+
+  function waitIceComplete(pc, timeoutMs) {
+    return new Promise(function (resolve) {
+      if (!pc || pc.iceGatheringState === "complete") { resolve(); return; }
+      var done = false;
+      var onCh = function () { if (pc.iceGatheringState === "complete") finish(); };
+      var finish = function () {
+        if (done) return;
+        done = true;
+        try { pc.removeEventListener("icegatheringstatechange", onCh); } catch (e) {}
+        resolve();
+      };
+      try { pc.addEventListener("icegatheringstatechange", onCh); } catch (e) {}
+      setTimeout(finish, timeoutMs || VOICE_ICE_TIMEOUT_MS);
+    });
+  }
+
+  function makeVoiceOffer(memberId) {
+    var v = S.voice;
+    var peer = v.peers[memberId];
+    if (!peer || !peer.pc) return;
+    var pc = peer.pc;
+    peer.ui = "connecting";
+    pc.createOffer()
+      .then(function (offer) { return pc.setLocalDescription(offer); })
+      .then(function () { return waitIceComplete(pc, VOICE_ICE_TIMEOUT_MS); })
+      .then(function () {
+        // Non-trickle: the full candidate set travels inside the SDP.
+        var cur = S.voice.peers[memberId];
+        if (!cur || cur.pc !== pc) return; // superseded by a retry
+        sendMsg({ type: "WEBRTC_OFFER", to: memberId, payload: { sdp: pc.localDescription } });
+      })
+      .catch(function () {
+        var cur = S.voice.peers[memberId];
+        if (cur && cur.pc === pc) { cur.ui = "failed"; paintVoice(); }
+      });
+  }
+
+  function onVoiceOffer(msg) {
+    var v = S.voice;
+    if (!v.active || !v.mic || !msg.from || !msg.payload || !msg.payload.sdp) return;
+    if (typeof RTCPeerConnection === "undefined" || typeof RTCSessionDescription === "undefined") return;
+    // Glare guard: with the deterministic id rule we should never receive an
+    // offer from a peer we were supposed to offer to — but ignore it if so.
+    if (UI.shouldInitiateVoiceOffer && UI.shouldInitiateVoiceOffer(S.memberId, msg.from)) return;
+    var peer = v.peers[msg.from] || createVoicePeer(msg.from);
+    if (!peer) return;
+    var pc = peer.pc;
+    peer.ui = "connecting";
+    paintVoice();
+    Promise.resolve()
+      .then(function () { return pc.setRemoteDescription(new RTCSessionDescription(msg.payload.sdp)); })
+      .then(function () { return pc.createAnswer(); })
+      .then(function (answer) { return pc.setLocalDescription(answer); })
+      .then(function () { return waitIceComplete(pc, VOICE_ICE_TIMEOUT_MS); })
+      .then(function () {
+        var cur = S.voice.peers[msg.from];
+        if (!cur || cur.pc !== pc) return;
+        sendMsg({ type: "WEBRTC_ANSWER", to: msg.from, payload: { sdp: pc.localDescription } });
+      })
+      .catch(function () {
+        var cur = S.voice.peers[msg.from];
+        if (cur && cur.pc === pc) { cur.ui = "failed"; paintVoice(); }
+      });
+  }
+
+  function onVoiceAnswer(msg) {
+    var v = S.voice;
+    var peer = msg.from && v.peers[msg.from];
+    if (!peer || !msg.payload || !msg.payload.sdp) return;
+    if (typeof RTCSessionDescription === "undefined") return;
+    var pc = peer.pc;
+    if (pc.signalingState !== "have-local-offer") return; // stale/duplicate answer
+    pc.setRemoteDescription(new RTCSessionDescription(msg.payload.sdp)).catch(function () {
+      peer.ui = "failed";
+      paintVoice();
+    });
+  }
+
+  function onVoiceIce(msg) {
+    // We use non-trickle ICE and never send candidates, but accept them for
+    // forward compatibility with trickle clients.
+    var v = S.voice;
+    var peer = msg.from && v.peers[msg.from];
+    if (!peer || !msg.payload || !msg.payload.candidate) return;
+    if (typeof RTCIceCandidate === "undefined") return;
+    try {
+      peer.pc.addIceCandidate(new RTCIceCandidate(msg.payload.candidate)).catch(function () {});
+    } catch (e) {}
+  }
+
+  /* ----- speaking detection (analysis only, nothing leaves the browser) ----- */
+
+  function ensureVoiceAudio() {
+    var v = S.voice;
+    if (v.audioCtx) return v.audioCtx;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try {
+      v.audioCtx = new AC();
+      if (v.audioCtx.state === "suspended") {
+        try {
+          var r = v.audioCtx.resume();
+          if (r && r.catch) r.catch(function () {});
+        } catch (e) {}
+      }
+    } catch (e) {
+      v.audioCtx = null;
+    }
+    if (v.audioCtx && !v.speakTimer) v.speakTimer = setInterval(pollSpeaking, 160);
+    return v.audioCtx;
+  }
+
+  function attachRemoteStream(memberId, stream) {
+    var v = S.voice;
+    var peer = v.peers[memberId];
+    if (!peer) return;
+    peer.stream = stream;
+    var ctx = ensureVoiceAudio();
+    if (!ctx) return;
+    try {
+      var src = ctx.createMediaStreamSource(stream);
+      var analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.4;
+      src.connect(analyser); // analyser only — never to destination (no feedback)
+      peer.analyser = analyser;
+      peer.buf = new Uint8Array(analyser.fftSize);
+    } catch (e) {
+      peer.analyser = null;
+    }
+  }
+
+  function pollSpeaking() {
+    var v = S.voice;
+    var now = Date.now();
+    Object.keys(v.peers).forEach(function (id) {
+      var p = v.peers[id];
+      var speaking = false;
+      if (p.analyser && p.buf) {
+        try {
+          p.analyser.getByteTimeDomainData(p.buf);
+          var sum = 0;
+          for (var i = 0; i < p.buf.length; i++) {
+            var d = (p.buf[i] - 128) / 128;
+            sum += d * d;
+          }
+          var rms = Math.sqrt(sum / p.buf.length);
+          if (UI.isSpeakingRms && UI.isSpeakingRms(rms)) p.holdUntil = now + 600;
+          speaking = now < p.holdUntil;
+        } catch (e) {
+          speaking = false;
+        }
+      }
+      if (speaking !== p.speaking) {
+        p.speaking = speaking;
+        paintVoiceChip(id);
+      }
+    });
+  }
+
+  /* ----- voice strip UI ----- */
+
+  function voiceDotClass(ui) {
+    return ui === "connected" ? "on" : ui === "failed" ? "off" : ui === "idle" ? "idle" : "busy";
+  }
+
+  function voiceUiText(ui) {
+    return ui === "connected" ? "Connected"
+      : ui === "reconnecting" ? "Reconnecting…"
+      : ui === "failed" ? "Connection failed — use Retry"
+      : ui === "idle" ? "Idle" : "Connecting…";
+  }
+
+  function voiceChipEl(m) {
+    var v = S.voice;
+    var chip = el("span", "rm-voice-chip");
+    chip.setAttribute("data-vpeer", m.id);
+    var isSelf = m.id === S.memberId;
+    var peer = !isSelf ? v.peers[m.id] : null;
+    if (peer && peer.speaking) chip.classList.add("speaking");
+    var dot = el("span", "rm-dot " + (isSelf ? "on" : voiceDotClass(peer ? peer.ui : "connecting")));
+    dot.setAttribute("aria-hidden", "true");
+    chip.appendChild(dot);
+    chip.appendChild(el("span", "rm-voice-name", (m.displayName || "Someone") + (isSelf ? " (you)" : "")));
+    if (m.muted) {
+      var mu = el("span", "rm-voice-muted", "🔇");
+      mu.title = "Muted";
+      mu.setAttribute("aria-label", "muted");
+      chip.appendChild(mu);
+    }
+    if (peer) {
+      chip.title = voiceDisplayName(m.id) + " — " + voiceUiText(peer.ui);
+      if (peer.ui === "failed") {
+        var rb = el("button", "btn ghost sm", "Retry");
+        rb.setAttribute("aria-label", "Retry voice connection to " + voiceDisplayName(m.id));
+        rb.onclick = function (ev) { ev.stopPropagation(); retryVoicePeer(m.id); };
+        chip.appendChild(rb);
+      }
+    }
+    return chip;
+  }
+
+  function paintVoiceChip(memberId) {
+    var chip = document.querySelector('#rm-voice-chips [data-vpeer="' + memberId + '"]');
+    if (!chip) return;
+    var peer = S.voice.peers[memberId];
+    chip.classList.toggle("speaking", !!(peer && peer.speaking));
+  }
+
+  function paintVoice() {
+    var strip = document.getElementById("rm-voice-strip");
+    if (!strip) return;
+    var v = S.voice;
+    strip.innerHTML = "";
+    var label = el("span", "rm-voice-label", "🎙 Voice");
+    label.setAttribute("aria-hidden", "true");
+    strip.appendChild(label);
+
+    if (v.joining) {
+      strip.appendChild(el("span", "rm-voice-hint", "Requesting microphone…"));
+      return;
+    }
+    if (v.err && !v.want) {
+      var err = el("span", "rm-voice-err", v.err);
+      err.setAttribute("role", "alert");
+      strip.appendChild(err);
+      var tryAgain = el("button", "btn sm", "Try again");
+      tryAgain.setAttribute("aria-label", "Try joining voice again");
+      tryAgain.onclick = function () { v.err = ""; paintVoice(); joinVoice(); };
+      strip.appendChild(tryAgain);
+      return;
+    }
+    if (!v.active) {
+      if (v.want) {
+        // Mid-reconnect: mic is held, waiting for the socket to come back.
+        strip.appendChild(el("span", "rm-voice-hint",
+          S.conn === "failed" ? "Voice paused — retry the connection to rejoin." : "Reconnecting voice…"));
+        return;
+      }
+      var others = v.members.filter(function (m) { return m.id !== S.memberId; }).length;
+      if (others > 0) {
+        strip.appendChild(el("span", "rm-voice-hint",
+          others + (others === 1 ? " person" : " people") + " in the call"));
+      }
+      var join = el("button", "btn sm", "Join voice");
+      join.setAttribute("aria-label", "Join voice call");
+      join.onclick = joinVoice;
+      strip.appendChild(join);
+      return;
+    }
+    // In the call.
+    var chips = el("div", "rm-voice-chips");
+    chips.id = "rm-voice-chips";
+    chips.setAttribute("role", "list");
+    chips.setAttribute("aria-label", "Voice call participants");
+    v.members.forEach(function (m) {
+      var c = voiceChipEl(m);
+      c.setAttribute("role", "listitem");
+      chips.appendChild(c);
+    });
+    strip.appendChild(chips);
+    var muteBtn = el("button", "btn sm", v.muted ? "Unmute" : "Mute");
+    muteBtn.setAttribute("aria-label", v.muted ? "Unmute microphone" : "Mute microphone");
+    muteBtn.setAttribute("aria-pressed", v.muted ? "true" : "false");
+    muteBtn.onclick = toggleVoiceMute;
+    strip.appendChild(muteBtn);
+    var leave = el("button", "btn sm rm-danger-btn", "Leave");
+    leave.setAttribute("aria-label", "Leave voice call");
+    leave.onclick = function () { leaveVoice(false); };
+    strip.appendChild(leave);
+  }
+
   /* ---------- route entry ---------- */
 
   async function renderRooms(view) {
@@ -1636,6 +2231,7 @@
     /* Deep link to a different room while a workspace is open: drop the
        current room first so the pending code takes over below. */
     if (pending && S.screen === "workspace" && pending !== S.code) {
+      leaveVoice(true);
       closeSocket();
       S = freshState();
     }

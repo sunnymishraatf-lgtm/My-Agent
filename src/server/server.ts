@@ -21,7 +21,7 @@ import { existsSync, readFileSync, createReadStream } from "node:fs";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RoomManager } from "./collab/room-manager";
-import { CollabServer, COLLAB_WS_PATH } from "./collab/collab-server";
+import { CollabServer, COLLAB_WS_PATH, type IceServerConfig } from "./collab/collab-server";
 import {
   getDemoManager,
   prepareDemoRepo,
@@ -1144,6 +1144,35 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
   sendJson(res, 404, { ok: false, error: `Not found: ${req.method} ${url.pathname}` });
 }
 
+/**
+ * Build the ICE server list advertised to collaboration voice clients.
+ *
+ * - STUN: NEUTRON_STUN_URL if set (clients also always try Google's public
+ *   STUN as a fallback, so voice works out of the box for most NATs).
+ * - TURN: NEUTRON_TURN_URL (+ optional NEUTRON_TURN_USERNAME /
+ *   NEUTRON_TURN_CREDENTIAL) for restrictive NATs/firewalls.
+ *
+ * The list is only ever sent inside the JOINED message to validated room
+ * members — never on a public endpoint, never logged. For production, prefer
+ * short-lived TURN credentials (TURN REST API); static env credentials are
+ * the honest simple default.
+ */
+export function collabIceServers(): IceServerConfig[] {
+  const servers: IceServerConfig[] = [];
+  const stun = (process.env.NEUTRON_STUN_URL || "").trim();
+  if (stun) servers.push({ urls: [stun] });
+  const turnUrl = (process.env.NEUTRON_TURN_URL || "").trim();
+  if (turnUrl) {
+    const entry: IceServerConfig = { urls: [turnUrl] };
+    const username = (process.env.NEUTRON_TURN_USERNAME || "").trim();
+    const credential = (process.env.NEUTRON_TURN_CREDENTIAL || "").trim();
+    if (username) entry.username = username;
+    if (credential) entry.credential = credential;
+    servers.push(entry);
+  }
+  return servers;
+}
+
 export function startServer(opts: ServeOptions): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const collabManager = opts.collabManager ?? new RoomManager(opts.root);
@@ -1156,6 +1185,7 @@ export function startServer(opts: ServeOptions): Promise<RunningServer> {
     const collab = new CollabServer({
       manager: collabManager,
       dataRoot: opts.root,
+      iceServers: collabIceServers(),
       log: process.env.NEUTRON_COLLAB_DEBUG ? (m) => console.log(`[collab] ${m}`) : undefined,
     });
     collab.attach(server);
