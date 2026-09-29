@@ -46,3 +46,5 @@ apk/keystore/
 
 # Generated browser bundle for the collab editor (built by scripts/bundle-collab.mjs)
 src/web/app/vendor/
+public/skills/
+public/src/web/skills/
