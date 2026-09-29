@@ -1,0 +1,39 @@
+# NEUTRON Node server on Render — one-click deploy.
+#
+# Why: the Vercel deployment is serverless (chat + demo only). This runs the
+# full Node server: autonomous agent execution, Hermes skills, server Rooms
+# (shared files, collab editing, room AI, server voice), terminal, git.
+#
+# Deploy: Render dashboard → New → Blueprint → select this repo.
+# Render reads this file and creates the service. Fill in AGENTROUTER_API_KEY
+# when prompted (get one at https://agentrouter.org). SERVER_PASSWORD is
+# auto-generated — the app login / API will require it.
+#
+# Notes:
+# - Deploys the neutron/maintenance/2026-09-21-wfa branch (where the code lives).
+# - Render injects $PORT; the Dockerfile's web command already binds 0.0.0.0
+#   and reads process.env.PORT.
+# - Free plan sleeps after ~15 min idle (cold start ~30s). For always-on,
+#   change plan to `starter` below (and you can add a 1GB disk for /data).
+# - In the phone app: developer mode → backend URL override →
+#   https://<your-service>.onrender.com
+
+services:
+  - type: web
+    name: neutron-server
+    runtime: docker
+    plan: free
+    branch: neutron/maintenance/2026-09-21-wfa
+    healthCheckPath: /api/health
+    envVars:
+      - key: AGENTROUTER_API_KEY
+        sync: false
+      - key: SERVER_PASSWORD
+        generateValue: true
+      - key: NEUTRON_DEMO_WORKSPACE
+        value: /tmp/neutron-demo
+    # Uncomment for a persistent disk (requires plan: starter or higher):
+    # disk:
+    #   name: neutron-data
+    #   mountPath: /data
+    #   sizeGB: 1
