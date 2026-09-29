@@ -1199,6 +1199,12 @@ async function renderChat(view) {
     if (m.role === "assistant" && m.artifacts && m.artifacts.length) {
       wrap.appendChild(artifactCards(m.artifacts));
     }
+    if (m.failed) {
+      var retry = el("button", "btn ghost sm retry-btn", "Retry");
+      retry.setAttribute("aria-label", "Retry failed message");
+      retry.onclick = function () { retryLast(); };
+      wrap.appendChild(retry);
+    }
     return wrap;
   }
 
@@ -1475,6 +1481,14 @@ async function renderChat(view) {
     paintChips();
     input.value = "";
     autoGrow();
+    sendOnce(chatBody);
+  }
+
+  /* The request body of the last failed send (attachments included),
+     so a retry never forces the user to retype or re-attach. */
+  var lastFailedBody = null;
+
+  async function sendOnce(chatBody) {
     sendBtn.disabled = true;
     sendBtn.classList.add("sending");
     showTyping();
@@ -1484,16 +1498,30 @@ async function renderChat(view) {
       if (res.artifacts && res.artifacts.length) amsg.artifacts = res.artifacts;
       chatState.messages.push(amsg);
       clearError();
+      lastFailedBody = null;
       speak(amsg.text);
     } catch (e) {
       var msg = e && e.message ? e.message : String(e);
-      chatState.messages.push({ role: "assistant", text: "Error: " + msg });
+      chatState.messages.push({ role: "assistant", text: "Error: " + msg, failed: true });
       showError(msg);
+      lastFailedBody = chatBody;
+      /* Never read error text aloud — only real replies get spoken. */
     }
     hideTyping();
     appendMsg(chatState.messages[chatState.messages.length - 1]);
     sendBtn.disabled = false;
     sendBtn.classList.remove("sending");
+  }
+
+  function retryLast() {
+    if (!lastFailedBody || sendBtn.disabled) return;
+    var tail = chatState.messages[chatState.messages.length - 1];
+    if (tail && tail.failed) chatState.messages.pop();
+    var body = lastFailedBody;
+    lastFailedBody = null;
+    clearError();
+    paint();
+    sendOnce(body);
   }
   sendBtn.onclick = doSend;
   input.addEventListener("keydown", function (ev) {
