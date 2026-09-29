@@ -21,7 +21,7 @@
     "install.ps1"
   ],
   "scripts": {
-    "build": "tsup && node scripts/copy-web.mjs",
+    "build": "tsup && npm run bundle:collab && node scripts/copy-web.mjs",
     "build:vercel": "npm run build && node scripts/copy-web-vercel.mjs && node scripts/bundle-api.mjs",
     "bundle:api": "node scripts/bundle-api.mjs",
     "dev": "tsup --watch",
@@ -31,7 +31,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "bundle:collab": "node scripts/bundle-collab.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -62,6 +63,7 @@
   "dependencies": {
     "commander": "^12.1.0",
     "ws": "^8.22.0",
+    "yjs": "^13.6.33",
     "zod": "^3.23.8"
   },
   "optionalDependencies": {

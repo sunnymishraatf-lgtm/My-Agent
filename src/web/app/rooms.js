@@ -37,6 +37,18 @@
       typingTimer: null,
       typingSent: false,
       presenceStatus: "online",
+      /* Phase 2: collaborative editing */
+      files: [], // CollabFileMeta[] from the server
+      openFileIds: [], // ordered open tabs
+      activeFileId: null,
+      editors: {}, // fileId -> editor state (Y.Doc binding)
+      saveState: {}, // fileId -> "saved" | "saving" | "failed"
+      awareness: {}, // fileId -> memberId -> {name,color,cursor,selection,ts}
+      versions: {}, // fileId -> [{ts, author, authorName}]
+      mtab: "editor", // mobile tab: files|editor|chat|members
+      collapsedDirs: {}, // dir path -> true
+      editAnnounce: {}, // fileId -> timestamp of last aria-live edit note
+      myColor: null,
     };
   }
 
@@ -100,7 +112,23 @@
   function teardown() {
     stopTimers();
     closeSocket();
+    disposeAllEditors();
     S = freshState();
+  }
+
+  /** Dispose every Y.Doc binding (socket drop / leaving the route). */
+  function disposeAllEditors() {
+    Object.keys(S.editors).forEach(function (fid) { disposeEditor(fid); });
+    S.editors = {};
+  }
+
+  function disposeEditor(fileId) {
+    var ed = S.editors[fileId];
+    if (!ed) return;
+    ed.disposed = true;
+    delete S.editors[fileId];
+    try { ed.doc.destroy(); } catch (e) {}
+    if (ed.awareTimer) { clearInterval(ed.awareTimer); ed.awareTimer = null; }
   }
 
   function stopTimers() {
@@ -111,6 +139,7 @@
 
   function closeSocket() {
     stopTimers();
+    disposeAllEditors();
     var ws = S.ws;
     S.ws = null;
     S.joined = false;
@@ -168,6 +197,9 @@
     var was = S.ws;
     S.ws = null;
     S.joined = false;
+    // Yjs docs are bound to this socket's sync session; drop them but keep
+    // the tab list so a reconnect re-opens the same files.
+    disposeAllEditors();
     if (S.screen !== "workspace" || !S.code) return;
     if (was && S.reconnectAttempt >= MAX_RECONNECT) {
       setConn("failed");
@@ -193,6 +225,7 @@
         S.reconnectAttempt = 0;
         S.memberId = msg.you && msg.you.id;
         S.role = (msg.you && msg.you.role) || "member";
+        S.myColor = UI.pickPresenceColor ? UI.pickPresenceColor(S.memberId) : "#CC8066";
         if (msg.room && msg.room.name) {
           S.roomName = msg.room.name;
           var kr = knownRoom(S.code);
@@ -202,10 +235,18 @@
         }
         S.members = Array.isArray(msg.members) ? msg.members : [];
         S.chat = Array.isArray(msg.chat) ? msg.chat.slice(-200) : [];
+        S.files = Array.isArray(msg.files) ? msg.files : [];
         setConn("connected");
         startHeartbeat();
         paintMembers();
         paintChat(true);
+        paintFiles();
+        paintRoomAdmin();
+        // Re-open the tabs that were open before a reconnect.
+        var reopen = S.openFileIds.slice();
+        S.openFileIds = [];
+        S.activeFileId = null;
+        reopen.forEach(function (fid) { openFileTab(fid, true); });
         if (typeof announce === "function") announce("Joined room " + S.roomName + ". " + S.members.length + " members online.");
         break;
       case "LEFT":
@@ -230,6 +271,44 @@
         break;
       case "ERROR":
         handleServerError(msg);
+        break;
+      case "FILE_LIST_RESULT":
+        if (Array.isArray(msg.files)) { S.files = msg.files; paintFiles(); }
+        break;
+      case "FILE_EVENT":
+        onFileEvent(msg);
+        break;
+      case "YJS_SYNC":
+        onYjsSync(msg);
+        break;
+      case "AWARENESS":
+        onAwareness(msg);
+        break;
+      case "ROOM_RENAMED":
+        if (msg.name) {
+          S.roomName = msg.name;
+          var t2 = document.getElementById("rm-room-title");
+          if (t2) t2.textContent = msg.name;
+          var kr2 = knownRoom(S.code);
+          if (kr2) { kr2.name = msg.name; upsertKnownRoom(kr2); }
+          if (typeof announce === "function") announce("Room renamed to " + msg.name);
+        }
+        break;
+      case "ROOM_DELETED":
+        toast("This room was deleted by its owner.");
+        leaveToList();
+        break;
+      case "FILE_SNAPSHOT":
+        if (msg.fileId) setSaveState(msg.fileId, msg.ok ? "saved" : "failed");
+        break;
+      case "VERSIONS":
+        if (msg.fileId && Array.isArray(msg.versions)) {
+          S.versions[msg.fileId] = msg.versions;
+          renderVersionsModal(msg.fileId);
+        }
+        break;
+      case "VERSION_TEXT":
+        if (msg.fileId) renderVersionPreview(msg.fileId, msg.ts, msg.text || "");
         break;
       /* WEBRTC_* relays arrive here in Phase 3; ignore until then. */
       default:
@@ -560,6 +639,9 @@
     var inviteBtn = el("button", "btn sm", "Invite");
     inviteBtn.onclick = function () { showInvite(); };
     head.appendChild(inviteBtn);
+    var adminSlot = el("span", "rm-admin");
+    adminSlot.id = "rm-admin";
+    head.appendChild(adminSlot);
     var leaveBtn = el("button", "btn ghost sm", "Leave");
     leaveBtn.onclick = function () { leaveToList(); };
     head.appendChild(leaveBtn);
@@ -572,23 +654,92 @@
       return;
     }
 
-    var tabs = el("div", "rm-tabs");
-    var tabChat = el("button", "rm-tab on", "Chat");
-    var tabMembers = el("button", "rm-tab", "Members");
-    tabs.appendChild(tabChat);
-    tabs.appendChild(tabMembers);
-    view.appendChild(tabs);
+    /* Mobile main tabs: Files | Editor | Chat | Members. */
+    var mtabs = el("div", "rm-tabs rm-maintabs");
+    mtabs.setAttribute("role", "tablist");
+    mtabs.setAttribute("aria-label", "Room panels");
+    var mtabBtns = {};
+    ["files", "editor", "chat", "members"].forEach(function (name) {
+      var b = el("button", "rm-tab" + (S.mtab === name ? " on" : ""), name.charAt(0).toUpperCase() + name.slice(1));
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", S.mtab === name ? "true" : "false");
+      b.onclick = function () { setMtab(name); };
+      mtabBtns[name] = b;
+      mtabs.appendChild(b);
+    });
+    view.appendChild(mtabs);
+
+    function setMtab(name) {
+      S.mtab = name;
+      var bodyEl = document.getElementById("rm-body");
+      if (bodyEl) bodyEl.dataset.mtab = name;
+      Object.keys(mtabBtns).forEach(function (k) {
+        mtabBtns[k].classList.toggle("on", k === name);
+        mtabBtns[k].setAttribute("aria-selected", k === name ? "true" : "false");
+      });
+    }
 
     var body = el("div", "rm-body");
     body.id = "rm-body";
-    var membersPanel = el("aside", "rm-members-panel panel");
+    body.dataset.mtab = S.mtab;
+
+    /* Files panel. */
+    var filesPanel = el("aside", "rm-files-panel panel");
+    filesPanel.setAttribute("aria-label", "Shared files");
+    var filesHead = el("div", "rm-files-head");
+    filesHead.appendChild(el("h3", null, "Files"));
+    var newFileBtn = el("button", "btn ghost sm", "+ New");
+    newFileBtn.setAttribute("aria-label", "Create a new shared file");
+    newFileBtn.onclick = function () {
+      openPromptDialog({
+        title: "New file",
+        label: "File path",
+        value: "",
+        placeholder: "docs/notes.md",
+        okText: "Create",
+        onOk: function (v) { doCreateFile(v); },
+      });
+    };
+    filesHead.appendChild(newFileBtn);
+    filesPanel.appendChild(filesHead);
+    var tree = el("div", "rm-files-tree");
+    tree.id = "rm-files-tree";
+    tree.setAttribute("role", "tree");
+    tree.setAttribute("aria-label", "Shared files");
+    filesPanel.appendChild(tree);
+    body.appendChild(filesPanel);
+
+    /* Editor panel. */
+    var editorPanel = el("section", "rm-editor-panel panel");
+    editorPanel.setAttribute("aria-label", "Shared editor");
+    var edTabs = el("div", "rm-ed-tabs");
+    edTabs.id = "rm-ed-tabs";
+    edTabs.setAttribute("role", "tablist");
+    edTabs.setAttribute("aria-label", "Open files");
+    editorPanel.appendChild(edTabs);
+    var edWrap = el("div", "rm-ed-wrap");
+    edWrap.id = "rm-editor";
+    editorPanel.appendChild(edWrap);
+    body.appendChild(editorPanel);
+
+    /* Side column: members + chat with their own sub-tabs. */
+    var side = el("div", "rm-side panel");
+    side.id = "rm-side";
+    var subtabs = el("div", "rm-tabs rm-subtabs");
+    var tabChat = el("button", "rm-tab on", "Chat");
+    var tabMembers = el("button", "rm-tab", "Members");
+    subtabs.appendChild(tabChat);
+    subtabs.appendChild(tabMembers);
+    side.appendChild(subtabs);
+
+    var membersPanel = el("aside", "rm-members-panel");
     membersPanel.setAttribute("aria-label", "Room members");
     membersPanel.appendChild(el("h3", null, "Members"));
     var mlist = el("div", "rm-members");
     mlist.id = "rm-members";
     membersPanel.appendChild(mlist);
 
-    var chatPanel = el("section", "rm-chat-panel panel");
+    var chatPanel = el("section", "rm-chat-panel");
     chatPanel.setAttribute("aria-label", "Room chat");
     var log = el("div", "rm-chat-log");
     log.id = "rm-chat-log";
@@ -617,17 +768,18 @@
     retry.onclick = function () { S.reconnectAttempt = 0; connect(); };
     chatPanel.appendChild(retry);
 
-    body.appendChild(membersPanel);
-    body.appendChild(chatPanel);
+    side.appendChild(membersPanel);
+    side.appendChild(chatPanel);
+    body.appendChild(side);
     view.appendChild(body);
 
     tabChat.onclick = function () {
       tabChat.classList.add("on"); tabMembers.classList.remove("on");
-      body.classList.remove("rm-show-members");
+      side.classList.remove("rm-show-members");
     };
     tabMembers.onclick = function () {
       tabMembers.classList.add("on"); tabChat.classList.remove("on");
-      body.classList.add("rm-show-members");
+      side.classList.add("rm-show-members");
     };
 
     form.addEventListener("submit", function (ev) {
@@ -652,6 +804,10 @@
 
     paintMembers();
     paintChat(false);
+    paintFiles();
+    paintEdTabs();
+    paintEditor();
+    paintRoomAdmin();
     if (reuse) {
       setConn("connected");
     } else {
@@ -757,6 +913,718 @@
   function closeModal() {
     var back = document.querySelector(".rm-modal-back");
     if (back && back.parentNode) back.parentNode.removeChild(back);
+  }
+
+  /* ---------- collaborative editing (Phase 2) ---------- */
+
+  var YJS_URL = "/src/web/app/vendor/yjs.bundle.js";
+  var yjsLoading = false;
+  var yjsWaiters = [];
+
+  /** Lazily load the yjs browser bundle (only on the Rooms route). */
+  function ensureYjs(cb) {
+    if (window.Y && window.Y.Doc) { cb(true); return; }
+    yjsWaiters.push(cb);
+    if (yjsLoading) return;
+    yjsLoading = true;
+    var s = document.createElement("script");
+    s.src = YJS_URL;
+    s.async = true;
+    s.onload = function () {
+      yjsLoading = false;
+      var ok = !!(window.Y && window.Y.Doc);
+      var ws = yjsWaiters.splice(0);
+      ws.forEach(function (fn) { try { fn(ok); } catch (e) {} });
+      if (!ok) showError("Couldn't load the collaborative editor. Run npm run build on the server.");
+    };
+    s.onerror = function () {
+      yjsLoading = false;
+      var ws = yjsWaiters.splice(0);
+      ws.forEach(function (fn) { try { fn(false); } catch (e) {} });
+      showError("Couldn't load the collaborative editor (yjs bundle missing). Run npm run build on the server.");
+    };
+    document.head.appendChild(s);
+  }
+
+  function yjsFrame(kind, payload) {
+    // kind: 0 step1, 1 step2, 2 update
+    return UI.b64encodeBytes(UI.encodeSyncFrame(kind, payload));
+  }
+
+  function fileById(fileId) {
+    for (var i = 0; i < S.files.length; i++) {
+      if (S.files[i].id === fileId) return S.files[i];
+    }
+    return null;
+  }
+
+  function isOwner() { return S.role === "owner"; }
+
+  /* ----- editor lifecycle ----- */
+
+  function openFileTab(fileId, quiet) {
+    var meta = fileById(fileId);
+    if (!meta) return;
+    if (S.editors[fileId]) { setActiveFile(fileId); return; }
+    ensureYjs(function (ok) {
+      if (!ok) return;
+      if (S.editors[fileId] || !S.joined) return;
+      var doc = new window.Y.Doc();
+      var ytext = doc.getText("content");
+      var ed = {
+        fileId: fileId,
+        doc: doc,
+        ytext: ytext,
+        ta: null,
+        lastText: "",
+        disposed: false,
+        awareTimer: null,
+        lastAwareSent: 0,
+      };
+      doc.on("update", function (update, origin) { onDocUpdate(ed, update, origin); });
+      S.editors[fileId] = ed;
+      if (S.openFileIds.indexOf(fileId) === -1) S.openFileIds.push(fileId);
+      setActiveFile(fileId);
+      // y-websocket handshake, client side: ask the server for its state.
+      sendMsg({ type: "FILE_OPEN", fileId: fileId });
+      if (!quiet && typeof announce === "function") announce("Opened " + meta.path);
+    });
+  }
+
+  function setActiveFile(fileId) {
+    S.activeFileId = fileId;
+    paintEdTabs();
+    paintEditor();
+  }
+
+  function closeFileTab(fileId) {
+    sendMsg({ type: "FILE_CLOSE", fileId: fileId });
+    disposeEditor(fileId);
+    S.openFileIds = S.openFileIds.filter(function (id) { return id !== fileId; });
+    delete S.saveState[fileId];
+    delete S.awareness[fileId];
+    if (S.activeFileId === fileId) {
+      S.activeFileId = S.openFileIds.length ? S.openFileIds[S.openFileIds.length - 1] : null;
+    }
+    paintEdTabs();
+    paintEditor();
+  }
+
+  /** Apply Y.Text ops from a local textarea edit (origin "local"). */
+  function applyOpsToYText(ytext, ops) {
+    var index = 0;
+    for (var i = 0; i < ops.length; i++) {
+      var op = ops[i];
+      if (op.retain) index += op.retain;
+      if (op.delete) ytext.delete(index, op.delete);
+      if (op.insert) { ytext.insert(index, op.insert); index += op.insert.length; }
+    }
+  }
+
+  function onLocalInput(ed) {
+    var ta = ed.ta;
+    if (!ta || ed.disposed) return;
+    var next = ta.value;
+    if (next === ed.lastText) return;
+    var ops = UI.diffTextToOps(ed.lastText, next);
+    ed.lastText = next;
+    if (!ops.length) return;
+    try {
+      ed.doc.transact(function () { applyOpsToYText(ed.ytext, ops); }, "local");
+    } catch (e) {
+      showError("Couldn't apply your edit. Reopen the file and try again.");
+    }
+  }
+
+  /** Y.Doc update handler: broadcast local edits, render remote ones. */
+  function onDocUpdate(ed, update, origin) {
+    if (ed.disposed) return;
+    if (origin === "local") {
+      sendMsg({ type: "YJS_SYNC", fileId: ed.fileId, kind: "update", data: yjsFrame(2, update) });
+    } else {
+      renderRemoteText(ed);
+      noteRemoteEdit(ed.fileId);
+    }
+    setSaveState(ed.fileId, "saving");
+  }
+
+  /** Re-render the textarea after a remote update, preserving the caret. */
+  function renderRemoteText(ed) {
+    var ta = ed.ta;
+    var text = ed.ytext.toString();
+    ed.lastText = text;
+    if (!ta) return;
+    if (ta.value === text) return;
+    var focused = false;
+    var s = 0, e = 0;
+    try {
+      focused = document.activeElement === ta;
+      s = ta.selectionStart || 0;
+      e = ta.selectionEnd || 0;
+    } catch (err) {}
+    ta.value = text;
+    if (focused) {
+      try { ta.setSelectionRange(Math.min(s, text.length), Math.min(e, text.length)); } catch (err2) {}
+    }
+    updateCursorStatus(ed);
+  }
+
+  /** Throttled screen-reader note for remote edits ("Rahul edited app.ts"). */
+  function noteRemoteEdit(fileId) {
+    var now = Date.now();
+    if (now - (S.editAnnounce[fileId] || 0) < 5000) return;
+    S.editAnnounce[fileId] = now;
+    var meta = fileById(fileId);
+    if (typeof announce === "function" && meta) announce("Remote edit received in " + meta.path);
+  }
+
+  /* ----- sync protocol (mirrors y-websocket semantics) ----- */
+
+  function onYjsSync(msg) {
+    if (!msg.fileId || typeof msg.data !== "string") return;
+    var ed = S.editors[msg.fileId];
+    if (!ed || ed.disposed || !window.Y) return;
+    var raw = UI.b64decodeBytes(msg.data);
+    if (!raw) return;
+    var frame = UI.decodeSyncFrame(raw);
+    if (!frame) return;
+    var Y = window.Y;
+
+    if (msg.kind === "step1" && frame.type === 0) {
+      // Server asks what it's missing: reply step2 with our diff...
+      var diff = Y.encodeStateAsUpdate(ed.doc, frame.payload);
+      sendMsg({ type: "YJS_SYNC", fileId: ed.fileId, kind: "step2", data: yjsFrame(1, diff) });
+      // ...and send our own step1 so the server tells us what WE are missing.
+      var sv = Y.encodeStateVector(ed.doc);
+      sendMsg({ type: "YJS_SYNC", fileId: ed.fileId, kind: "step1", data: yjsFrame(0, sv) });
+    } else if (msg.kind === "step2" && frame.type === 1) {
+      try { Y.applyUpdate(ed.doc, frame.payload, "sync"); }
+      catch (e) { /* corrupt update — the next handshake repairs */ }
+    } else if (msg.kind === "update" && frame.type === 2) {
+      try { Y.applyUpdate(ed.doc, frame.payload, "remote"); }
+      catch (e) { /* ignore malformed updates */ }
+    }
+  }
+
+  /* ----- file events ----- */
+
+  function onFileEvent(msg) {
+    if (msg.event === "created" && msg.file) {
+      if (!fileById(msg.file.id)) S.files.push(msg.file);
+      paintFiles();
+      if (typeof announce === "function") announce("File created: " + msg.file.path);
+    } else if (msg.event === "renamed" && msg.file) {
+      var m = fileById(msg.file.id);
+      if (m) { m.path = msg.file.path; m.updatedAt = msg.file.updatedAt; }
+      paintFiles();
+      paintEdTabs();
+      if (typeof announce === "function") announce("File renamed to " + msg.file.path);
+    } else if (msg.event === "deleted" && msg.fileId) {
+      S.files = S.files.filter(function (f) { return f.id !== msg.fileId; });
+      if (S.editors[msg.fileId]) {
+        toast("A file you had open was deleted by the owner.");
+        closeFileTab(msg.fileId);
+      }
+      paintFiles();
+      if (typeof announce === "function") announce("A file was deleted.");
+    }
+  }
+
+  function doCreateFile(path) {
+    var clean = UI.sanitizeCollabPath ? UI.sanitizeCollabPath(path) : null;
+    if (!clean) {
+      showError("That path isn't valid. Use a relative path like docs/notes.md.");
+      return;
+    }
+    if (!sendMsg({ type: "FILE_CREATE", path: clean })) {
+      showError("Not connected. Wait for the green dot and try again.");
+    }
+  }
+
+  function doRenameFile(fileId, newPath) {
+    var clean = UI.sanitizeCollabPath ? UI.sanitizeCollabPath(newPath) : null;
+    if (!clean) {
+      showError("That path isn't valid. Use a relative path like docs/notes.md.");
+      return;
+    }
+    sendMsg({ type: "FILE_RENAME", fileId: fileId, newPath: clean });
+  }
+
+  function doDeleteFile(fileId) {
+    var meta = fileById(fileId);
+    openConfirmDialog({
+      title: "Delete file?",
+      body: "Delete \"" + (meta ? meta.path : fileId) + "\" for everyone in this room? This can't be undone.",
+      okText: "Delete",
+      danger: true,
+      onOk: function () { sendMsg({ type: "FILE_DELETE", fileId: fileId }); },
+    });
+  }
+
+  /* ----- dialogs (prompt / confirm) ----- */
+
+  function openDialogShell(title, labelledBy) {
+    closeModal();
+    var back = el("div", "rm-modal-back");
+    var modal = el("div", "rm-modal");
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", title);
+    if (labelledBy) modal.setAttribute("aria-labelledby", labelledBy);
+    modal.appendChild(el("div", "rm-modal-title", title));
+    back.appendChild(modal);
+    back.addEventListener("click", function (ev) { if (ev.target === back) closeModal(); });
+    document.body.appendChild(back);
+    document.addEventListener("keydown", escCloses, { once: true });
+    return { back: back, modal: modal };
+  }
+
+  function openPromptDialog(opts) {
+    // opts: {title, label, value, placeholder, okText, onOk(value)}
+    var shell = openDialogShell(opts.title);
+    var modal = shell.modal;
+    var input = el("input", "input");
+    input.value = opts.value || "";
+    input.placeholder = opts.placeholder || "";
+    input.setAttribute("aria-label", opts.label || opts.title);
+    modal.appendChild(input);
+    var row = el("div", "rm-row");
+    var ok = el("button", "btn primary", opts.okText || "Save");
+    var cancel = el("button", "btn ghost", "Cancel");
+    row.appendChild(ok);
+    row.appendChild(cancel);
+    modal.appendChild(row);
+    var done = false;
+    var submit = function () {
+      if (done) return;
+      done = true;
+      var v = input.value;
+      closeModal();
+      opts.onOk(v);
+    };
+    ok.onclick = submit;
+    cancel.onclick = closeModal;
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); submit(); }
+    });
+    setTimeout(function () { try { input.focus(); input.select(); } catch (e) {} }, 50);
+  }
+
+  function openConfirmDialog(opts) {
+    // opts: {title, body, okText, danger, onOk}
+    var shell = openDialogShell(opts.title);
+    var modal = shell.modal;
+    modal.appendChild(el("p", "muted", opts.body || ""));
+    var row = el("div", "rm-row");
+    var ok = el("button", opts.danger ? "btn danger" : "btn primary", opts.okText || "Confirm");
+    var cancel = el("button", "btn ghost", "Cancel");
+    row.appendChild(ok);
+    row.appendChild(cancel);
+    modal.appendChild(row);
+    ok.onclick = function () { closeModal(); opts.onOk(); };
+    cancel.onclick = closeModal;
+    setTimeout(function () { try { cancel.focus(); } catch (e) {} }, 50);
+  }
+
+  /* ----- file explorer ----- */
+
+  function paintFiles() {
+    var tree = document.getElementById("rm-files-tree");
+    if (!tree) return;
+    tree.innerHTML = "";
+    if (!S.files.length) {
+      tree.appendChild(el("div", "rm-empty", "No files yet. Create the first one."));
+      return;
+    }
+    var nodes = UI.buildFileTree ? UI.buildFileTree(S.files) : [];
+    nodes.forEach(function (n) { tree.appendChild(treeNodeEl(n, 0)); });
+  }
+
+  function treeNodeEl(node, depth) {
+    if (node.dir) {
+      var wrap = el("div", "rm-dir");
+      var collapsed = !!S.collapsedDirs[node.path];
+      var head = el("button", "rm-dir-head" + (collapsed ? " closed" : ""));
+      head.style.paddingLeft = (8 + depth * 14) + "px";
+      head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      var caret = el("span", "rm-caret", collapsed ? "▸" : "▾");
+      caret.setAttribute("aria-hidden", "true");
+      head.appendChild(caret);
+      head.appendChild(el("span", "rm-dir-name", "📁 " + node.name));
+      head.onclick = function () {
+        S.collapsedDirs[node.path] = !S.collapsedDirs[node.path];
+        paintFiles();
+      };
+      wrap.appendChild(head);
+      if (!collapsed) {
+        node.children.forEach(function (c) { wrap.appendChild(treeNodeEl(c, depth + 1)); });
+      }
+      return wrap;
+    }
+    var row = el("div", "rm-file" + (S.activeFileId === node.id ? " active" : ""));
+    var open = el("button", "rm-file-open");
+    open.style.paddingLeft = (8 + depth * 14) + "px";
+    open.setAttribute("aria-label", "Open file " + node.path);
+    var icon = el("span", "rm-file-icon", "📄");
+    icon.setAttribute("aria-hidden", "true");
+    open.appendChild(icon);
+    open.appendChild(el("span", "rm-file-name", node.name));
+    open.onclick = function () { openFileTab(node.id); };
+    row.appendChild(open);
+    if (isOwner()) {
+      var menu = el("button", "rm-file-menu", "⋮");
+      menu.setAttribute("aria-label", "File actions for " + node.path);
+      menu.setAttribute("aria-haspopup", "menu");
+      menu.onclick = function (ev) { ev.stopPropagation(); showFileMenu(node, menu); };
+      row.appendChild(menu);
+    } else {
+      var lock = el("span", "rm-file-lock", "🔒");
+      lock.title = "Only the room owner can rename or delete files";
+      lock.setAttribute("aria-label", "Only the room owner can rename or delete files");
+      row.appendChild(lock);
+    }
+    return row;
+  }
+
+  function showFileMenu(node, anchor) {
+    closeFileMenu();
+    var menu = el("div", "rm-ctx-menu");
+    menu.setAttribute("role", "menu");
+    var rename = el("button", "rm-ctx-item", "Rename");
+    rename.setAttribute("role", "menuitem");
+    rename.onclick = function () {
+      closeFileMenu();
+      openPromptDialog({
+        title: "Rename file",
+        label: "New path",
+        value: node.path,
+        placeholder: "docs/notes.md",
+        okText: "Rename",
+        onOk: function (v) { doRenameFile(node.id, v); },
+      });
+    };
+    var del = el("button", "rm-ctx-item danger", "Delete");
+    del.setAttribute("role", "menuitem");
+    del.onclick = function () { closeFileMenu(); doDeleteFile(node.id); };
+    menu.appendChild(rename);
+    menu.appendChild(del);
+    document.body.appendChild(menu);
+    var r = anchor.getBoundingClientRect();
+    menu.style.position = "fixed";
+    menu.style.top = Math.min(r.bottom + 4, window.innerHeight - 120) + "px";
+    menu.style.left = Math.max(8, r.right - 140) + "px";
+    menu.id = "rm-file-menu-el";
+    setTimeout(function () {
+      document.addEventListener("click", closeFileMenu, { once: true });
+      document.addEventListener("keydown", function esc(ev) {
+        if (ev.key === "Escape") { closeFileMenu(); }
+        else document.addEventListener("keydown", esc, { once: true });
+      }, { once: true });
+    }, 0);
+    rename.focus();
+  }
+
+  function closeFileMenu() {
+    var m = document.getElementById("rm-file-menu-el");
+    if (m && m.parentNode) m.parentNode.removeChild(m);
+  }
+
+  /* ----- editor ----- */
+
+  function paintEdTabs() {
+    var tabs = document.getElementById("rm-ed-tabs");
+    if (!tabs) return;
+    tabs.innerHTML = "";
+    S.openFileIds.forEach(function (fid) {
+      var meta = fileById(fid);
+      if (!meta) return;
+      var tab = el("div", "rm-ed-tab" + (S.activeFileId === fid ? " active" : ""));
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", S.activeFileId === fid ? "true" : "false");
+      var label = el("button", "rm-ed-tab-label", meta.path.split("/").pop());
+      label.title = meta.path;
+      label.setAttribute("aria-label", "Switch to " + meta.path);
+      label.onclick = function () { setActiveFile(fid); };
+      var x = el("button", "rm-ed-tab-x", "×");
+      x.setAttribute("aria-label", "Close " + meta.path);
+      x.onclick = function (ev) { ev.stopPropagation(); closeFileTab(fid); };
+      tab.appendChild(label);
+      tab.appendChild(x);
+      tabs.appendChild(tab);
+    });
+  }
+
+  function paintEditor() {
+    var wrap = document.getElementById("rm-editor");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    var fid = S.activeFileId;
+    var ed = fid ? S.editors[fid] : null;
+    var meta = fid ? fileById(fid) : null;
+    if (!ed || !meta) {
+      var empty = el("div", "rm-ed-empty");
+      empty.appendChild(el("div", "rm-ed-empty-title", S.files.length ? "Open a file to start editing together" : "No files yet"));
+      empty.appendChild(el("p", "muted small", S.files.length
+        ? "Pick a file from the explorer. Edits sync live via CRDT — no overwrites."
+        : "Create the first file from the explorer panel."));
+      wrap.appendChild(empty);
+      updateCursorStatus(null);
+      return;
+    }
+    // Presence chips: who's here, with cursor positions.
+    var chips = el("div", "rm-ed-presence");
+    chips.id = "rm-ed-presence";
+    wrap.appendChild(chips);
+    paintPresenceChips();
+
+    var ta = el("textarea", "rm-ed-area");
+    ta.id = "rm-ed-area";
+    ta.value = ed.ytext.toString();
+    ed.lastText = ta.value;
+    ta.setAttribute("aria-label", "Shared editor for " + meta.path);
+    ta.spellcheck = false;
+    ta.autocapitalize = "off";
+    ta.autocomplete = "off";
+    ta.wrap = "off";
+    wrap.appendChild(ta);
+    ed.ta = ta;
+
+    ta.addEventListener("input", function () { onLocalInput(ed); });
+    var aware = function () { sendAwareness(ed); };
+    ta.addEventListener("keyup", aware);
+    ta.addEventListener("click", aware);
+    ta.addEventListener("select", aware);
+    ta.addEventListener("keyup", function () { updateCursorStatus(ed); });
+    ta.addEventListener("click", function () { updateCursorStatus(ed); });
+
+    // Status bar.
+    var bar = el("div", "rm-ed-status");
+    var save = el("span", "rm-ed-save");
+    save.id = "rm-ed-save";
+    bar.appendChild(save);
+    var path = el("span", "rm-ed-path", meta.path);
+    bar.appendChild(path);
+    var cursor = el("span", "rm-ed-cursor");
+    cursor.id = "rm-ed-cursor";
+    bar.appendChild(cursor);
+    var vers = el("button", "btn ghost sm", "Versions");
+    vers.setAttribute("aria-label", "Version history for " + meta.path);
+    vers.onclick = function () { sendMsg({ type: "VERSION_LIST", fileId: fid }); };
+    bar.appendChild(vers);
+    wrap.appendChild(bar);
+    paintSaveState(fid);
+    updateCursorStatus(ed);
+  }
+
+  function updateCursorStatus(ed) {
+    var c = document.getElementById("rm-ed-cursor");
+    if (!c) return;
+    if (!ed || !ed.ta) { c.textContent = ""; return; }
+    try {
+      var pos = ed.ta.selectionStart || 0;
+      var lc = UI.indexToLineCol ? UI.indexToLineCol(ed.ta.value, pos) : { line: 1, col: 1 };
+      c.textContent = "Ln " + lc.line + ", Col " + lc.col;
+    } catch (e) { c.textContent = ""; }
+  }
+
+  function paintSaveState(fileId) {
+    var save = document.getElementById("rm-ed-save");
+    if (!save || S.activeFileId !== fileId) return;
+    var st = S.saveState[fileId] || "saved";
+    save.className = "rm-ed-save " + st;
+    if (st === "saved") {
+      save.textContent = "🟢 Saved";
+    } else if (st === "saving") {
+      save.textContent = "🟡 Saving…";
+    } else {
+      save.textContent = "";
+      save.appendChild(el("span", null, "🔴 Save failed "));
+      var retry = el("button", "btn ghost sm", "Retry save");
+      retry.onclick = function () {
+        setSaveState(fileId, "saving");
+        sendMsg({ type: "FILE_SNAPSHOT_REQ", fileId: fileId });
+      };
+      save.appendChild(retry);
+    }
+    save.setAttribute("role", "status");
+  }
+
+  function setSaveState(fileId, st) {
+    S.saveState[fileId] = st;
+    paintSaveState(fileId);
+  }
+
+  /* ----- awareness (cursor presence) ----- */
+
+  function sendAwareness(ed) {
+    if (!S.joined || ed.disposed || !ed.ta) return;
+    var now = Date.now();
+    if (now - ed.lastAwareSent < 250) return; // ~4/s max
+    ed.lastAwareSent = now;
+    var ta = ed.ta;
+    var idx = 0;
+    try { idx = ta.selectionStart || 0; } catch (e) {}
+    var lc = UI.indexToLineCol ? UI.indexToLineCol(ta.value, idx) : { line: 1, col: 1 };
+    var sel = null;
+    try {
+      if (ta.selectionStart !== ta.selectionEnd) sel = { anchor: ta.selectionStart, head: ta.selectionEnd };
+    } catch (e) {}
+    sendMsg({
+      type: "AWARENESS_UPDATE",
+      fileId: ed.fileId,
+      cursor: { index: idx, line: lc.line, col: lc.col },
+      selection: sel,
+      color: S.myColor || "#CC8066",
+    });
+  }
+
+  function onAwareness(msg) {
+    if (!msg.fileId || !msg.memberId || msg.memberId === S.memberId) return;
+    if (!S.awareness[msg.fileId]) S.awareness[msg.fileId] = {};
+    S.awareness[msg.fileId][msg.memberId] = {
+      name: msg.displayName || "Someone",
+      color: msg.color || "#888",
+      cursor: msg.cursor,
+      ts: Date.now(),
+    };
+    if (S.activeFileId === msg.fileId) paintPresenceChips();
+  }
+
+  function paintPresenceChips() {
+    var chips = document.getElementById("rm-ed-presence");
+    if (!chips || !S.activeFileId) return;
+    chips.innerHTML = "";
+    var now = Date.now();
+    var map = S.awareness[S.activeFileId] || {};
+    var any = false;
+    Object.keys(map).forEach(function (mid) {
+      var a = map[mid];
+      if (now - a.ts > 10_000) { delete map[mid]; return; } // stale
+      any = true;
+      var chip = el("span", "rm-presence-chip");
+      var dot = el("span", "rm-presence-dot");
+      dot.style.background = a.color;
+      dot.setAttribute("aria-hidden", "true");
+      chip.appendChild(dot);
+      var label = (a.name || "Someone") + (a.cursor ? " · Ln " + a.cursor.line + ", Col " + a.cursor.col : "");
+      chip.appendChild(el("span", null, label));
+      chip.title = label;
+      chips.appendChild(chip);
+    });
+    if (!any) {
+      chips.appendChild(el("span", "rm-presence-none", "Only you are viewing this file."));
+    }
+  }
+
+  /* ----- versions ----- */
+
+  function renderVersionsModal(fileId) {
+    closeModal();
+    var meta = fileById(fileId);
+    var list = S.versions[fileId] || [];
+    var shell = openDialogShell("Version history" + (meta ? " — " + meta.path : ""));
+    var modal = shell.modal;
+    if (!list.length) {
+      modal.appendChild(el("p", "muted", "No versions saved yet. Versions are recorded automatically as you edit."));
+    } else {
+      var ul = el("div", "rm-versions");
+      // Newest first.
+      list.slice().reverse().forEach(function (v) {
+        var row = el("div", "rm-version");
+        var info = el("button", "rm-version-info");
+        var when = UI.timeAgo ? UI.timeAgo(v.ts, Date.now()) : new Date(v.ts).toLocaleString();
+        info.appendChild(el("div", "rm-version-when", when));
+        info.appendChild(el("div", "rm-version-who", "by " + (v.authorName || "someone")));
+        info.setAttribute("aria-label", "Preview version from " + when);
+        info.onclick = function () { sendMsg({ type: "VERSION_TEXT", fileId: fileId, ts: v.ts }); };
+        row.appendChild(info);
+        if (isOwner()) {
+          var restore = el("button", "btn sm", "Restore");
+          restore.setAttribute("aria-label", "Restore version from " + when);
+          restore.onclick = function (ev) {
+            ev.stopPropagation();
+            openConfirmDialog({
+              title: "Restore this version?",
+              body: "This applies the old version as a new edit — everyone in the room will receive it. The current content becomes a new version too.",
+              okText: "Restore",
+              onOk: function () { sendMsg({ type: "VERSION_RESTORE", fileId: fileId, ts: v.ts }); },
+            });
+          };
+          row.appendChild(restore);
+        }
+        ul.appendChild(row);
+      });
+      modal.appendChild(ul);
+    }
+    var done = el("button", "btn primary", "Close");
+    done.onclick = closeModal;
+    modal.appendChild(done);
+    setTimeout(function () { try { done.focus(); } catch (e) {} }, 50);
+  }
+
+  function renderVersionPreview(fileId, ts, text) {
+    var shell = openDialogShell("Version preview");
+    var modal = shell.modal;
+    var meta = fileById(fileId);
+    modal.appendChild(el("p", "muted small", (meta ? meta.path + " · " : "") + new Date(ts).toLocaleString()));
+    var ta = el("textarea", "rm-version-preview");
+    ta.value = text;
+    ta.readOnly = true;
+    ta.setAttribute("aria-label", "Read-only version preview");
+    modal.appendChild(ta);
+    var row = el("div", "rm-row");
+    if (isOwner()) {
+      var restore = el("button", "btn primary", "Restore this version");
+      restore.onclick = function () {
+        closeModal();
+        openConfirmDialog({
+          title: "Restore this version?",
+          body: "This applies the old version as a new edit — everyone in the room will receive it.",
+          okText: "Restore",
+          onOk: function () { sendMsg({ type: "VERSION_RESTORE", fileId: fileId, ts: ts }); },
+        });
+      };
+      row.appendChild(restore);
+    }
+    var back = el("button", "btn ghost", "Back");
+    back.onclick = function () { renderVersionsModal(fileId); };
+    row.appendChild(back);
+    modal.appendChild(row);
+  }
+
+  /* ----- room admin (owner) ----- */
+
+  function paintRoomAdmin() {
+    var admin = document.getElementById("rm-admin");
+    if (!admin) return;
+    admin.innerHTML = "";
+    if (!isOwner()) return;
+    var rename = el("button", "btn ghost sm", "Rename room");
+    rename.onclick = function () {
+      openPromptDialog({
+        title: "Rename room",
+        label: "Room name",
+        value: S.roomName,
+        placeholder: "Room name",
+        okText: "Rename",
+        onOk: function (v) {
+          var name = v.trim();
+          if (name) sendMsg({ type: "ROOM_RENAME", name: name });
+        },
+      });
+    };
+    var del = el("button", "btn ghost sm rm-danger", "Delete room");
+    del.onclick = function () {
+      openConfirmDialog({
+        title: "Delete room?",
+        body: "Delete \"" + S.roomName + "\" for everyone? Files, chat history, and versions will be removed from the server.",
+        okText: "Delete room",
+        danger: true,
+        onOk: function () { sendMsg({ type: "ROOM_DELETE" }); },
+      });
+    };
+    admin.appendChild(rename);
+    admin.appendChild(del);
   }
 
   /* ---------- route entry ---------- */

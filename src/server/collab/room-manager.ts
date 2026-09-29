@@ -212,6 +212,35 @@ export class RoomManager {
     return true;
   }
 
+  /**
+   * Owner-verified rename without a token: the WebSocket layer already proved
+   * ownership server-side (the member's role was derived from the owner token
+   * at join). Never call with a client-supplied role.
+   */
+  renameRoomByOwner(code: unknown, name: unknown): boolean {
+    const rec = this.rooms.get(normalizeRoomCode(code));
+    if (!rec) return false;
+    const clean = sanitizeRoomName(name);
+    if (!clean) return false;
+    rec.name = clean;
+    this.scheduleSave();
+    return true;
+  }
+
+  /** Owner-verified delete without a token (see renameRoomByOwner). */
+  deleteRoomByOwner(code: unknown): boolean {
+    const id = normalizeRoomCode(code);
+    if (!this.rooms.has(id)) return false;
+    this.rooms.delete(id);
+    this.scheduleSave();
+    return true;
+  }
+
+  /** True when the member id belongs to the room's owner. */
+  isRoomOwner(code: unknown, memberId: string): boolean {
+    return this.memberOf(code, memberId)?.role === "owner";
+  }
+
   private publicRoom(rec: RoomRecord): RoomPublic {
     return { id: rec.id, name: rec.name, createdAt: rec.createdAt, memberCount: Object.keys(rec.members).length };
   }

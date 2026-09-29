@@ -811,6 +811,207 @@
     }
   }
 
+  /* ========================================================================
+     Collaborative editing (Phase 2) — pure helpers for the Yjs binding.
+     ======================================================================== */
+
+  /**
+   * Base64 encode a Uint8Array. Uses Buffer in node, chunked btoa in the
+   * browser (avoids call-stack blowups on large arrays).
+   */
+  function b64encodeBytes(bytes) {
+    if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
+      return Buffer.from(bytes).toString("base64");
+    }
+    var s = "";
+    var CH = 0x8000;
+    for (var i = 0; i < bytes.length; i += CH) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+    }
+    return btoa(s);
+  }
+
+  /** Base64 decode to Uint8Array. Returns null on invalid input. */
+  function b64decodeBytes(str) {
+    if (typeof str !== "string" || !str) return null;
+    if (/[^A-Za-z0-9+/=]/.test(str)) return null;
+    try {
+      if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
+        var b = Buffer.from(str, "base64");
+        return new Uint8Array(b.buffer, b.byteOffset, b.length);
+      }
+      var bin = atob(str);
+      var out = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeVarUintJS(num, out) {
+    var n = num >>> 0;
+    while (n > 127) {
+      out.push(128 | (127 & n));
+      n >>>= 7;
+    }
+    out.push(n);
+  }
+
+  function readVarUintJS(buf, pos) {
+    var num = 0;
+    var mult = 1;
+    for (var k = 0; k < 5; k++) {
+      if (pos.i >= buf.length) return null;
+      var b = buf[pos.i++];
+      num += (b & 127) * mult;
+      mult *= 128;
+      if (b < 128) return num >>> 0;
+    }
+    return null;
+  }
+
+  /**
+   * Encode a y-protocols-style sync frame: varuint(type) varuint8array(payload).
+   * type: 0 = step1 (state vector), 1 = step2 (diff update), 2 = update.
+   */
+  function encodeSyncFrame(type, payload) {
+    var head = [];
+    writeVarUintJS(type, head);
+    writeVarUintJS(payload.length, head);
+    var out = new Uint8Array(head.length + payload.length);
+    out.set(head, 0);
+    out.set(payload, head.length);
+    return out;
+  }
+
+  /** Decode a sync frame. Returns {type, payload} or null. */
+  function decodeSyncFrame(buf) {
+    if (!(buf instanceof Uint8Array)) return null;
+    var pos = { i: 0 };
+    var type = readVarUintJS(buf, pos);
+    if (type === null) return null;
+    var len = readVarUintJS(buf, pos);
+    if (len === null || len < 0 || pos.i + len > buf.length) return null;
+    return { type: type, payload: buf.slice(pos.i, pos.i + len) };
+  }
+
+  /**
+   * Minimal text diff (common prefix/suffix) → Y.Text ops.
+   * Returns [{retain:n}, {delete:n}, {insert:str}] in order.
+   */
+  function diffTextToOps(oldText, newText) {
+    oldText = String(oldText == null ? "" : oldText);
+    newText = String(newText == null ? "" : newText);
+    if (oldText === newText) return [];
+    var prefix = 0;
+    var maxPrefix = Math.min(oldText.length, newText.length);
+    while (prefix < maxPrefix && oldText.charCodeAt(prefix) === newText.charCodeAt(prefix)) prefix++;
+    var suffix = 0;
+    var maxSuffix = Math.min(oldText.length - prefix, newText.length - prefix);
+    while (
+      suffix < maxSuffix &&
+      oldText.charCodeAt(oldText.length - 1 - suffix) === newText.charCodeAt(newText.length - 1 - suffix)
+    ) {
+      suffix++;
+    }
+    var ops = [];
+    if (prefix > 0) ops.push({ retain: prefix });
+    var delCount = oldText.length - prefix - suffix;
+    if (delCount > 0) ops.push({ delete: delCount });
+    var ins = newText.slice(prefix, newText.length - suffix);
+    if (ins) ops.push({ insert: ins });
+    return ops;
+  }
+
+  /** Convert a string index to 1-based {line, col}. */
+  function indexToLineCol(text, index) {
+    text = String(text == null ? "" : text);
+    var i = Math.max(0, Math.min(index | 0, text.length));
+    var line = 1;
+    var col = 1;
+    for (var k = 0; k < i; k++) {
+      if (text.charCodeAt(k) === 10) { line++; col = 1; }
+      else col++;
+    }
+    return { line: line, col: col };
+  }
+
+  /**
+   * Client-side mirror of the server's path validation (pre-check only —
+   * the server is authoritative). Returns the normalized path or null.
+   */
+  function sanitizeCollabPath(raw) {
+    if (typeof raw !== "string") return null;
+    var p = raw.trim().replace(/\\/g, "/");
+    if (!p || p.length > 200) return null;
+    if (p.charAt(0) === "/" || p.charAt(p.length - 1) === "/") return null;
+    if (/[\u0000-\u001F\u007F]/.test(p)) return null;
+    var segs = p.split("/");
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      if (!s || s === "." || s === ".." || s.length > 120) return null;
+    }
+    return segs.join("/");
+  }
+
+  /** Deterministic presence color for a member id (stable across reloads). */
+  var PRESENCE_PALETTE = [
+    "#CC8066", "#0891B2", "#2F9E5F", "#DE6B48", "#7C6BD6",
+    "#C9A227", "#E35D8F", "#3E9BE0", "#5BBF6A", "#E07B39",
+  ];
+
+  function pickPresenceColor(memberId) {
+    var h = 0;
+    var s = String(memberId || "");
+    for (var i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return PRESENCE_PALETTE[Math.abs(h) % PRESENCE_PALETTE.length];
+  }
+
+  /**
+   * Build a folder tree from flat file metas: [{id, path}].
+   * Returns root nodes: {name, path, dir:true, children:[...]} and
+   * {name, path, dir:false, id}. Sorted: dirs first, then alpha.
+   */
+  function buildFileTree(files) {
+    var root = { name: "", path: "", dir: true, children: [] };
+    function ensureDir(parts) {
+      var node = root;
+      var cur = "";
+      for (var i = 0; i < parts.length; i++) {
+        cur = cur ? cur + "/" + parts[i] : parts[i];
+        var found = null;
+        for (var j = 0; j < node.children.length; j++) {
+          if (node.children[j].dir && node.children[j].name === parts[i]) { found = node.children[j]; break; }
+        }
+        if (!found) {
+          found = { name: parts[i], path: cur, dir: true, children: [] };
+          node.children.push(found);
+        }
+        node = found;
+      }
+      return node;
+    }
+    (files || []).forEach(function (f) {
+      if (!f || typeof f.path !== "string") return;
+      var parts = f.path.split("/");
+      var name = parts.pop();
+      var parent = ensureDir(parts);
+      parent.children.push({ name: name, path: f.path, dir: false, id: f.id, meta: f });
+    });
+    function sort(node) {
+      node.children.sort(function (a, b) {
+        if (a.dir !== b.dir) return a.dir ? -1 : 1;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      });
+      node.children.forEach(function (c) { if (c.dir) sort(c); });
+    }
+    sort(root);
+    return root.children;
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -853,5 +1054,15 @@
     convDuplicate: convDuplicate,
     convTouch: convTouch,
     mostRecentConvId: mostRecentConvId,
+    /* collaborative editing (Phase 2) */
+    b64encodeBytes: b64encodeBytes,
+    b64decodeBytes: b64decodeBytes,
+    encodeSyncFrame: encodeSyncFrame,
+    decodeSyncFrame: decodeSyncFrame,
+    diffTextToOps: diffTextToOps,
+    indexToLineCol: indexToLineCol,
+    sanitizeCollabPath: sanitizeCollabPath,
+    pickPresenceColor: pickPresenceColor,
+    buildFileTree: buildFileTree,
   };
 });

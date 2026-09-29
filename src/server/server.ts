@@ -1155,6 +1155,7 @@ export function startServer(opts: ServeOptions): Promise<RunningServer> {
     const server = createServer(createRequestHandler({ ...opts, collabManager }));
     const collab = new CollabServer({
       manager: collabManager,
+      dataRoot: opts.root,
       log: process.env.NEUTRON_COLLAB_DEBUG ? (m) => console.log(`[collab] ${m}`) : undefined,
     });
     collab.attach(server);
