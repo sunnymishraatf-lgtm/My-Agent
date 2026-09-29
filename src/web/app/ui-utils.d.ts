@@ -284,3 +284,5 @@ export interface JobResultSummary {
 }
 
 export declare function summarizeJobResult(result: unknown): JobResultSummary | null;
+
+export declare function parseJobHistory(raw: unknown): unknown[];

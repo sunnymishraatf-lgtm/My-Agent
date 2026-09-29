@@ -134,7 +134,13 @@ try {
   });
 } catch (e) { /* older browsers */ }
 function jobHistory() {
-  try { return JSON.parse(localStorage.getItem(JOB_HISTORY_STORAGE) || "[]"); }
+  try {
+    var NU = window.NeutronUI;
+    var raw = localStorage.getItem(JOB_HISTORY_STORAGE);
+    if (NU && NU.parseJobHistory) return NU.parseJobHistory(raw);
+    var h = JSON.parse(raw || "[]");
+    return Array.isArray(h) ? h : [];
+  }
   catch (e) { return []; }
 }
 function recordJob(entry) {

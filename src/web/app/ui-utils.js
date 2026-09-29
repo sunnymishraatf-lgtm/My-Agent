@@ -1338,6 +1338,18 @@
   }
 
   /**
+   * Parse the persisted job-history list. Always returns an array: corrupt
+   * JSON or a non-array value (manual localStorage edit) yields [] instead
+   * of breaking the Reports view with no recovery path. Pure — testable.
+   */
+  function parseJobHistory(raw) {
+    try {
+      var h = JSON.parse(raw == null ? "[]" : String(raw));
+      return Array.isArray(h) ? h : [];
+    } catch (e) { return []; }
+  }
+
+  /**
    * Stop any in-progress speech synthesis. `deps.window` lets tests inject
    * a fake; defaults to the real window. Returns true when cancel() ran,
    * false when speech isn't available or cancel threw. Never throws.
@@ -1431,5 +1443,7 @@
     redactSecrets: redactSecrets,
     /* reports result summary */
     summarizeJobResult: summarizeJobResult,
+    /* job history parsing */
+    parseJobHistory: parseJobHistory,
   };
 });
