@@ -86,6 +86,47 @@ function isVerbose() {
 function setVerbose(on) {
   try { localStorage.setItem(VERBOSE_STORAGE, on ? "1" : "0"); } catch (e) { /* private mode */ }
 }
+/* ----- Theme (Appearance): 6 named themes + System. Stored as the theme
+   name or "system"; applied via the data-theme attribute. ----- */
+var THEME_STORAGE = "neutron_theme";
+var THEMES = [
+  { id: "light", name: "Light", swatch: ["#FFFFFF", "#CC8066", "#191C21"] },
+  { id: "dark", name: "Dark", swatch: ["#0E1013", "#CC8066", "#171B21"] },
+  { id: "ocean", name: "Ocean", swatch: ["#FFFFFF", "#0891B2", "#0B2A33"] },
+  { id: "deep-ocean", name: "Deep Ocean", swatch: ["#060D16", "#38BDF8", "#0D1725"] },
+  { id: "sunset", name: "Sunset", swatch: ["#FFFBF6", "#DE6B48", "#2B1C14"] },
+  { id: "forest", name: "Forest", swatch: ["#FCFDFC", "#2F9E5F", "#132219"] },
+];
+var THEME_IDS = THEMES.map(function (t) { return t.id; });
+function storedTheme() {
+  try {
+    var t = localStorage.getItem(THEME_STORAGE) || "system";
+    return (t === "system" || THEME_IDS.indexOf(t) !== -1) ? t : "system";
+  } catch (e) { return "system"; }
+}
+function setStoredTheme(t) {
+  try {
+    if (t && t !== "system") localStorage.setItem(THEME_STORAGE, t);
+    else localStorage.setItem(THEME_STORAGE, "system");
+  } catch (e) { /* private mode */ }
+}
+/** The concrete theme name to apply: "system" resolves via the OS. */
+function resolveTheme(t) {
+  if (t !== "system") return t;
+  try {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch (e) { return "light"; }
+}
+function applyTheme() {
+  try { document.documentElement.setAttribute("data-theme", resolveTheme(storedTheme())); }
+  catch (e) { /* head script already set a sane default */ }
+}
+/* Follow the OS while "System" is selected. */
+try {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+    if (storedTheme() === "system") applyTheme();
+  });
+} catch (e) { /* older browsers */ }
 function jobHistory() {
   try { return JSON.parse(localStorage.getItem(JOB_HISTORY_STORAGE) || "[]"); }
   catch (e) { return []; }
@@ -1960,6 +2001,43 @@ async function renderSettings(view) {
     "Your key takes precedence over the server's provider for your requests. Remove it here any time; clearing is immediate and nothing of it remains server-side."));
   view.appendChild(s);
 
+  /* ----- Appearance: theme gallery ----- */
+  var ap = el("section", "panel");
+  ap.appendChild(el("h2", null, "Appearance"));
+  ap.appendChild(el("p", "muted small",
+    "Pick a theme. \"System\" follows your device's light/dark setting."));
+  var grid = el("div", "theme-grid");
+  function paintThemes() {
+    grid.innerHTML = "";
+    var cur = storedTheme();
+    function swatchBtn(id, label, colors) {
+      var b = el("button", "theme-swatch" + (cur === id ? " selected" : ""));
+      b.type = "button";
+      b.setAttribute("aria-label", label + " theme");
+      b.setAttribute("aria-pressed", cur === id ? "true" : "false");
+      var strip = el("span", "theme-strip");
+      colors.forEach(function (c) {
+        var s = el("span", "theme-chip");
+        s.style.background = c;
+        strip.appendChild(s);
+      });
+      b.appendChild(strip);
+      b.appendChild(el("span", "theme-name", label));
+      b.onclick = function () {
+        setStoredTheme(id === "system" ? "system" : id);
+        applyTheme();
+        paintThemes();
+        toast(id === "system" ? "Theme: System." : "Theme: " + label + ".");
+      };
+      return b;
+    }
+    THEMES.forEach(function (t) { grid.appendChild(swatchBtn(t.id, t.name, t.swatch)); });
+    grid.appendChild(swatchBtn("system", "System", ["#FFFFFF", "#0E1013", "#888888"]));
+  }
+  paintThemes();
+  ap.appendChild(grid);
+  view.appendChild(ap);
+
   /* ----- Developer Mode (collapsible) ----- */
   var dev = el("details", "dump");
   dev.appendChild(el("summary", null, "DEVELOPER MODE"));
@@ -2065,6 +2143,7 @@ window.addEventListener("offline", paintOfflineBar);
 
 document.addEventListener("DOMContentLoaded", function () {
   if (!location.hash) location.hash = "#/dashboard";
+  applyTheme(); // head script already did this; re-assert for cached pages
   paintOfflineBar();
   var dismiss = document.getElementById("error-dismiss");
   if (dismiss) dismiss.addEventListener("click", clearError);
