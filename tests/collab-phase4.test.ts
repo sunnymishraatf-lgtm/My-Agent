@@ -2,7 +2,7 @@
  * Phase 4 collaboration tests: AI approval flow, activity feed, permission
  * boundaries, and ui-utils.d.ts completeness for the Phase 2 helpers.
  *
- * - Pure helpers (parseRoomEditBlocks, diffLineBlocks/Stats, buildRoomAiContext)
+ * - Pure helpers (parseRoomEditBlocks, diffLineBlocks/Stats)
  *   are tested through src/web/app/ui-utils.js (typed via ui-utils.d.ts —
  *   a missing declaration fails `npm run typecheck`).
  * - Approval convergence is tested through the real CollabFileStore + yjs:
@@ -71,55 +71,6 @@ describe("diffLineBlocks / diffLineStats", () => {
       { t: "del", text: "b" },
       { t: "add", text: "c" },
     ]);
-  });
-});
-
-describe("buildRoomAiContext (permission boundary)", () => {
-  const files = [
-    { id: "f_1", path: "src/app.ts" },
-    { id: "f_2", path: "src/util.ts" },
-  ];
-  const getText = (id: string) => (id === "f_1" ? "const app = 1;" : id === "f_2" ? "export {};" : undefined);
-
-  it("includes the active file content for a room member", () => {
-    const c = ui.buildRoomAiContext({ files, activeFileId: "f_1", mode: "file", getText });
-    expect(c.text).toContain("const app = 1;");
-    expect(c.filesIncluded).toEqual(["src/app.ts"]);
-  });
-  it("gives a non-member (no room file list) zero file content", () => {
-    const c = ui.buildRoomAiContext({
-      files: [],
-      activeFileId: "f_1",
-      mode: "file",
-      getText: () => "TOP-SECRET",
-    });
-    expect(c.text).not.toContain("TOP-SECRET");
-    expect(c.filesIncluded).toEqual([]);
-  });
-  it("never includes content for files outside the provided list", () => {
-    const c = ui.buildRoomAiContext({
-      files: [{ id: "f_1", path: "src/app.ts" }],
-      activeFileId: "f_9",
-      mode: "file",
-      getText: () => "OTHER-ROOM-CONTENT",
-    });
-    expect(c.text).not.toContain("OTHER-ROOM-CONTENT");
-  });
-  it("snippet mode sends only the selection", () => {
-    const c = ui.buildRoomAiContext({ files, activeFileId: "f_1", mode: "snippet", getText, selection: "const app" });
-    expect(c.text).toContain("const app");
-    expect(c.text).not.toContain("const app = 1;");
-  });
-  it("list mode sends paths only, no content", () => {
-    const c = ui.buildRoomAiContext({ files, mode: "list", getText });
-    expect(c.text).toContain("src/app.ts");
-    expect(c.text).not.toContain("const app = 1;");
-  });
-  it("truncates oversized content honestly", () => {
-    const big = "x".repeat(100_000);
-    const c = ui.buildRoomAiContext({ files, activeFileId: "f_1", mode: "file", getText: () => big });
-    expect(c.truncated).toBe(true);
-    expect(c.text.length).toBeLessThanOrEqual(60_000);
   });
 });
 

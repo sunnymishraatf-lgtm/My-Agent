@@ -1170,70 +1170,6 @@
     return { added: added, removed: removed };
   }
 
-  var ROOM_AI_MAX_FILE_CHARS = 30000;
-  var ROOM_AI_MAX_TOTAL_CHARS = 60000;
-
-  /**
-   * Build the context string for an Ask-AI request from the member's own
-   * room state. Permission boundary: content is included ONLY for files
-   * present in `files` (the server-listed room files for this session) —
-   * a non-member has no such list, so they get no content. Never invents
-   * paths or content.
-   *
-   * o: { files: [{id, path}], activeFileId, mode: "file"|"snippet"|"list",
-   *      getText: fn(fileId) -> string|undefined,
-   *      selection: string|undefined }
-   * Returns { text, filesIncluded: [paths], truncated }.
-   */
-  function buildRoomAiContext(o) {
-    o = o || {};
-    var files = Array.isArray(o.files) ? o.files : [];
-    var byId = {};
-    var paths = [];
-    files.forEach(function (f) {
-      if (f && typeof f.id === "string" && typeof f.path === "string") {
-        byId[f.id] = f.path;
-        paths.push(f.path);
-      }
-    });
-    var mode = o.mode === "snippet" ? "snippet" : o.mode === "list" ? "list" : "file";
-    var included = [];
-    var parts = [];
-    var truncated = false;
-    function take(text, label) {
-      var t = String(text == null ? "" : text);
-      if (t.length > ROOM_AI_MAX_FILE_CHARS) {
-        t = t.slice(0, ROOM_AI_MAX_FILE_CHARS);
-        truncated = true;
-      }
-      return "--- " + label + " ---\n" + t;
-    }
-    if (mode === "list") {
-      parts.push("Room files:\n" + paths.map(function (p) { return "- " + p; }).join("\n"));
-    } else if (mode === "snippet") {
-      var sel = String(o.selection == null ? "" : o.selection).slice(0, ROOM_AI_MAX_FILE_CHARS);
-      var activePath = byId[o.activeFileId];
-      parts.push("Selected snippet" + (activePath ? " from " + activePath : "") + ":\n```\n" + sel + "\n```");
-      if (activePath) included.push(activePath);
-    } else {
-      var fid = o.activeFileId;
-      if (fid && byId[fid] && typeof o.getText === "function") {
-        var content = o.getText(fid);
-        if (content !== undefined) {
-          included.push(byId[fid]);
-          parts.push(take(content, byId[fid]));
-        }
-      }
-      parts.push("Room files:\n" + paths.map(function (p) { return "- " + p; }).join("\n"));
-    }
-    var text = parts.join("\n\n");
-    if (text.length > ROOM_AI_MAX_TOTAL_CHARS) {
-      text = text.slice(0, ROOM_AI_MAX_TOTAL_CHARS);
-      truncated = true;
-    }
-    return { text: text, filesIncluded: included, truncated: truncated };
-  }
-
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -1301,6 +1237,5 @@
     parseRoomEditBlocks: parseRoomEditBlocks,
     diffLineBlocks: diffLineBlocks,
     diffLineStats: diffLineStats,
-    buildRoomAiContext: buildRoomAiContext,
   };
 });

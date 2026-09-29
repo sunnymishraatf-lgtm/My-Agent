@@ -234,17 +234,3 @@ export declare function diffLineStats(
   oldText: string | null | undefined,
   newText: string | null | undefined
 ): { added: number; removed: number };
-
-export interface RoomAiContextOptions {
-  files?: Array<{ id: string; path: string } | null | undefined> | null;
-  activeFileId?: string | null;
-  mode?: "file" | "snippet" | "list";
-  getText?: (fileId: string) => string | undefined;
-  selection?: string | null;
-}
-
-export declare function buildRoomAiContext(o: RoomAiContextOptions | null | undefined): {
-  text: string;
-  filesIncluded: string[];
-  truncated: boolean;
-};
