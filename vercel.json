@@ -1,1 +1,33 @@
-{"$schema": "https://openapi.vercel.sh/vercel.json", "buildCommand": "npm run build:vercel", "functions": {"api/demo/analyze.js": {"maxDuration": 60}, "api/demo/prepare.js": {"maxDuration": 60}, "api/chat.js": {"maxDuration": 60}}, "rewrites": [{"destination": "/demo/index.html", "source": "/demo"}, {"destination": "/app/index.html", "source": "/app"}, {"destination": "/:path*", "source": "/src/web/:path*"}]}
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build:vercel",
+  "functions": {
+    "api/demo/analyze.js": {
+      "maxDuration": 60
+    },
+    "api/demo/prepare.js": {
+      "maxDuration": 60
+    },
+    "api/chat.js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "destination": "/demo/index.html",
+      "source": "/demo"
+    },
+    {
+      "destination": "/app/index.html",
+      "source": "/app"
+    },
+    {
+      "destination": "/download/index.html",
+      "source": "/download"
+    },
+    {
+      "destination": "/:path*",
+      "source": "/src/web/:path*"
+    }
+  ]
+}

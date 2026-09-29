@@ -1,0 +1,1 @@
+Self-updater: the app now checks GitHub releases and installs updates in-app. Fresh NeuroSync light-theme design across the app and website.

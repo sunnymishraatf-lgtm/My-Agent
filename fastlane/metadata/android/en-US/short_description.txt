@@ -1,0 +1,1 @@
+AI software maintenance assistant for Android. Bring your own API key.

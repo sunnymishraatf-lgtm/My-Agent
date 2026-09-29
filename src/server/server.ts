@@ -905,6 +905,18 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     return;
   }
 
+  // APK download page (also served statically from /download on Vercel).
+  if (req.method === "GET" && url.pathname === "/download") {
+    const webDir = resolveWebDir();
+    const dlIndex = webDir ? join(webDir, "download", "index.html") : "";
+    if (dlIndex && existsSync(dlIndex)) {
+      sendHtml(res, readFileSync(dlIndex, "utf8"));
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: "Download page not found. Rebuild with `npm run build`." });
+    return;
+  }
+
   if (url.pathname.startsWith("/api/demo/")) {
     await handleDemoApi(getDemoManager(opts.demoWorkspace), req, res, url);
     return;

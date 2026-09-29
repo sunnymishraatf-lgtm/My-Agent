@@ -25,3 +25,4 @@ function copyDir(from, to, label) {
 copyDir(join(root, "src", "web", "demo"), join(root, "public", "src", "web", "demo"), "public/src/web/demo");
 copyDir(join(root, "src", "web", "app"), join(root, "public", "src", "web", "app"), "public/src/web/app");
 copyDir(join(root, "src", "web", "app"), join(root, "public", "app"), "public/app");
+copyDir(join(root, "src", "web", "download"), join(root, "public", "download"), "public/download");

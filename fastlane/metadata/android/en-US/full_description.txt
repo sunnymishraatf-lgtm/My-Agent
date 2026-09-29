@@ -1,0 +1,11 @@
+NEUTRON is an AI software maintenance assistant for Android.
+
+Point it at a maintenance task and it works through a controlled pipeline: repository analysis, impact analysis, an explicit maintenance plan, a human approval gate, controlled code changes, build and test verification, security review, and a final report. Nothing is applied without your approval.
+
+* Bring your own API key — stored only on your device, sent solely with your requests, never stored on any server.
+* Choose your provider and model, including NousResearch Hermes models via OpenRouter.
+* Stateless chat with client-side history.
+* Clone any public GitHub repository and maintain it from your phone.
+* Self-updating: new releases install in-app, no store needed.
+
+NEUTRON is open source (MIT): https://github.com/sunnymishraatf-lgtm/My-Agent
