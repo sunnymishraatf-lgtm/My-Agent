@@ -222,6 +222,161 @@
   --blue-border: #BFDBFE;
 }
 
+/* Glass Dark — rich dark gradient page, terracotta accent, frosted panels.
+   Translucent surfaces stay readable on the dark gradient even without blur. */
+[data-theme="glass-dark"] {
+  color-scheme: dark;
+  --primary: #CC8066;
+  --primary-dark: #D89A80;
+  --primary-soft: rgba(204, 128, 102, 0.16);
+  --primary-glow-rgb: 204, 128, 102;
+  --on-primary: #FFFFFF;
+  --accent: #D89A80;
+  --bg: linear-gradient(135deg, #0A0D13 0%, #121A2B 48%, #1C1428 100%);
+  --bg-soft: rgba(255, 255, 255, 0.04);
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-2: rgba(255, 255, 255, 0.10);
+  --surface-line: rgba(255, 255, 255, 0.14);
+  --white: rgba(255, 255, 255, 0.08);
+  --text: #F5F7FA;
+  --text-2: #C9D2DF;
+  --text-3: #96A2B6;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.28);
+  --green: #4ADE80;
+  --green-soft: rgba(74, 222, 128, 0.12);
+  --green-border: rgba(74, 222, 128, 0.35);
+  --red: #F87171;
+  --red-soft: rgba(248, 113, 113, 0.12);
+  --red-border: rgba(248, 113, 113, 0.35);
+  --red-ink: #FCA5A5;
+  --on-danger: #3A0D0D;
+  --amber: #FBBF24;
+  --amber-soft: rgba(251, 191, 36, 0.12);
+  --amber-border: rgba(251, 191, 36, 0.35);
+  --blue-soft: rgba(125, 211, 252, 0.12);
+  --blue-border: rgba(125, 211, 252, 0.35);
+  --glass-bg: rgba(255, 255, 255, 0.07);
+  --glass-bg-2: rgba(255, 255, 255, 0.11);
+  --glass-border: rgba(255, 255, 255, 0.18);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* Glass Ocean — deep-blue gradient page, bright cyan accent, frosted panels. */
+[data-theme="glass-ocean"] {
+  color-scheme: dark;
+  --primary: #5BC8F5;
+  --primary-dark: #7DD3FC;
+  --primary-soft: rgba(91, 200, 245, 0.14);
+  --primary-glow-rgb: 91, 200, 245;
+  --on-primary: #06283A;
+  --accent: #7DD3FC;
+  --bg: linear-gradient(135deg, #03101D 0%, #062A44 52%, #0B3F63 100%);
+  --bg-soft: rgba(255, 255, 255, 0.04);
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-2: rgba(255, 255, 255, 0.10);
+  --surface-line: rgba(255, 255, 255, 0.14);
+  --white: rgba(255, 255, 255, 0.08);
+  --text: #F2F8FD;
+  --text-2: #C3D6E6;
+  --text-3: #8CA3B8;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.28);
+  --green: #4ADE80;
+  --green-soft: rgba(74, 222, 128, 0.12);
+  --green-border: rgba(74, 222, 128, 0.35);
+  --red: #F87171;
+  --red-soft: rgba(248, 113, 113, 0.12);
+  --red-border: rgba(248, 113, 113, 0.35);
+  --red-ink: #FCA5A5;
+  --on-danger: #3A0D0D;
+  --amber: #FBBF24;
+  --amber-soft: rgba(251, 191, 36, 0.12);
+  --amber-border: rgba(251, 191, 36, 0.35);
+  --blue-soft: rgba(125, 211, 252, 0.12);
+  --blue-border: rgba(125, 211, 252, 0.35);
+  --glass-bg: rgba(255, 255, 255, 0.07);
+  --glass-bg-2: rgba(255, 255, 255, 0.11);
+  --glass-border: rgba(255, 255, 255, 0.18);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- glassmorphism: frosted surfaces for the glass themes ----
+   Modest 18px blur. Blurred elements are never animated themselves —
+   only transforms animate (see .panel:hover). Browsers without
+   backdrop-filter ignore the filter declarations and get solid
+   surfaces from the @supports fallback below. */
+[data-theme^="glass-"] body {
+  background-attachment: fixed;
+}
+[data-theme^="glass-"] .topbar,
+[data-theme^="glass-"] .sidebar,
+[data-theme^="glass-"] .msg:not(.user) .bubble,
+[data-theme^="glass-"] .chat-input-row .input,
+[data-theme^="glass-"] .theme-swatch {
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-inset), 0 12px 30px -14px rgba(0, 0, 0, 0.6);
+}
+/* Cards sit one layer deeper than the header: slightly more opaque. */
+[data-theme^="glass-"] .panel {
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-inset), 0 12px 30px -14px rgba(0, 0, 0, 0.6);
+}
+[data-theme^="glass-"] .panel:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--glass-inset), var(--shadow-md);
+}
+/* User bubbles keep the primary fill; the glass border + blur add depth. */
+[data-theme^="glass-"] .msg.user .bubble {
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-inset), 0 12px 30px -14px rgba(0, 0, 0, 0.6);
+}
+
+/* Fallback: no backdrop-filter support → solid theme-variable backgrounds
+   so text stays readable on every browser. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-theme="glass-dark"] {
+    --bg: #0B0F16;
+    --bg-soft: #10151E;
+    --surface: #141B28;
+    --surface-2: #1A2231;
+    --surface-line: #2A3446;
+    --white: #141B28;
+    --border: #2A3446;
+    --border-strong: #3A4557;
+    --glass-bg: #141B28;
+    --glass-bg-2: #1A2231;
+    --glass-border: #2A3446;
+  }
+  [data-theme="glass-ocean"] {
+    --bg: #04121F;
+    --bg-soft: #071C2E;
+    --surface: #0A2236;
+    --surface-2: #0E2C46;
+    --surface-line: #1C3A55;
+    --white: #0A2236;
+    --border: #1E3A55;
+    --border-strong: #2E4F73;
+    --glass-bg: #0A2236;
+    --glass-bg-2: #0E2C46;
+    --glass-border: #1E3A55;
+  }
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -1130,5 +1285,41 @@ body.chat-full .view {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  /* Glassmorphism: drop the blur and fall back to solid surfaces. */
+  [data-theme^="glass-"] .topbar,
+  [data-theme^="glass-"] .sidebar,
+  [data-theme^="glass-"] .panel,
+  [data-theme^="glass-"] .msg .bubble,
+  [data-theme^="glass-"] .chat-input-row .input,
+  [data-theme^="glass-"] .theme-swatch {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  [data-theme="glass-dark"] {
+    --bg: #0B0F16;
+    --bg-soft: #10151E;
+    --surface: #141B28;
+    --surface-2: #1A2231;
+    --surface-line: #2A3446;
+    --white: #141B28;
+    --border: #2A3446;
+    --border-strong: #3A4557;
+    --glass-bg: #141B28;
+    --glass-bg-2: #1A2231;
+    --glass-border: #2A3446;
+  }
+  [data-theme="glass-ocean"] {
+    --bg: #04121F;
+    --bg-soft: #071C2E;
+    --surface: #0A2236;
+    --surface-2: #0E2C46;
+    --surface-line: #1C3A55;
+    --white: #0A2236;
+    --border: #1E3A55;
+    --border-strong: #2E4F73;
+    --glass-bg: #0A2236;
+    --glass-bg-2: #0E2C46;
+    --glass-border: #1E3A55;
   }
 }

@@ -86,7 +86,7 @@ function isVerbose() {
 function setVerbose(on) {
   try { localStorage.setItem(VERBOSE_STORAGE, on ? "1" : "0"); } catch (e) { /* private mode */ }
 }
-/* ----- Theme (Appearance): 6 named themes + System. Stored as the theme
+/* ----- Theme (Appearance): 8 named themes + System. Stored as the theme
    name or "system"; applied via the data-theme attribute. ----- */
 var THEME_STORAGE = "neutron_theme";
 var THEMES = [
@@ -96,6 +96,12 @@ var THEMES = [
   { id: "deep-ocean", name: "Deep Ocean", swatch: ["#060D16", "#38BDF8", "#0D1725"] },
   { id: "sunset", name: "Sunset", swatch: ["#FFFBF6", "#DE6B48", "#2B1C14"] },
   { id: "forest", name: "Forest", swatch: ["#FCFDFC", "#2F9E5F", "#132219"] },
+  { id: "glass-dark", name: "Glass Dark",
+    swatch: ["#0A0D13", "#CC8066", "#3A4356"],
+    preview: "linear-gradient(135deg,#0A0D13 0%,#121A2B 48%,#1C1428 100%)" },
+  { id: "glass-ocean", name: "Glass Ocean",
+    swatch: ["#03101D", "#5BC8F5", "#2E4F73"],
+    preview: "linear-gradient(135deg,#03101D 0%,#062A44 52%,#0B3F63 100%)" },
 ];
 var THEME_IDS = THEMES.map(function (t) { return t.id; });
 function storedTheme() {
@@ -2042,17 +2048,24 @@ async function renderSettings(view) {
   function paintThemes() {
     grid.innerHTML = "";
     var cur = storedTheme();
-    function swatchBtn(id, label, colors) {
+    function swatchBtn(id, label, colors, gradient) {
       var b = el("button", "theme-swatch" + (cur === id ? " selected" : ""));
       b.type = "button";
       b.setAttribute("aria-label", label + " theme");
       b.setAttribute("aria-pressed", cur === id ? "true" : "false");
       var strip = el("span", "theme-strip");
-      colors.forEach(function (c) {
-        var s = el("span", "theme-chip");
-        s.style.background = c;
-        strip.appendChild(s);
-      });
+      if (gradient) {
+        /* Representative gradient preview for glassmorphism themes. */
+        var g = el("span", "theme-chip");
+        g.style.background = gradient;
+        strip.appendChild(g);
+      } else {
+        colors.forEach(function (c) {
+          var s = el("span", "theme-chip");
+          s.style.background = c;
+          strip.appendChild(s);
+        });
+      }
       b.appendChild(strip);
       b.appendChild(el("span", "theme-name", label));
       b.onclick = function () {
@@ -2063,7 +2076,7 @@ async function renderSettings(view) {
       };
       return b;
     }
-    THEMES.forEach(function (t) { grid.appendChild(swatchBtn(t.id, t.name, t.swatch)); });
+    THEMES.forEach(function (t) { grid.appendChild(swatchBtn(t.id, t.name, t.swatch, t.preview)); });
     grid.appendChild(swatchBtn("system", "System", ["#FFFFFF", "#0E1013", "#888888"]));
   }
   paintThemes();
