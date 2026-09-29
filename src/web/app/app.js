@@ -165,6 +165,9 @@ function pushApiLog(entry) {
 /** Recent API calls, newest first. Used by the Developer Mode inspector. */
 function apiLog() { return API_LOG.slice(); }
 
+/** Empty the inspector log (e.g. before reproducing an issue). */
+function clearApiLog() { API_LOG.length = 0; }
+
 async function api(method, path, body) {
   var base = backendBase();
   var url = base + path;
@@ -2950,7 +2953,11 @@ async function renderSettings(view) {
   var iRow = el("div", "row");
   var iRefresh = el("button", "btn ghost", "Refresh");
   iRefresh.onclick = paintInspector;
+  var iClear = el("button", "btn ghost", "Clear log");
+  iClear.setAttribute("aria-label", "Clear the API inspector log");
+  iClear.onclick = function () { clearApiLog(); paintInspector(); };
   iRow.appendChild(iRefresh);
+  iRow.appendChild(iClear);
   devBody.appendChild(iRow);
   devBody.appendChild(insp);
 
