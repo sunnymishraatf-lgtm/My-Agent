@@ -381,6 +381,7 @@
 
 * { box-sizing: border-box; }
 
+html, body { overflow-x: clip; max-width: 100%; }
 body {
   margin: 0;
   background: var(--bg);
@@ -411,7 +412,7 @@ a:hover { text-decoration: underline; }
   justify-content: space-between;
   gap: 16px;
   padding: 14px 24px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--bg);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
 }
@@ -651,6 +652,14 @@ a:hover { text-decoration: underline; }
 }
 @media (max-width: 640px) {
   .shell { flex-direction: column; }
+  .topbar { padding: 10px 12px; gap: 8px; }
+  .topbar-right { gap: 8px; min-width: 0; }
+  .brand { min-width: 0; flex-shrink: 1; }
+  .brand .logo { font-size: 18px; }
+  .brand .subtitle { display: none; }
+  .topbar .btn.ghost[href="/demo"] { display: none; }
+  .pill { padding: 6px 10px; font-size: 11px; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
+  #notif-bell { padding: 8px 12px; }
   .sidebar {
     width: auto;
     flex: 0 0 auto;
@@ -1716,6 +1725,14 @@ body.chat-full .view {
   overflow-x: auto;
 }
 .rm-row { display: flex; gap: 8px; margin-top: 12px; }
+
+/* relay mode (serverless): simplified chat + members + activity layout */
+.rm-relay-body { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+.rm-relay-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.rm-relay-side h3 { margin: 0 0 8px; font-size: 15px; }
+@media (max-width: 900px) {
+  .rm-relay-body { grid-template-columns: 1fr; }
+}
 
 /* workspace header */
 .rm-head {

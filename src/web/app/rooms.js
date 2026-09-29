@@ -35,6 +35,8 @@
       roomName: "",
       ownerToken: null,
       ws: null,
+      relay: null,       // NeutronRelay session when on serverless (no Node server)
+      relayMode: false,  // true when this room runs over the MQTT relay
       joined: false,
       conn: "idle", // idle|connecting|connected|reconnecting|failed
       memberId: null,
@@ -141,10 +143,18 @@
     return location.origin + "/app#room=" + code;
   }
 
+  function leaveRelay() {
+    if (S.relay) {
+      try { S.relay.leave(); } catch (e) {}
+      S.relay = null;
+    }
+  }
+
   function teardown() {
     leaveVoice(true);
     stopTimers();
     closeSocket();
+    leaveRelay();
     disposeAllEditors();
     S = freshState();
   }
@@ -187,6 +197,13 @@
   }
 
   function sendMsg(obj) {
+    if (S.relay) {
+      // Relay mode (serverless): only chat primitives exist on the relay.
+      if (obj.type === "CHAT_MESSAGE") return S.relay.sendChat(obj.text);
+      if (obj.type === "CHAT_TYPING") { S.relay.sendTyping(!!obj.typing); return true; }
+      if (obj.type === "CHAT_DELETE") return S.relay.sendDelete(obj.id);
+      return false;
+    }
     if (S.ws && S.ws.readyState === 1) {
       try { S.ws.send(JSON.stringify(obj)); return true; } catch (e) { return false; }
     }
@@ -1001,17 +1018,284 @@
 
   /* ---------- screens ---------- */
 
-  function renderServerlessNote(view) {
-    var p = el("div", "panel rm-note");
-    p.appendChild(el("h2", null, "Rooms need the Node server"));
-    p.appendChild(el("p", "muted",
-      "Real-time collaboration rooms use WebSocket connections, which serverless hosting can't hold. " +
-      "Run the Node server and open this page there:"));
-    var cmd = el("code", "rm-cmd", "node dist/cli-entry.js web --no-open");
-    p.appendChild(cmd);
-    p.appendChild(el("p", "muted small",
-      "Then open http://127.0.0.1:4096/app (or your configured host) and return to Rooms."));
-    view.appendChild(p);
+  /* ---------- relay mode (serverless): rooms over the encrypted MQTT relay ---------- */
+
+  function renderRelayList(view, pendingCode) {
+    view.appendChild(el("h1", null, "Rooms"));
+    view.appendChild(el("p", "muted", "Real-time collaboration rooms. Create one, share the code, and chat live."));
+    view.appendChild(el("p", "muted small",
+      "Relay mode: chat and presence are live and end-to-end encrypted — no server needed. " +
+      "Shared files, voice calls, and room AI need the Node server."));
+    var grid = el("div", "rm-grid");
+    /* create */
+    var create = el("div", "panel");
+    create.appendChild(el("h2", null, "Create a room"));
+    create.appendChild(el("p", "muted small", "You'll get a code and an invite link to share."));
+    var nameInput = el("input", "input");
+    nameInput.placeholder = "Room name (e.g. Website Builder)";
+    nameInput.setAttribute("aria-label", "Room name");
+    nameInput.maxLength = 60;
+    create.appendChild(nameInput);
+    var createBtn = el("button", "btn primary", "Create room");
+    create.appendChild(createBtn);
+    var createdBox = el("div", "rm-created hidden");
+    create.appendChild(createdBox);
+    var doCreate = function () { doCreateRelay(nameInput.value.trim(), createdBox); };
+    createBtn.onclick = doCreate;
+    nameInput.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); doCreate(); }
+    });
+    grid.appendChild(create);
+    /* join */
+    var join = el("div", "panel");
+    join.appendChild(el("h2", null, "Join a room"));
+    join.appendChild(el("p", "muted small", "Enter the code someone shared with you."));
+    var codeInput = el("input", "input rm-code-input");
+    codeInput.placeholder = "NEUTRON-XXXXXX";
+    codeInput.setAttribute("aria-label", "Room code");
+    codeInput.autocapitalize = "characters";
+    codeInput.spellcheck = false;
+    if (pendingCode) codeInput.value = pendingCode;
+    join.appendChild(codeInput);
+    var joinBtn = el("button", "btn primary", "Join room");
+    join.appendChild(joinBtn);
+    var doJoin = function () { doJoinRelay(codeInput.value); };
+    joinBtn.onclick = doJoin;
+    codeInput.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); doJoin(); }
+    });
+    grid.appendChild(join);
+    view.appendChild(grid);
+    /* known rooms */
+    var known = loadKnownRooms();
+    var listPanel = el("div", "panel rm-known");
+    listPanel.appendChild(el("h2", null, "Your rooms"));
+    if (!known.length) {
+      listPanel.appendChild(el("p", "muted", "No rooms yet. Create one or join with a code."));
+    } else {
+      var ul = el("div", "rm-room-list");
+      known.forEach(function (r) {
+        var item = el("div", "rm-room-item");
+        var open = el("button", "rm-room-open");
+        open.setAttribute("aria-label", "Open room " + r.name);
+        open.appendChild(el("div", "rm-room-name", r.name || r.code));
+        var sub = (r.code || "") + (r.lastSeen && UI.timeAgo ? " · " + UI.timeAgo(r.lastSeen, Date.now()) : "");
+        open.appendChild(el("div", "rm-room-sub", sub));
+        open.onclick = function () { openRelayWorkspace(r.code); };
+        var forget = el("button", "btn ghost sm", "Remove");
+        forget.setAttribute("aria-label", "Remove " + (r.name || r.code) + " from this list");
+        forget.onclick = function () { forgetKnownRoom(r.code); render(); };
+        item.appendChild(open);
+        item.appendChild(forget);
+        ul.appendChild(item);
+      });
+      listPanel.appendChild(ul);
+    }
+    view.appendChild(listPanel);
+  }
+
+  function doCreateRelay(name, box) {
+    clearError();
+    if (!window.NeutronRelay) {
+      showError("Relay unavailable in this browser.");
+      return;
+    }
+    var code = window.NeutronRelay.generateCode();
+    var ref = {
+      code: code,
+      name: name || "Untitled room",
+      ownerToken: null,
+      displayName: storedDisplayName(code),
+      lastSeen: Date.now(),
+      relay: true,
+    };
+    upsertKnownRoom(ref);
+    box.innerHTML = "";
+    box.classList.remove("hidden");
+    box.appendChild(el("div", "rm-created-title", "Room created"));
+    var codeRow = el("div", "rm-code-row");
+    codeRow.appendChild(el("code", "rm-code-big", code));
+    var copyCode = el("button", "btn sm", "Copy code");
+    copyCode.onclick = function () { copyText(code, "Room code copied"); };
+    codeRow.appendChild(copyCode);
+    box.appendChild(codeRow);
+    var linkRow = el("div", "rm-code-row");
+    var linkInput = el("input", "input");
+    linkInput.value = inviteLink(code);
+    linkInput.readOnly = true;
+    linkInput.setAttribute("aria-label", "Invite link");
+    linkRow.appendChild(linkInput);
+    var copyLink = el("button", "btn sm", "Copy link");
+    copyLink.onclick = function () { copyText(inviteLink(code), "Invite link copied"); };
+    linkRow.appendChild(copyLink);
+    box.appendChild(linkRow);
+    var openBtn = el("button", "btn primary", "Open room");
+    openBtn.onclick = function () { openRelayWorkspace(code); };
+    box.appendChild(openBtn);
+    if (typeof announce === "function") announce("Room created: " + code);
+  }
+
+  function doJoinRelay(rawCode) {
+    clearError();
+    var code = UI.normalizeRoomCode ? UI.normalizeRoomCode(rawCode) : String(rawCode || "").trim().toUpperCase();
+    if (!UI.isValidRoomCode || !UI.isValidRoomCode(code)) {
+      showError("That doesn't look like a room code. Codes look like NEUTRON-AB12CD.");
+      return;
+    }
+    // No server to ask: anyone with the code joins the relay topic.
+    openRelayWorkspace(code);
+  }
+
+  function openRelayWorkspace(code) {
+    var kr = knownRoom(code);
+    leaveRelay();
+    S = freshState();
+    S.relayMode = true;
+    S.screen = "workspace";
+    S.code = code;
+    S.roomName = (kr && kr.name) || code;
+    S.displayName = storedDisplayName(code) || (kr ? kr.displayName : "") || "";
+    upsertKnownRoom({ code: code, name: S.roomName, ownerToken: null, displayName: S.displayName, lastSeen: Date.now(), relay: true });
+    render();
+  }
+
+  function joinRelaySession() {
+    leaveRelay();
+    setConn("connecting");
+    if (!window.NeutronRelay || !window.NeutronMQTT) {
+      setConn("failed");
+      showError("Relay unavailable in this browser.");
+      return;
+    }
+    S.relay = window.NeutronRelay.joinRelay(S.code, S.displayName, {
+      onMessage: function (obj) { onServerMessage(JSON.stringify(obj)); },
+      onConn: function (s) {
+        if (s === "connected") setConn("connected");
+        else if (s === "failed") setConn("failed");
+        else setConn("reconnecting");
+      },
+    });
+    S.memberId = S.relay.memberId;
+    setStoredDisplayName(S.code, S.displayName);
+  }
+
+  function renderRelayWorkspace(view) {
+    var head = el("div", "rm-head panel");
+    var back = el("button", "btn ghost sm", "← Rooms");
+    back.setAttribute("aria-label", "Back to room list");
+    back.onclick = function () { leaveToList(); };
+    head.appendChild(back);
+    var titleEl = el("h2", "rm-room-title", S.roomName || S.code);
+    titleEl.id = "rm-room-title";
+    head.appendChild(titleEl);
+    var connPill = el("span", "rm-conn");
+    var dot = el("span", "rm-dot busy");
+    dot.id = "rm-conn-dot";
+    dot.setAttribute("aria-hidden", "true");
+    var connLabel = el("span", null, "Connecting…");
+    connLabel.id = "rm-conn-label";
+    connPill.appendChild(dot);
+    connPill.appendChild(connLabel);
+    connPill.setAttribute("role", "status");
+    head.appendChild(connPill);
+    var countWrap = el("span", "rm-count-wrap");
+    var countNum = el("span", "rm-count", "0");
+    countNum.id = "rm-count";
+    countWrap.appendChild(countNum);
+    countWrap.appendChild(document.createTextNode(" online"));
+    head.appendChild(countWrap);
+    var inviteBtn = el("button", "btn sm", "Invite");
+    inviteBtn.onclick = function () { showInvite(); };
+    head.appendChild(inviteBtn);
+    var leaveBtn = el("button", "btn ghost sm", "Leave");
+    leaveBtn.onclick = function () { leaveToList(); };
+    head.appendChild(leaveBtn);
+    view.appendChild(head);
+
+    /* Name gate: ask once, remember per room. */
+    if (!S.displayName) {
+      renderNameGate(view);
+      setConn("idle");
+      return;
+    }
+
+    var body = el("div", "rm-relay-body");
+    /* Chat. */
+    var chatPanel = el("section", "rm-chat-panel panel");
+    chatPanel.setAttribute("aria-label", "Room chat");
+    var log = el("div", "rm-chat-log");
+    log.id = "rm-chat-log";
+    log.setAttribute("role", "log");
+    log.setAttribute("aria-live", "polite");
+    log.setAttribute("aria-label", "Room chat messages");
+    chatPanel.appendChild(log);
+    var typing = el("div", "rm-typing");
+    typing.id = "rm-typing";
+    typing.setAttribute("aria-live", "polite");
+    chatPanel.appendChild(typing);
+    var form = el("form", "rm-chat-form");
+    var input = el("input", "input");
+    input.id = "rm-chat-input";
+    input.placeholder = "Message the room…";
+    input.setAttribute("aria-label", "Message the room");
+    input.autocomplete = "off";
+    input.maxLength = 2000;
+    var sendBtn = el("button", "btn primary sm", "Send");
+    sendBtn.type = "submit";
+    form.appendChild(input);
+    form.appendChild(sendBtn);
+    chatPanel.appendChild(form);
+    var retry = el("button", "btn sm hidden", "Retry connection");
+    retry.id = "rm-retry";
+    retry.onclick = function () { joinRelaySession(); };
+    chatPanel.appendChild(retry);
+    body.appendChild(chatPanel);
+    /* Members + activity. */
+    var side = el("div", "rm-relay-side");
+    var membersPanel = el("aside", "panel");
+    membersPanel.setAttribute("aria-label", "Room members");
+    membersPanel.appendChild(el("h3", null, "Members"));
+    var mlist = el("div", "rm-members");
+    mlist.id = "rm-members";
+    membersPanel.appendChild(mlist);
+    side.appendChild(membersPanel);
+    var actPanel = el("aside", "panel");
+    actPanel.setAttribute("aria-label", "Room activity");
+    actPanel.appendChild(el("h3", null, "Activity"));
+    var alist = el("div", "rm-activity-list");
+    alist.id = "rm-activity-list";
+    actPanel.appendChild(alist);
+    side.appendChild(actPanel);
+    body.appendChild(side);
+    view.appendChild(body);
+
+    view.appendChild(el("p", "muted small",
+      "Relay rooms: live chat, presence, and typing are end-to-end encrypted. " +
+      "Message history isn't stored — you see what happens while you're here. " +
+      "Shared files, voice calls, and room AI need the Node server."));
+
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      sendChat(input);
+    });
+    input.addEventListener("input", function () {
+      if (!S.joined) return;
+      if (!S.typingSent) {
+        S.typingSent = true;
+        sendMsg({ type: "CHAT_TYPING", typing: true });
+      }
+      if (S.typingTimer) clearTimeout(S.typingTimer);
+      S.typingTimer = setTimeout(function () {
+        S.typingSent = false;
+        S.typingTimer = null;
+        sendMsg({ type: "CHAT_TYPING", typing: false });
+      }, 2000);
+    });
+
+    paintMembers();
+    paintChat(false);
+    paintActivity();
+    joinRelaySession();
   }
 
   function renderList(view, pendingCode) {
@@ -1184,6 +1468,7 @@
       if (kr) { kr.lastSeen = Date.now(); upsertKnownRoom(kr); }
     }
     closeSocket();
+    leaveRelay();
     S = freshState();
     render();
   }
@@ -2835,6 +3120,7 @@
     if (pending && S.screen === "workspace" && pending !== S.code) {
       leaveVoice(true);
       closeSocket();
+      leaveRelay();
       S = freshState();
     }
     view.appendChild(el("h1", null, "Rooms"));
@@ -2844,7 +3130,13 @@
       health = await api("GET", "/api/health");
     } catch (e) { health = null; }
     if (!health || health.serverless) {
-      renderServerlessNote(view);
+      // Serverless: rooms run over the encrypted MQTT relay — no Node server needed.
+      S.relayMode = true;
+      if (S.screen === "workspace" && S.code) {
+        renderRelayWorkspace(view);
+        return;
+      }
+      renderRelayList(view, pending);
       return;
     }
     if (S.screen === "workspace" && S.code) {
