@@ -13,7 +13,7 @@
     if (t === "system") {
       name = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
-    if (["light", "dark", "ocean", "deep-ocean", "sunset", "forest", "glass-dark", "glass-ocean"].indexOf(name) === -1) name = "light";
+    if (["light", "dark", "ocean", "deep-ocean", "sunset", "forest", "lavender", "rose", "mint", "slate", "midnight", "crimson", "amber", "grape", "glass-dark", "glass-ocean", "glass-sunset", "glass-rose"].indexOf(name) === -1) name = "light";
     document.documentElement.setAttribute("data-theme", name);
   } catch (e) { /* private mode — default light */ }
 })();

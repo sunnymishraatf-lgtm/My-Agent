@@ -191,7 +191,7 @@ function isVerbose() {
 function setVerbose(on) {
   try { localStorage.setItem(VERBOSE_STORAGE, on ? "1" : "0"); } catch (e) { /* private mode */ }
 }
-/* ----- Theme (Appearance): 8 named themes + System. Stored as the theme
+/* ----- Theme (Appearance): 18 named themes + System. Stored as the theme
    name or "system"; applied via the data-theme attribute. ----- */
 var THEME_STORAGE = "neutron_theme";
 var THEMES = [
@@ -201,12 +201,26 @@ var THEMES = [
   { id: "deep-ocean", name: "Deep Ocean", swatch: ["#060D16", "#38BDF8", "#0D1725"] },
   { id: "sunset", name: "Sunset", swatch: ["#FFFBF6", "#DE6B48", "#2B1C14"] },
   { id: "forest", name: "Forest", swatch: ["#FCFDFC", "#2F9E5F", "#132219"] },
+  { id: "lavender", name: "Lavender", swatch: ["#FBFAFF", "#8B5CF6", "#241B3D"] },
+  { id: "rose", name: "Rose", swatch: ["#FFFBFC", "#F43F5E", "#2E1420"] },
+  { id: "mint", name: "Mint", swatch: ["#FAFEFB", "#10B981", "#0E241C"] },
+  { id: "slate", name: "Slate", swatch: ["#F8FAFC", "#475569", "#1E293B"] },
+  { id: "midnight", name: "Midnight", swatch: ["#0A0A17", "#818CF8", "#141428"] },
+  { id: "crimson", name: "Crimson Night", swatch: ["#120709", "#FB4D6D", "#211016"] },
+  { id: "amber", name: "Amber Glow", swatch: ["#100C06", "#F59E0B", "#1E1608"] },
+  { id: "grape", name: "Grape", swatch: ["#0F0718", "#A855F7", "#1D0F2E"] },
   { id: "glass-dark", name: "Glass Dark",
     swatch: ["#0A0D13", "#CC8066", "#3A4356"],
     preview: "linear-gradient(135deg,#0A0D13 0%,#121A2B 48%,#1C1428 100%)" },
   { id: "glass-ocean", name: "Glass Ocean",
     swatch: ["#03101D", "#5BC8F5", "#2E4F73"],
     preview: "linear-gradient(135deg,#03101D 0%,#062A44 52%,#0B3F63 100%)" },
+  { id: "glass-sunset", name: "Glass Sunset",
+    swatch: ["#221004", "#FB923C", "#5C2E0C"],
+    preview: "linear-gradient(135deg,#221004 0%,#3A1D08 52%,#5C2E0C 100%)" },
+  { id: "glass-rose", name: "Glass Rose",
+    swatch: ["#20060F", "#F472B6", "#5E1636"],
+    preview: "linear-gradient(135deg,#20060F 0%,#3D0E22 52%,#5E1636 100%)" },
 ];
 var THEME_IDS = THEMES.map(function (t) { return t.id; });
 function storedTheme() {

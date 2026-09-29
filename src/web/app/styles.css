@@ -309,6 +309,374 @@
   --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
 }
 
+/* Lavender — soft violet on near-white. */
+[data-theme="lavender"] {
+  color-scheme: light;
+  --primary: #8B5CF6;
+  --primary-dark: #7C3AED;
+  --primary-soft: #EFE9FD;
+  --primary-glow-rgb: 139, 92, 246;
+  --on-primary: #FFFFFF;
+  --accent: #6D28D9;
+  --bg: #FBFAFF;
+  --bg-soft: #F4F0FD;
+  --surface: #241B3D;
+  --surface-2: #2E2450;
+  --surface-line: #3D3168;
+  --text: #221C35;
+  --text-2: #5B5470;
+  --text-3: #9A91B0;
+  --border: #E4DDF5;
+  --border-strong: #CFC2EC;
+  --green: #16A34A;
+  --green-soft: #EDF9F0;
+  --green-border: #BBE5C6;
+  --red: #DC2626;
+  --red-soft: #FDECEC;
+  --red-border: #F5C2C2;
+  --red-ink: #991B1B;
+  --amber: #D97706;
+  --amber-soft: #FFFBEB;
+  --amber-border: #F0C98A;
+  --blue-soft: #E9E2FD;
+  --blue-border: #C4B0F2;
+}
+
+/* Rose — pink accents on warm white. */
+[data-theme="rose"] {
+  color-scheme: light;
+  --primary: #F43F5E;
+  --primary-dark: #E11D48;
+  --primary-soft: #FDE8ED;
+  --primary-glow-rgb: 244, 63, 94;
+  --on-primary: #FFFFFF;
+  --accent: #9F1239;
+  --bg: #FFFBFC;
+  --bg-soft: #FDF2F5;
+  --surface: #2E1420;
+  --surface-2: #3A1B29;
+  --surface-line: #4E2438;
+  --text: #2B1219;
+  --text-2: #6B4A55;
+  --text-3: #A98A93;
+  --border: #F3DCE2;
+  --border-strong: #E5BCC7;
+  --green: #16A34A;
+  --green-soft: #EDF9F0;
+  --green-border: #BBE5C6;
+  --red: #DC2626;
+  --red-soft: #FDECEC;
+  --red-border: #F5C2C2;
+  --red-ink: #991B1B;
+  --amber: #D97706;
+  --amber-soft: #FFFBEB;
+  --amber-border: #F0C98A;
+  --blue-soft: #FBE9EE;
+  --blue-border: #F0B9C7;
+}
+
+/* Mint — fresh green on crisp white. */
+[data-theme="mint"] {
+  color-scheme: light;
+  --primary: #10B981;
+  --primary-dark: #059669;
+  --primary-soft: #DDF7EC;
+  --primary-glow-rgb: 16, 185, 129;
+  --on-primary: #FFFFFF;
+  --accent: #065F46;
+  --bg: #FAFEFB;
+  --bg-soft: #EFFAF3;
+  --surface: #0E241C;
+  --surface-2: #143327;
+  --surface-line: #1E4435;
+  --text: #0F231B;
+  --text-2: #41655A;
+  --text-3: #84A297;
+  --border: #D6EBE1;
+  --border-strong: #AED8C4;
+  --green: #16A34A;
+  --green-soft: #EDF9F0;
+  --green-border: #BBE5C6;
+  --red: #DC2626;
+  --red-soft: #FDECEC;
+  --red-border: #F5C2C2;
+  --red-ink: #991B1B;
+  --amber: #D97706;
+  --amber-soft: #FFFBEB;
+  --amber-border: #F0C98A;
+  --blue-soft: #DFF5E9;
+  --blue-border: #A9DFC2;
+}
+
+/* Slate — monochrome gray, light. */
+[data-theme="slate"] {
+  color-scheme: light;
+  --primary: #475569;
+  --primary-dark: #334155;
+  --primary-soft: #E8EDF2;
+  --primary-glow-rgb: 71, 85, 105;
+  --on-primary: #FFFFFF;
+  --accent: #1E293B;
+  --bg: #F8FAFC;
+  --bg-soft: #F1F5F9;
+  --surface: #1E293B;
+  --surface-2: #334155;
+  --surface-line: #475569;
+  --text: #0F172A;
+  --text-2: #475569;
+  --text-3: #94A3B8;
+  --border: #E2E8F0;
+  --border-strong: #CBD5E1;
+  --green: #16A34A;
+  --green-soft: #EDF9F0;
+  --green-border: #BBE5C6;
+  --red: #DC2626;
+  --red-soft: #FDECEC;
+  --red-border: #F5C2C2;
+  --red-ink: #991B1B;
+  --amber: #D97706;
+  --amber-soft: #FFFBEB;
+  --amber-border: #F0C98A;
+  --blue-soft: #EAF0F6;
+  --blue-border: #B9C8D8;
+}
+
+/* Midnight — deep indigo dark. */
+[data-theme="midnight"] {
+  color-scheme: dark;
+  --primary: #818CF8;
+  --primary-dark: #A5B4FC;
+  --primary-soft: #1E2142;
+  --primary-glow-rgb: 129, 140, 248;
+  --on-primary: #FFFFFF;
+  --accent: #A5B4FC;
+  --bg: #0A0A17;
+  --bg-soft: #101022;
+  --surface: #141428;
+  --surface-2: #1B1B33;
+  --surface-line: #2A2A48;
+  --white: #141428;
+  --text: #E8EAF6;
+  --text-2: #A9AEC9;
+  --text-3: #6E7490;
+  --border: #20203A;
+  --border-strong: #2E2E52;
+  --green: #4ADE80;
+  --green-soft: #0E241A;
+  --green-border: #1C4A30;
+  --red: #F87171;
+  --red-soft: #2A1416;
+  --red-border: #5A2A2E;
+  --red-ink: #FCA5A5;
+  --on-danger: #3A0D0D;
+  --amber: #FBBF24;
+  --amber-soft: #241C0E;
+  --amber-border: #5C4A24;
+  --blue-soft: #1A2040;
+  --blue-border: #33406E;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* Crimson Night — dark red-tinted. */
+[data-theme="crimson"] {
+  color-scheme: dark;
+  --primary: #FB4D6D;
+  --primary-dark: #F9718A;
+  --primary-soft: #2E1219;
+  --primary-glow-rgb: 251, 77, 109;
+  --on-primary: #FFFFFF;
+  --accent: #F9718A;
+  --bg: #120709;
+  --bg-soft: #1A0C0F;
+  --surface: #211016;
+  --surface-2: #2B151D;
+  --surface-line: #3D1F29;
+  --white: #211016;
+  --text: #F7ECEF;
+  --text-2: #C4A6AE;
+  --text-3: #8A6A73;
+  --border: #2C151C;
+  --border-strong: #42202A;
+  --green: #4ADE80;
+  --green-soft: #0E241A;
+  --green-border: #1C4A30;
+  --red: #F87171;
+  --red-soft: #2A1416;
+  --red-border: #5A2A2E;
+  --red-ink: #FCA5A5;
+  --on-danger: #3A0D0D;
+  --amber: #FBBF24;
+  --amber-soft: #241C0E;
+  --amber-border: #5C4A24;
+  --blue-soft: #2A1620;
+  --blue-border: #4E2A38;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* Amber Glow — warm dark amber. */
+[data-theme="amber"] {
+  color-scheme: dark;
+  --primary: #F59E0B;
+  --primary-dark: #FBBF24;
+  --primary-soft: #2B2008;
+  --primary-glow-rgb: 245, 158, 11;
+  --on-primary: #1A1207;
+  --accent: #FCD34D;
+  --bg: #100C06;
+  --bg-soft: #171106;
+  --surface: #1E1608;
+  --surface-2: #29200C;
+  --surface-line: #3A2D12;
+  --white: #1E1608;
+  --text: #F5EDDD;
+  --text-2: #C2B294;
+  --text-3: #877A5F;
+  --border: #2A2110;
+  --border-strong: #3E3118;
+  --green: #4ADE80;
+  --green-soft: #0E241A;
+  --green-border: #1C4A30;
+  --red: #F87171;
+  --red-soft: #2A1416;
+  --red-border: #5A2A2E;
+  --red-ink: #FCA5A5;
+  --on-danger: #3A0D0D;
+  --amber: #FBBF24;
+  --amber-soft: #241C0E;
+  --amber-border: #5C4A24;
+  --blue-soft: #241D10;
+  --blue-border: #4E3E1E;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* Grape — deep purple dark. */
+[data-theme="grape"] {
+  color-scheme: dark;
+  --primary: #A855F7;
+  --primary-dark: #C084FC;
+  --primary-soft: #251336;
+  --primary-glow-rgb: 168, 85, 247;
+  --on-primary: #FFFFFF;
+  --accent: #C084FC;
+  --bg: #0F0718;
+  --bg-soft: #160B22;
+  --surface: #1D0F2E;
+  --surface-2: #271539;
+  --surface-line: #38204E;
+  --white: #1D0F2E;
+  --text: #F3EAFB;
+  --text-2: #BFA8D6;
+  --text-3: #8A6FA5;
+  --border: #2A1539;
+  --border-strong: #3E2054;
+  --green: #4ADE80;
+  --green-soft: #0E241A;
+  --green-border: #1C4A30;
+  --red: #F87171;
+  --red-soft: #2A1416;
+  --red-border: #5A2A2E;
+  --red-ink: #FCA5A5;
+  --on-danger: #3A0D0D;
+  --amber: #FBBF24;
+  --amber-soft: #241C0E;
+  --amber-border: #5C4A24;
+  --blue-soft: #221238;
+  --blue-border: #3E2560;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* Glass Sunset — warm frosted glass. */
+[data-theme="glass-sunset"] {
+  color-scheme: dark;
+  --primary: #FB923C;
+  --primary-dark: #FDBA74;
+  --primary-soft: rgba(251, 146, 60, 0.14);
+  --primary-glow-rgb: 251, 146, 60;
+  --on-primary: #2B1408;
+  --accent: #FDBA74;
+  --bg: linear-gradient(135deg, #221004 0%, #3A1D08 52%, #5C2E0C 100%);
+  --bg-soft: rgba(255, 255, 255, 0.04);
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-2: rgba(255, 255, 255, 0.10);
+  --surface-line: rgba(255, 255, 255, 0.14);
+  --white: rgba(255, 255, 255, 0.08);
+  --text: #FDF3E7;
+  --text-2: #E8C9A8;
+  --text-3: #B08D64;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.28);
+  --green: #4ADE80;
+  --green-soft: rgba(74, 222, 128, 0.12);
+  --green-border: rgba(74, 222, 128, 0.35);
+  --red: #F87171;
+  --red-soft: rgba(248, 113, 113, 0.12);
+  --red-border: rgba(248, 113, 113, 0.35);
+  --red-ink: #FCA5A5;
+  --on-danger: #3A0D0D;
+  --amber: #FBBF24;
+  --amber-soft: rgba(251, 191, 36, 0.12);
+  --amber-border: rgba(251, 191, 36, 0.35);
+  --blue-soft: rgba(253, 186, 116, 0.12);
+  --blue-border: rgba(253, 186, 116, 0.35);
+  --glass-bg: rgba(255, 255, 255, 0.07);
+  --glass-bg-2: rgba(255, 255, 255, 0.11);
+  --glass-border: rgba(255, 255, 255, 0.18);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* Glass Rose — pink frosted glass. */
+[data-theme="glass-rose"] {
+  color-scheme: dark;
+  --primary: #F472B6;
+  --primary-dark: #F9A8D4;
+  --primary-soft: rgba(244, 114, 182, 0.14);
+  --primary-glow-rgb: 244, 114, 182;
+  --on-primary: #2B0A1A;
+  --accent: #F9A8D4;
+  --bg: linear-gradient(135deg, #20060F 0%, #3D0E22 52%, #5E1636 100%);
+  --bg-soft: rgba(255, 255, 255, 0.04);
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-2: rgba(255, 255, 255, 0.10);
+  --surface-line: rgba(255, 255, 255, 0.14);
+  --white: rgba(255, 255, 255, 0.08);
+  --text: #FDEBF3;
+  --text-2: #E5B9CB;
+  --text-3: #A97B90;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.28);
+  --green: #4ADE80;
+  --green-soft: rgba(74, 222, 128, 0.12);
+  --green-border: rgba(74, 222, 128, 0.35);
+  --red: #F87171;
+  --red-soft: rgba(248, 113, 113, 0.12);
+  --red-border: rgba(248, 113, 113, 0.35);
+  --red-ink: #FCA5A5;
+  --on-danger: #3A0D0D;
+  --amber: #FBBF24;
+  --amber-soft: rgba(251, 191, 36, 0.12);
+  --amber-border: rgba(251, 191, 36, 0.35);
+  --blue-soft: rgba(249, 168, 212, 0.12);
+  --blue-border: rgba(249, 168, 212, 0.35);
+  --glass-bg: rgba(255, 255, 255, 0.07);
+  --glass-bg-2: rgba(255, 255, 255, 0.11);
+  --glass-border: rgba(255, 255, 255, 0.18);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
 /* ---- glassmorphism: frosted surfaces for the glass themes ----
    Modest 18px blur. Blurred elements are never animated themselves —
    only transforms animate (see .panel:hover). Browsers without
