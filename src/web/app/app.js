@@ -2442,7 +2442,11 @@ async function renderChat(view) {
       lastFailedBody = null;
       speak(amsg.text);
     } catch (e) {
-      var msg = e && e.message ? e.message : String(e);
+      /* Friendly message for the user; the raw detail stays in the API
+         inspector and verbose log via api(). */
+      var UI5 = window.NeutronUI;
+      var msg = (UI5 && UI5.friendlyChatError) ? UI5.friendlyChatError(e)
+        : (e && e.message ? e.message : String(e));
       chatState.messages.push({ role: "assistant", text: "Error: " + msg, failed: true, ts: Date.now() });
       var UI4 = window.NeutronUI;
       if (UI4) UI4.convTouch(convStore, activeConv().id, Date.now());

@@ -426,3 +426,46 @@ describe("stripMarkdownForSpeech", () => {
     expect(stripMarkdownForSpeech(undefined)).toBe("");
   });
 });
+
+describe("friendlyChatError", () => {
+  const { friendlyChatError } = uiUtils;
+  it("maps 401 to key guidance", () => {
+    const e = new Error("HTTP 401"); (e as any).status = 401;
+    expect(friendlyChatError(e)).toContain("API key was rejected");
+    expect(friendlyChatError(e)).toContain("Settings");
+  });
+  it("detects invalid-key text without status", () => {
+    expect(friendlyChatError(new Error("invalid_api_key: bad"))).toContain("API key was rejected");
+  });
+  it("maps 429 to rate-limit guidance", () => {
+    const e = new Error("HTTP 429"); (e as any).status = 429;
+    expect(friendlyChatError(e)).toContain("Rate limited");
+    expect(friendlyChatError(e)).toContain("Retry");
+  });
+  it("maps timeouts", () => {
+    expect(friendlyChatError(new Error("Request timed out after 90s"))).toContain("timed out");
+  });
+  it("maps offline", () => {
+    expect(friendlyChatError(new Error("You appear to be offline — nope"))).toContain("offline");
+  });
+  it("maps 502/503 to provider trouble", () => {
+    const e = new Error("HTTP 503"); (e as any).status = 503;
+    expect(friendlyChatError(e)).toContain("provider is having trouble");
+  });
+  it("maps failed fetch to connectivity guidance", () => {
+    expect(friendlyChatError(new TypeError("Failed to fetch"))).toContain("Couldn't reach the server");
+  });
+  it("keeps 400 detail for model issues", () => {
+    const e = new Error("model not found: xyz"); (e as any).status = 400;
+    const out = friendlyChatError(e);
+    expect(out).toContain("400");
+    expect(out).toContain("xyz");
+  });
+  it("falls back to the raw message for unknown errors", () => {
+    expect(friendlyChatError(new Error("weird provider gibberish"))).toBe("weird provider gibberish");
+  });
+  it("handles null/undefined/empty", () => {
+    expect(friendlyChatError(null)).toBe("Something went wrong sending that message.");
+    expect(friendlyChatError(undefined)).toBe("Something went wrong sending that message.");
+  });
+});

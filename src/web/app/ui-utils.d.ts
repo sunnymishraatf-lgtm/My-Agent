@@ -44,6 +44,7 @@ export declare function sanitizeChatHistory(messages: any, cap?: number): any[];
 export declare function renderMarkdown(src: string | null | undefined): string;
 
 export declare function stripMarkdownForSpeech(src: string | null | undefined): string;
+export declare function friendlyChatError(err: { message?: string; status?: number } | string | null | undefined): string;
 
 /* ----- conversation workspace store (device-local, no accounts) ----- */
 

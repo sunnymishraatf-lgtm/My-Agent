@@ -304,6 +304,29 @@
     return s;
   }
 
+  /* Map a raw send error to a user-friendly message. The raw detail stays
+     in the API inspector / verbose log; the chat bubble and error bar get
+     something actionable instead of "HTTP 401". Pure — safe to test. */
+  function friendlyChatError(err) {
+    var msg = err && err.message ? String(err.message) : String(err == null ? "" : err);
+    var status = err && typeof err.status === "number" ? err.status : 0;
+    if (/offline/i.test(msg))
+      return "You appear to be offline — check your connection and try again.";
+    if (/timed out after/i.test(msg))
+      return "The request timed out after 90 seconds. The provider may be slow or stuck — try again.";
+    if (status === 401 || /\b401\b|unauthorized|invalid api key|invalid_api_key|incorrect api key/i.test(msg))
+      return "Your API key was rejected (401). Check the key in Settings — it must belong to the selected provider.";
+    if (status === 429 || /\b429\b|rate.?limit|too many requests/i.test(msg))
+      return "Rate limited (429) — the provider is throttling requests. Wait a moment, then use Retry.";
+    if (status === 400 || /\b400\b/i.test(msg))
+      return "The request was rejected (400): " + msg + ". Check the selected model id.";
+    if (status === 502 || status === 503 || status === 504 || /\b50[234]\b|bad gateway|service unavailable|gateway timeout/i.test(msg))
+      return "The provider is having trouble (" + (status || "server error") + "). Try again in a bit.";
+    if (/failed to fetch|networkerror|load failed/i.test(msg))
+      return "Couldn't reach the server. Check your connection and the backend URL in Developer settings.";
+    return msg || "Something went wrong sending that message.";
+  }
+
   /* Strip markdown syntax for text-to-speech: the voice reader must hear
      words, not "asterisk asterisk". Fenced code blocks become a short
      placeholder; inline formatting is dropped; links read as their text. */
@@ -1184,6 +1207,7 @@
     sanitizeChatHistory: sanitizeChatHistory,
     renderMarkdown: renderMarkdown,
     stripMarkdownForSpeech: stripMarkdownForSpeech,
+    friendlyChatError: friendlyChatError,
     /* collaboration rooms (Phase 1) */
     normalizeRoomCode: normalizeRoomCode,
     isValidRoomCode: isValidRoomCode,
