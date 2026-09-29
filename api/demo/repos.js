@@ -9927,6 +9927,46 @@ var DemoError = class extends Error {
     this.status = status;
   }
 };
+var REPO_FILE_COUNT_CAP = 5e3;
+var COUNT_SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".svn", ".hg"]);
+function countFilesCapped(dir, cap) {
+  let n = 0;
+  const stack = [dir];
+  while (stack.length > 0 && n < cap) {
+    const cur = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync6(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (n >= cap) break;
+      if (e.isDirectory()) {
+        if (!COUNT_SKIP_DIRS.has(e.name)) stack.push(join14(cur, e.name));
+      } else if (e.isFile()) {
+        n++;
+      }
+    }
+  }
+  return n;
+}
+function listWorkspaceRepos(workspace) {
+  const out = [];
+  let entries;
+  try {
+    entries = readdirSync6(workspace, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(e.name)) continue;
+    out.push({ name: e.name, files: countFilesCapped(join14(workspace, e.name), REPO_FILE_COUNT_CAP) });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
 function prepareDemoRepo(workspace) {
   const dir = join14(workspace, DEMO_PROJECT);
   const reused = existsSync13(join14(dir, "package.json"));
@@ -10338,34 +10378,6 @@ function sanitizeResult(r) {
     errors: r.errors
   };
 }
-function publicAnalysis(rec) {
-  const ws = dirname4(rec.repoDir);
-  const scrub = (v) => {
-    if (typeof v === "string") return v.split(rec.repoDir).join(`<workspace>/${rec.repository}`).split(ws).join("<workspace>");
-    if (Array.isArray(v)) return v.map(scrub);
-    if (v && typeof v === "object") {
-      const out = {};
-      for (const [k, val] of Object.entries(v)) out[k] = scrub(val);
-      return out;
-    }
-    return v;
-  };
-  return {
-    analysisId: rec.id,
-    repository: rec.repository,
-    isDemo: rec.isDemo,
-    request: rec.request,
-    riskTolerance: rec.riskTolerance,
-    createdAt: rec.createdAt,
-    analysis: scrub({ ...rec.analysis, nodes: rec.analysis.nodes.slice(0, MAX_NODES) }),
-    analysisTruncated: rec.analysis.nodes.length > MAX_NODES,
-    impact: scrub(rec.graph),
-    plan: scrub(rec.plan)
-  };
-}
-function serializeAnalysis(rec) {
-  return publicAnalysis(rec);
-}
 
 // api-src/_lib.ts
 function sendJson(res, status, body) {
@@ -10398,32 +10410,6 @@ function requireMethod(req, res, method) {
   }
   return true;
 }
-function readJsonBody(req) {
-  const raw = req.body;
-  if (raw === void 0 || raw === null) return {};
-  if (typeof raw === "string") {
-    if (!raw.trim()) return {};
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") return parsed;
-    } catch {
-    }
-    throw new DemoError("Invalid JSON body", 400);
-  }
-  if (typeof raw === "object") return raw;
-  throw new DemoError("Invalid JSON body", 400);
-}
-var RISK_TOLERANCES = /* @__PURE__ */ new Set(["safe", "balanced", "aggressive"]);
-function parseRiskTolerance(value) {
-  if (value === void 0) return "balanced";
-  if (typeof value === "string" && RISK_TOLERANCES.has(value)) {
-    return value;
-  }
-  throw new DemoError(
-    `Invalid riskTolerance ${JSON.stringify(value) ?? "null"}; expected one of: safe, balanced, aggressive.`,
-    400
-  );
-}
 function demoWorkspace() {
   return resolveDemoWorkspace(process.env.NEUTRON_DEMO_WORKSPACE?.trim() || "/tmp/neutron-demo");
 }
@@ -10439,19 +10425,13 @@ function handleApiError(res, err) {
   sendJson(res, 500, { ok: false, error: "Internal server error" });
 }
 
-// api-src/demo/analyze.ts
+// api-src/demo/repos.ts
 async function handler(req, res) {
   if (handlePreflight(req, res)) return;
-  if (!requireMethod(req, res, "POST")) return;
+  if (!requireMethod(req, res, "GET")) return;
   try {
-    const body = readJsonBody(req);
     const manager = newDemoManager();
-    const record = manager.analyze(
-      typeof body.repo === "string" ? body.repo : "demo",
-      typeof body.request === "string" ? body.request : "",
-      parseRiskTolerance(body.riskTolerance)
-    );
-    sendJson(res, 200, { ok: true, ...serializeAnalysis(record) });
+    sendJson(res, 200, { ok: true, repos: listWorkspaceRepos(manager.workspace) });
   } catch (err) {
     handleApiError(res, err);
   }

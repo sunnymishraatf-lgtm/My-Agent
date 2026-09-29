@@ -32,7 +32,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { analyzeRepository } from "../neutron/analyzer";
@@ -161,6 +161,66 @@ export function cloneRepo(workspace: string, url: string): Promise<ResolvedRepo>
 function shortErr(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   return msg.split("\n")[0]!.slice(0, 200);
+}
+
+export interface WorkspaceRepo {
+  /** Directory name inside the workspace (e.g. "taskflow" or "owner-repo"). */
+  name: string;
+  /** Best-effort file count, capped. */
+  files: number;
+}
+
+/** Cap for the recursive file walk in listWorkspaceRepos. */
+const REPO_FILE_COUNT_CAP = 5000;
+
+/** Directories never descended into when counting files. */
+const COUNT_SKIP_DIRS = new Set([".git", "node_modules", ".svn", ".hg"]);
+
+function countFilesCapped(dir: string, cap: number): number {
+  let n = 0;
+  const stack: string[] = [dir];
+  while (stack.length > 0 && n < cap) {
+    const cur = stack.pop()!;
+    let entries;
+    try {
+      entries = readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue; // unreadable dir — best effort
+    }
+    for (const e of entries) {
+      if (n >= cap) break;
+      if (e.isDirectory()) {
+        if (!COUNT_SKIP_DIRS.has(e.name)) stack.push(join(cur, e.name));
+      } else if (e.isFile()) {
+        n++;
+      }
+    }
+  }
+  return n;
+}
+
+/**
+ * List repositories present in the demo workspace: the scaffolded demo
+ * project plus any cloned GitHub repos. Returns directory names only —
+ * never absolute server paths. Unreadable workspace → empty list (the UI
+ * shows its own empty state). On serverless deployments the workspace is
+ * per-instance /tmp, so this is usually just the demo project — honest.
+ */
+export function listWorkspaceRepos(workspace: string): WorkspaceRepo[] {
+  const out: WorkspaceRepo[] = [];
+  let entries;
+  try {
+    entries = readdirSync(workspace, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(e.name)) continue;
+    out.push({ name: e.name, files: countFilesCapped(join(workspace, e.name), REPO_FILE_COUNT_CAP) });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
 }
 
 /* ------------------------------------------------------------------ */

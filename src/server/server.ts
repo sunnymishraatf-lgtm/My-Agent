@@ -29,6 +29,7 @@ import {
   serializeAnalysis,
   serializeJob,
   cloneRepo,
+  listWorkspaceRepos,
   DemoError,
   type DemoManager,
 } from "./demo";
@@ -433,6 +434,10 @@ async function handleDemoApi(manager: DemoManager, req: IncomingMessage, res: Se
         extractRequestProvider(req, body),
       );
       sendJson(res, 202, { ok: true, ...serializeJob(job) });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/demo/repos") {
+      sendJson(res, 200, { ok: true, repos: listWorkspaceRepos(manager.workspace) });
       return;
     }
     if (req.method === "POST" && path === "/api/demo/clone") {

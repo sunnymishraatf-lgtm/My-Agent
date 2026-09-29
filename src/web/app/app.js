@@ -662,6 +662,7 @@ async function renderRepos(view) {
     try {
       var r = await api("POST", "/api/demo/clone", { url: url });
       c.appendChild(notice("", "Cloned as \"" + r.repository + "\". Use that name as the repository in Maintain."));
+      paintRepoList();
     } catch (e) {
       showError(e && e.message ? e.message : String(e));
     }
@@ -670,6 +671,44 @@ async function renderRepos(view) {
   row.appendChild(go);
   c.appendChild(row);
   view.appendChild(c);
+
+  /* Repositories actually present in the workspace (demo + clones). */
+  var rl = el("section", "panel");
+  rl.appendChild(el("h2", null, "Workspace repositories"));
+  var rlBody = el("div", null);
+  rl.appendChild(rlBody);
+  rl.appendChild(el("p", "muted small",
+    "On serverless deployments the workspace is per-instance, so clones made here may not be visible after a redeploy — the persistent Node host keeps them."));
+  view.appendChild(rl);
+  async function paintRepoList() {
+    rlBody.innerHTML = "";
+    var sk2 = el("div", "skeleton sk-line");
+    sk2.setAttribute("aria-busy", "true");
+    rlBody.appendChild(sk2);
+    try {
+      var rr = await api("GET", "/api/demo/repos");
+      rlBody.innerHTML = "";
+      var repos = (rr && Array.isArray(rr.repos)) ? rr.repos : [];
+      if (!repos.length) {
+        rlBody.appendChild(el("p", "muted", "No repositories in the workspace yet. Clone one above."));
+        return;
+      }
+      var ul = el("ul", "list");
+      repos.forEach(function (rp) {
+        var li = el("li");
+        li.appendChild(el("span", "mono", (rp && rp.name) || "—"));
+        li.appendChild(el("span", "muted small",
+          " · " + (rp && typeof rp.files === "number" ? rp.files + " files" : "—") +
+          " · use \"" + ((rp && rp.name) || "") + "\" as the repository in Maintain"));
+        ul.appendChild(li);
+      });
+      rlBody.appendChild(ul);
+    } catch (e) {
+      rlBody.innerHTML = "";
+      rlBody.appendChild(el("p", "muted", "Could not list workspace repositories."));
+    }
+  }
+  paintRepoList();
 }
 
 /* ---------- maintain wizard (on /api/demo/*) ---------- */
