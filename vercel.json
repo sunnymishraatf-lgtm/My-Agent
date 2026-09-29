@@ -26,6 +26,10 @@
       "source": "/download"
     },
     {
+      "destination": "/skills/:path*",
+      "source": "/skills/:path*"
+    },
+    {
       "destination": "/:path*",
       "source": "/src/web/:path*"
     }
