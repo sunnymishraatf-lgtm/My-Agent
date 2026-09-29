@@ -247,11 +247,30 @@ function chips(parent, items) {
 
 /* ---------- server status ---------- */
 
+/* APK shell version via the native JS bridge (null on plain browsers). */
+function apkVersion() {
+  try {
+    if (window.NeutronApp && typeof window.NeutronApp.getApkVersion === "function") {
+      var v = window.NeutronApp.getApkVersion();
+      return v && v !== "?" ? v : null;
+    }
+  } catch (e) {}
+  return null;
+}
+
+function versionLabel(serverVersion) {
+  var av = apkVersion();
+  var parts = [];
+  if (av) parts.push("App v" + av);
+  parts.push("Server v" + (serverVersion || "?"));
+  return parts.join(" · ");
+}
+
 async function refreshServerPill() {
   var pill = document.getElementById("server-pill");
   try {
     var h = await api("GET", "/api/health");
-    pill.textContent = "ONLINE · v" + (h.version || "?");
+    pill.textContent = "ONLINE · " + versionLabel(h.version);
     pill.className = "pill ok";
   } catch (e) {
     pill.textContent = "OFFLINE";
@@ -315,7 +334,7 @@ async function renderDashboard(view) {
     return p;
   }
   stats.appendChild(statCard("Server", health ? "ONLINE" : "OFFLINE",
-    health ? "v" + health.version : "could not reach /api/health"));
+    health ? versionLabel(health.version) : "could not reach /api/health"));
   stats.appendChild(statCard("Demo repository", demo ? demo.demoRepository : "—",
     demo ? demo.demoDescription : "could not reach /api/demo/status"));
   stats.appendChild(statCard("API key", keySet ? "SET" : "NOT SET",

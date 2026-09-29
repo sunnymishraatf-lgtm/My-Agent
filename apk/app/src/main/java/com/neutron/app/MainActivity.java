@@ -1,7 +1,9 @@
 package com.neutron.app;
 
 import android.app.Activity;
+import android.os.Build;
 import android.os.Bundle;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -37,6 +39,7 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
 
         web.setWebViewClient(new WebViewClient());
+        web.addJavascriptInterface(new AppBridge(), "NeutronApp");
         if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
         } else {
@@ -66,6 +69,35 @@ public class MainActivity extends Activity {
             web.goBack();
         } else {
             super.onBackPressed();
+        }
+    }
+
+    /** JS bridge: lets the web app read the native shell version. */
+    private class AppBridge {
+        @JavascriptInterface
+        public String getApkVersion() {
+            try {
+                return getPackageManager()
+                        .getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception e) {
+                return "?";
+            }
+        }
+
+        @JavascriptInterface
+        public int getApkVersionCode() {
+            try {
+                if (Build.VERSION.SDK_INT >= 28) {
+                    return (int) getPackageManager()
+                            .getPackageInfo(getPackageName(), 0).getLongVersionCode();
+                }
+                @SuppressWarnings("deprecation")
+                int v = getPackageManager()
+                        .getPackageInfo(getPackageName(), 0).versionCode;
+                return v;
+            } catch (Exception e) {
+                return 0;
+            }
         }
     }
 }
