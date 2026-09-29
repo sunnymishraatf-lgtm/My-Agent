@@ -1535,6 +1535,8 @@
         synced: false,
         awareTimer: null,
         lastAwareSent: 0,
+        composing: false, // IME composition in progress — don't diff or re-render yet
+        remotePending: false, // remote update arrived mid-composition; flush on compositionend
       };
       doc.on("update", function (update, origin) { onDocUpdate(ed, update, origin); });
       S.editors[fileId] = ed;
@@ -1579,6 +1581,10 @@
   function onLocalInput(ed) {
     var ta = ed.ta;
     if (!ta || ed.disposed) return;
+    // IME composition fires input events for every intermediate keystroke.
+    // Diffing those would spam noisy ops and fight the composition; the
+    // compositionend handler flushes the final text instead.
+    if (ed.composing) return;
     var next = ta.value;
     if (next === ed.lastText) return;
     var ops = UI.diffTextToOps(ed.lastText, next);
@@ -1611,8 +1617,13 @@
   function renderRemoteText(ed) {
     var ta = ed.ta;
     var text = ed.ytext.toString();
+    if (!ta) { ed.lastText = text; return; }
+    // Never yank the textarea out from under an active IME session —
+    // programmatic value changes cancel composition and lose input.
+    // Defer until compositionend, keeping lastText at the pre-remote base
+    // so the compositionend flush diffs cleanly.
+    if (ed.composing) { ed.remotePending = true; return; }
     ed.lastText = text;
-    if (!ta) return;
     if (ta.value === text) return;
     var focused = false;
     var s = 0, e = 0;
@@ -1955,6 +1966,17 @@
     ed.ta = ta;
 
     ta.addEventListener("input", function () { onLocalInput(ed); });
+    // IME (CJK etc.): hold local diffs during composition and never
+    // re-render remote text mid-composition — both kill the IME session.
+    // On compositionend, apply the composed text first (diffs against the
+    // pre-remote base), then flush any deferred remote re-render so the
+    // CRDT merge is what the user finally sees.
+    ta.addEventListener("compositionstart", function () { ed.composing = true; ed.remotePending = false; });
+    ta.addEventListener("compositionend", function () {
+      ed.composing = false;
+      onLocalInput(ed);
+      if (ed.remotePending) { ed.remotePending = false; renderRemoteText(ed); }
+    });
     var aware = function () { sendAwareness(ed); };
     ta.addEventListener("keyup", aware);
     ta.addEventListener("click", aware);
