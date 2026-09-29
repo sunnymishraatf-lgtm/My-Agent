@@ -1059,6 +1059,33 @@ async function renderJobDetail(view, id) {
 
 var chatState = { messages: [] };
 
+var CHAT_STORAGE = "neutron_chat_history";
+var CHAT_HISTORY_CAP = 200;
+
+/* Persist chat history to this browser only (same trust boundary as the
+   API key). Best-effort: quota/private-mode failures are silent. */
+function persistChat() {
+  try {
+    var UI = window.NeutronUI;
+    if (!UI) return;
+    localStorage.setItem(CHAT_STORAGE,
+      JSON.stringify(UI.sanitizeChatHistory(chatState.messages, CHAT_HISTORY_CAP)));
+  } catch (e) { /* not fatal */ }
+}
+
+function restoreChat() {
+  try {
+    var raw = localStorage.getItem(CHAT_STORAGE);
+    if (!raw) return;
+    var arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.length) chatState.messages = arr;
+  } catch (e) { /* corrupt history — start fresh */ }
+}
+
+function clearChatHistory() {
+  try { localStorage.removeItem(CHAT_STORAGE); } catch (e) {}
+}
+
 var VOICE_SPEAK_STORAGE = "neutron_voice_speak";
 function voiceSpeakEnabled() {
   try { return localStorage.getItem(VOICE_SPEAK_STORAGE) === "1"; } catch (e) { return false; }
@@ -1103,6 +1130,7 @@ function utf8Decode(buf) {
 }
 
 async function renderChat(view) {
+  restoreChat(); // reload-safe: history lives in this browser only
   var providers = await fetchProviders();
   var byId = {};
   providers.forEach(function (pr) { byId[pr.id] = pr; });
@@ -1331,6 +1359,7 @@ async function renderChat(view) {
 
   var renderAll = false;
   function paint() {
+    persistChat();
     log.innerHTML = "";
     var UI = window.NeutronUI;
     var cap = UI ? UI.CHAT_RENDER_CAP : 120;
@@ -1355,6 +1384,7 @@ async function renderChat(view) {
 
   /** Append a single message efficiently; animates entry via .msg-enter. */
   function appendMsg(m) {
+    persistChat();
     var UI = window.NeutronUI;
     var cap = UI ? UI.CHAT_RENDER_CAP : 120;
     if (chatState.messages.length === 1 ||
@@ -1654,6 +1684,7 @@ async function renderChat(view) {
 
   newBtn.onclick = function () {
     chatState.messages = [];
+    clearChatHistory();
     try { if (synthSupported) window.speechSynthesis.cancel(); } catch (e) {}
     clearError();
     paint();

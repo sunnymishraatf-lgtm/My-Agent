@@ -300,3 +300,44 @@ describe("wizard persistence helpers", () => {
     expect(isValidWizardState({ step: "PLAN" }, [])).toBe(false);
   });
 });
+
+describe("sanitizeChatHistory", () => {
+  const { sanitizeChatHistory } = uiUtils;
+
+  it("keeps role/text/ts/failed and caps length", () => {
+    const msgs = Array.from({ length: 5 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user", text: "m" + i, ts: 1000 + i,
+    }));
+    const out: any = sanitizeChatHistory(msgs, 3);
+    expect(out.length).toBe(3);
+    expect(out[0].text).toBe("m2");
+    expect(out[0].ts).toBe(1002);
+    expect(out[0].role).toBe("user");
+  });
+
+  it("normalizes unknown roles to user and drops junk", () => {
+    const out: any = sanitizeChatHistory([
+      { role: "system", text: "x" },
+      null,
+      { role: "assistant", text: "y", failed: true },
+    ]);
+    expect(out.length).toBe(2);
+    expect(out[0].role).toBe("user");
+    expect(out[1].failed).toBe(true);
+  });
+
+  it("truncates oversized text and artifacts", () => {
+    const out: any = sanitizeChatHistory([{
+      role: "assistant", text: "a".repeat(30000),
+      artifacts: [{ path: "f.txt", content: "b".repeat(200000) }],
+    }]);
+    expect(out[0].text.length).toBe(20000);
+    expect(out[0].artifacts[0].content.length).toBe(100000);
+    expect(out[0].artifacts[0].path).toBe("f.txt");
+  });
+
+  it("returns [] for invalid input", () => {
+    expect(sanitizeChatHistory(null as any)).toEqual([]);
+    expect(sanitizeChatHistory("x" as any)).toEqual([]);
+  });
+});

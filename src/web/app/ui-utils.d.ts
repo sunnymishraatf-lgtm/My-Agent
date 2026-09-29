@@ -38,3 +38,5 @@ export declare function fmtTime(ts: number | string | null | undefined): string;
 export declare function sanitizeWizard(mz: any): any | null;
 
 export declare function isValidWizardState(obj: any, validSteps: string[]): boolean;
+
+export declare function sanitizeChatHistory(messages: any, cap?: number): any[];

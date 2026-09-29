@@ -220,6 +220,37 @@
     return Array.isArray(validSteps) && validSteps.indexOf(obj.step) !== -1;
   }
 
+  /**
+   * Pick the persistable subset of chat messages for localStorage.
+   * Keeps role/text/ts/failed and artifact metadata; drops anything
+   * oversized (artifact bodies are capped) so history stays small.
+   * Returns [] for invalid input. Pure — safe to test.
+   */
+  var MAX_STORED_MSG_TEXT = 20000;
+  var MAX_STORED_ARTIFACT_BYTES = 100000;
+  function sanitizeChatHistory(messages, cap) {
+    if (!Array.isArray(messages)) return [];
+    var list = messages.slice(-(cap || 200));
+    return list.map(function (m) {
+      if (!m || typeof m !== "object") return null;
+      var out = { role: m.role === "assistant" ? "assistant" : "user" };
+      out.text = String(m.text == null ? "" : m.text).slice(0, MAX_STORED_MSG_TEXT);
+      if (typeof m.ts === "number") out.ts = m.ts;
+      if (m.failed === true) out.failed = true;
+      if (Array.isArray(m.artifacts)) {
+        out.artifacts = m.artifacts.slice(0, 10).map(function (a) {
+          if (!a || typeof a !== "object") return null;
+          return {
+            path: String(a.path || "").slice(0, 200),
+            content: String(a.content || "").slice(0, MAX_STORED_ARTIFACT_BYTES),
+          };
+        }).filter(Boolean);
+        if (!out.artifacts.length) delete out.artifacts;
+      }
+      return out;
+    }).filter(Boolean);
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -231,5 +262,6 @@
     fmtTime: fmtTime,
     sanitizeWizard: sanitizeWizard,
     isValidWizardState: isValidWizardState,
+    sanitizeChatHistory: sanitizeChatHistory,
   };
 });
