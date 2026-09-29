@@ -1,10 +1,13 @@
 /* NEUTRON Skills — browser for the curated Hermes Agent skill library.
  *
  * The 124 portable skills (Nous Research Hermes Agent, MIT) are published as
- * static files (public/skills/) by scripts/copy-skills-web.mjs, so this works
- * on the serverless deployment with no backend: search the index, read any
- * playbook. The autonomous agent (Node server) uses the same library through
- * its read_skill tool.
+ * static files (public/skills/, mirrored to public/src/web/skills/) by
+ * scripts/copy-skills-web.mjs, so this works on the serverless deployment
+ * with no backend: search the index, read any playbook. Fetches go through
+ * /src/web/skills/* so the Vercel catch-all rewrite (/:path* <- /src/web/:path*,
+ * the same path every app asset uses) resolves them to public/skills/*.
+ * The autonomous agent (Node server) uses the same library through its
+ * read_skill tool.
  */
 (function (root) {
   "use strict";
@@ -20,7 +23,7 @@
 
   function loadIndex() {
     if (indexCache) return Promise.resolve(indexCache);
-    return fetch("/skills/index.json", { cache: "force-cache" })
+    return fetch("/src/web/skills/index.json", { cache: "force-cache" })
       .then(function (r) {
         if (!r.ok) throw new Error("skills index not found");
         return r.json();
@@ -97,7 +100,7 @@
       var body = el("div", "skill-body", "Loading…");
       reader.appendChild(body);
       reader.scrollIntoView();
-      fetch("/skills/" + encodeURIComponent(s.file), { cache: "force-cache" })
+      fetch("/src/web/skills/" + encodeURIComponent(s.file), { cache: "force-cache" })
         .then(function (r) {
           if (!r.ok) throw new Error("not found");
           return r.text();

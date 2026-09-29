@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pubDir = join(root, "public", "skills");
+// Mirror consumed through the Vercel catch-all rewrite (/:path* <- /src/web/:path*).
+const mirrorDir = join(root, "public", "src", "web", "skills");
 const srcDir = join(root, "src", "server", "agent", "skills");
 const appRoot = join(root, "src", "web", "app");
 
@@ -38,6 +40,16 @@ describe("skills publishing", () => {
     }
   });
 
+  it("mirrors the publish to public/src/web/skills/ for the Vercel rewrite", () => {
+    expect(existsSync(join(mirrorDir, "index.json"))).toBe(true);
+    const a = readFileSync(join(pubDir, "index.json"), "utf8");
+    const b = readFileSync(join(mirrorDir, "index.json"), "utf8");
+    expect(a).toBe(b);
+    for (const e of JSON.parse(a).slice(0, 10)) {
+      expect(existsSync(join(mirrorDir, e.file)), `${e.file} mirrored`).toBe(true);
+    }
+  });
+
   it("published files match sources byte-for-byte", () => {
     const index = JSON.parse(readFileSync(join(pubDir, "index.json"), "utf8"));
     for (const e of index.slice(0, 10)) {
@@ -60,7 +72,9 @@ describe("skills web wiring", () => {
   });
 
   it("fetches the published index and renders markdown safely", () => {
-    expect(skillsJs).toMatch(/\/skills\/index\.json/);
+    // Fetches go through /src/web/skills/* so the Vercel catch-all rewrite
+    // (the same path every app asset uses) resolves them to public/skills/*.
+    expect(skillsJs).toMatch(/\/src\/web\/skills\/index\.json/);
     // Skill file names come from our own index, encoded before fetching.
     expect(skillsJs).toMatch(/encodeURIComponent\(s\.file\)/);
     // Display goes through the app's safe markdown renderer, not innerHTML of raw md.
