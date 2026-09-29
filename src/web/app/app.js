@@ -277,17 +277,21 @@ function apiLog() { return API_LOG.slice(); }
 /** Empty the inspector log (e.g. before reproducing an issue). */
 function clearApiLog() { API_LOG.length = 0; }
 
-async function api(method, path, body) {
+async function api(method, path, body, callOpts) {
   var base = backendBase();
   var url = base + path;
   var t0 = Date.now();
   var opts = { method: method, headers: { "content-type": "application/json" } };
   var key = storedApiKey();
   if (key) opts.headers["x-api-key"] = key;
-  /* No default provider: only send the header when the user chose one. */
-  var prov = storedProvider();
+  /* No default provider: only send the header when a provider is chosen.
+     callOpts.provider lets callers (e.g. model comparison) override the
+     stored provider per request without touching global state. */
+  var prov = (callOpts && callOpts.provider !== undefined) ? callOpts.provider : storedProvider();
   if (prov) opts.headers["x-provider"] = prov;
   if (body !== undefined) opts.body = JSON.stringify(body);
+  /* External AbortSignal (user Cancel): fetchWithTimeout aborts on it. */
+  if (callOpts && callOpts.signal) opts.signal = callOpts.signal;
 
   var entry = { method: method, path: path, url: redactSecrets(url), ts: new Date().toISOString(), status: 0, ms: 0 };
   if (body !== undefined) {
@@ -509,6 +513,7 @@ var ROUTES = {
   repos: renderRepos,
   reports: renderReports,
   chat: renderChat,
+  compare: function (view) { return window.NeutronCompare.renderCompare(view); },
   tasks: function (view) { return window.NeutronTasks.renderTasks(view); },
   timeline: function (view) { return window.NeutronTasks.renderTimeline(view); },
   rooms: function (view) { return window.NeutronRooms.renderRooms(view); },
@@ -544,6 +549,12 @@ async function render() {
   try {
     if (currentRoute() !== "rooms" && window.NeutronRooms && window.NeutronRooms.teardown) {
       window.NeutronRooms.teardown();
+    }
+  } catch (e) {}
+  /* Cancel in-flight comparison requests when leaving the compare route. */
+  try {
+    if (currentRoute() !== "compare" && window.NeutronCompare && window.NeutronCompare.teardown) {
+      window.NeutronCompare.teardown();
     }
   } catch (e) {}
   /* Stop agent polling when navigating away from the agent route. */
@@ -5031,6 +5042,76 @@ window.NeutronApp = {
     var label = next === "system" ? "System" :
       (THEMES.filter(function (t) { return t.id === next; })[0] || {}).name || next;
     toast("Theme: " + label);
+  },
+  /* ---------- model comparison bridge (Phase 22) ---------- */
+  getProviders: function () {
+    if (window.__neutronProvidersCache) return Promise.resolve(window.__neutronProvidersCache);
+    return fetchProviders().then(function (list) {
+      window.__neutronProvidersCache = list;
+      return list;
+    });
+  },
+  getStoredProvider: function () { return storedProvider(); },
+  getStoredModel: function () { return storedModel(); },
+  hasApiKey: function () { try { return !!storedApiKey(); } catch (e) { return false; } },
+  getRates: function () { return loadRates(); },
+  getMaxTokens: function () { return loadMaxTokens(); },
+  getBudget: function () { return loadBudget(); },
+  /* One /api/chat call with a per-request provider override + abort signal. */
+  chatCompare: function (body, opts) { return api("POST", "/api/chat", body, opts || {}); },
+  logUsage: function (entry) { recordUsage(entry); },
+  /* Budget-aware max-cost estimate for a comparison run. Reuses the usage
+     dashboard's rates/budget helpers — never invents prices. */
+  estimateCompareCost: function (slots, promptChars) {
+    var UI = window.NeutronUI;
+    var rates = loadRates();
+    var b = loadBudget();
+    var log = loadUsageLog();
+    var maxOut = loadMaxTokens();
+    var est = UI ? UI.compareEstimateCost({
+      promptChars: promptChars,
+      maxOutTok: maxOut || undefined,
+      rates: rates,
+      models: (slots || []).map(function (s) { return s.model; }),
+    }) : { inTok: 0, outTok: 0, perSlot: [], total: 0, costed: 0, uncosted: (slots || []).length };
+    var spentD = periodSpend(log, rates, 1).dollars;
+    var spentM = periodSpend(log, rates, 30).dollars;
+    return {
+      perSlot: est.perSlot, total: est.total,
+      costed: est.costed, uncosted: est.uncosted,
+      inTok: est.inTok, outTok: est.outTok,
+      daily: b.daily, monthly: b.monthly,
+      spentDaily: spentD, spentMonth: spentM,
+      overDaily: UI ? UI.budgetStatus(spentD + est.total, b.daily) === "over" : false,
+      overMonthly: UI ? UI.budgetStatus(spentM + est.total, b.monthly) === "over" : false,
+    };
+  },
+  /* Create a conversation prefilled with messages (for compare "save to
+     chat" / "continue with this"). Returns the new conversation id. */
+  createChatWith: function (provider, model, messages) {
+    loadConvStore();
+    var NU = window.NeutronUI;
+    if (!NU) return null;
+    var id = genConvId();
+    var item = NU.convCreate(convStore, id, Date.now());
+    if (!item) return null;
+    item.provider = provider || "";
+    item.model = model || "";
+    (messages || []).forEach(function (m) {
+      if (!m || typeof m !== "object") return;
+      item.messages.push({
+        role: m.role === "assistant" ? "assistant" : "user",
+        text: String(m.text == null ? "" : m.text),
+        ts: m.ts || Date.now(),
+      });
+    });
+    NU.convTouch(convStore, id, Date.now());
+    saveConvStore();
+    return id;
+  },
+  openChat: function (id, focus) {
+    if (focus) window.__neutronFocusComposer = true;
+    location.hash = "#/chat/" + encodeURIComponent(id);
   },
 };
 

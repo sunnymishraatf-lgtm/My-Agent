@@ -83,14 +83,32 @@
       );
     }
     var ctrl = new AC();
+    /* Optional external AbortSignal (e.g. user-pressed Cancel in model
+       comparison): aborting it aborts this request too. The caller tells
+       cancel apart from timeout by checking its own signal afterwards. */
+    var extSignal = opts && opts.signal;
+    function onExternalAbort() { try { ctrl.abort(); } catch (e) {} }
+    function dropExternal() {
+      try {
+        if (extSignal && typeof extSignal.removeEventListener === "function") {
+          extSignal.removeEventListener("abort", onExternalAbort);
+        }
+      } catch (e) {}
+    }
+    if (extSignal) {
+      if (extSignal.aborted) onExternalAbort();
+      else if (typeof extSignal.addEventListener === "function") {
+        try { extSignal.addEventListener("abort", onExternalAbort); } catch (e) {}
+      }
+    }
     var timer2 = setT(function () { try { ctrl.abort(); } catch (e) {} }, ms);
     var out = {};
     for (var k in opts) { if (Object.prototype.hasOwnProperty.call(opts, k)) out[k] = opts[k]; }
     out.signal = ctrl.signal;
     return doFetch(url, out).then(
-      function (res) { clearT(timer2); return res; },
+      function (res) { clearT(timer2); dropExternal(); return res; },
       function (err) {
-        clearT(timer2);
+        clearT(timer2); dropExternal();
         if (err && err.name === "AbortError") throw new Error(label);
         throw err;
       }
@@ -3264,6 +3282,195 @@
     return isFinite(n) && n >= 16 && n <= 128000 ? n : null;
   }
 
+  /* ====================================================================
+     Model comparison (Phase 22) — pure helpers. The DOM orchestration
+     lives in compare.js; everything here is unit-testable.
+     ==================================================================== */
+
+  var COMPARE_MIN_SLOTS = 2;
+  var COMPARE_MAX_SLOTS = 4;
+  var COMPARE_STAGGER_MS = 300;
+  /* Assumed output tokens per model when the user set no max-tokens limit.
+     Labeled as an assumption in the UI — never presented as measured. */
+  var COMPARE_DEFAULT_OUT_TOK = 1024;
+
+  /**
+   * Build the /api/chat request body for one comparison slot.
+   * Same shape as a normal chat send (single user message), minus history.
+   */
+  function buildCompareBody(prompt, model, maxTokens) {
+    var body = { messages: [{ role: "user", content: String(prompt == null ? "" : prompt) }] };
+    if (model) body.model = model;
+    if (maxTokens) body.maxTokens = maxTokens;
+    return body;
+  }
+
+  /**
+   * Validate comparison slots [{provider, model}]. Returns an array of
+   * human-readable error strings (empty = valid). Pure — safe to test.
+   */
+  function compareValidateSlots(slots) {
+    var errors = [];
+    if (!Array.isArray(slots) || slots.length < COMPARE_MIN_SLOTS) {
+      errors.push("Add at least " + COMPARE_MIN_SLOTS + " models to compare.");
+      return errors;
+    }
+    if (slots.length > COMPARE_MAX_SLOTS) {
+      errors.push("At most " + COMPARE_MAX_SLOTS + " models per comparison.");
+    }
+    slots.forEach(function (s, i) {
+      if (!s || !s.provider) errors.push("Model " + (i + 1) + " needs a provider.");
+    });
+    return errors;
+  }
+
+  /**
+   * Estimate the maximum cost of a comparison run from the user's own
+   * per-model rates. Input tokens ≈ prompt chars / 4 (heuristic, labeled
+   * as such); output tokens = maxTokens or COMPARE_DEFAULT_OUT_TOK.
+   * Returns { inTok, outTok, perSlot: [{model, cost}], total, costed, uncosted }.
+   * cost is null for slots whose model has no rate — never guessed.
+   */
+  function compareEstimateCost(opts) {
+    opts = opts || {};
+    var inTok = Math.max(1, Math.ceil((opts.promptChars || 0) / 4));
+    var outTok = opts.maxOutTok || COMPARE_DEFAULT_OUT_TOK;
+    var rates = opts.rates || {};
+    var perSlot = (opts.models || []).map(function (m) {
+      var r = m ? rates[m] : null;
+      return { model: m || "", cost: estimateCost(inTok, outTok, r) };
+    });
+    var total = 0, costed = 0;
+    perSlot.forEach(function (p) {
+      if (p.cost != null) { total += p.cost; costed++; }
+    });
+    return {
+      inTok: inTok, outTok: outTok, perSlot: perSlot,
+      total: total, costed: costed, uncosted: perSlot.length - costed,
+    };
+  }
+
+  /**
+   * Stagger delays (ms) for slot starts: slot i starts at i * stepMs.
+   * Keeps N parallel provider calls rate-limit friendly.
+   */
+  function compareStaggerDelays(n, stepMs) {
+    var step = stepMs == null ? COMPARE_STAGGER_MS : stepMs;
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(i * step);
+    return out;
+  }
+
+  /**
+   * Fire one /api/chat request per slot, staggered. deps:
+   *   send(body, opts) -> Promise<res>   (opts: {provider, signal})
+   *   log(entry)                         (usage logging; best-effort)
+   *   onState(slot)                      (repaint callback, optional)
+   *   staggerMs, now(), setTimeout/clearTimeout, AbortController (injectable)
+   * Mutates each slot in place: status queued|running|done|error|cancelled,
+   * plus text/latencyMs/usage/error on completion. One slot failing never
+   * affects the others. Returns { promise, cancel }.
+   */
+  function runCompareSlots(slots, prompt, maxTokens, deps) {
+    deps = deps || {};
+    var send = deps.send;
+    var log = deps.log || function () {};
+    var onState = deps.onState || null;
+    var staggerMs = deps.staggerMs == null ? COMPARE_STAGGER_MS : deps.staggerMs;
+    var now = deps.now || Date.now;
+    var setT = deps.setTimeout || setTimeout;
+    var AC = deps.AbortController !== undefined ? deps.AbortController
+      : (typeof AbortController !== "undefined" ? AbortController : null);
+    var controllers = [];
+    var cancelled = false;
+    function emit(slot) {
+      if (onState) { try { onState(slot); } catch (e) {} }
+    }
+    function finish(slot, status, resolveOne) {
+      slot.status = status;
+      emit(slot);
+      resolveOne();
+    }
+    function cancel() {
+      cancelled = true;
+      controllers.forEach(function (c) { try { if (c) c.abort(); } catch (e) {} });
+    }
+    var promise = new Promise(function (resolve) {
+      var pending = slots.length;
+      if (!pending) { resolve(slots); return; }
+      function oneDone() { if (--pending === 0) resolve(slots); }
+      slots.forEach(function (slot, i) {
+        slot.status = "queued";
+        slot.error = null;
+        var ctrl = AC ? new AC() : null;
+        controllers[i] = ctrl;
+        setT(function () {
+          if (cancelled) { finish(slot, "cancelled", oneDone); return; }
+          slot.status = "running";
+          emit(slot);
+          var t0 = now();
+          var body = buildCompareBody(prompt, slot.model, maxTokens);
+          var p;
+          try {
+            p = send(body, { provider: slot.provider, signal: ctrl ? ctrl.signal : undefined });
+          } catch (e) {
+            slot.latencyMs = now() - t0;
+            slot.error = e;
+            try { log({ ts: now(), provider: slot.provider, model: slot.model || "", inTok: null, outTok: null, latencyMs: slot.latencyMs, ok: false }); } catch (e2) {}
+            finish(slot, "error", oneDone);
+            return;
+          }
+          Promise.resolve(p).then(function (res) {
+            slot.latencyMs = now() - t0;
+            slot.usage = (res && res.usage) || null;
+            slot.text = (res && typeof res.text === "string" && res.text) ? res.text : "(empty reply)";
+            try {
+              log({
+                ts: now(),
+                provider: (res && res.provider) || slot.provider,
+                model: (res && res.model) || slot.model || "",
+                inTok: slot.usage ? slot.usage.input_tokens : null,
+                outTok: slot.usage ? slot.usage.output_tokens : null,
+                latencyMs: slot.latencyMs, ok: true,
+              });
+            } catch (e) {}
+            finish(slot, "done", oneDone);
+          }, function (err) {
+            slot.latencyMs = now() - t0;
+            var aborted = cancelled || !!(ctrl && ctrl.signal && ctrl.signal.aborted);
+            try { log({ ts: now(), provider: slot.provider, model: slot.model || "", inTok: null, outTok: null, latencyMs: slot.latencyMs, ok: false }); } catch (e) {}
+            slot.error = err;
+            finish(slot, aborted ? "cancelled" : "error", oneDone);
+          });
+        }, i * staggerMs);
+      });
+    });
+    return { promise: promise, cancel: cancel };
+  }
+
+  /**
+   * Pick a router-suggested alternative model for comparison slot 2.
+   * Never invents ids: chooses from the provider's own model list, preferring
+   * the router's pick when it differs from the current model, else the first
+   * other listed model. Returns "" when nothing sensible exists.
+   */
+  function compareSuggestAlternative(providers, providerId, currentModel, promptText) {
+    var pr = null;
+    (providers || []).forEach(function (p) { if (p && p.id === providerId) pr = p; });
+    if (!pr) return "";
+    var models = ((pr.defaultModels || []).slice()).map(function (id) {
+      return { id: id, providerId: providerId };
+    }).filter(function (m) { return m.id; });
+    if (!models.length) return "";
+    var cls = classifyTask({ text: promptText || "" });
+    var res = routeModel({ kind: cls.kind, models: models });
+    if (res && res.modelId && res.modelId !== currentModel) return res.modelId;
+    for (var i = 0; i < models.length; i++) {
+      if (models[i].id !== currentModel) return models[i].id;
+    }
+    return "";
+  }
+
 
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
@@ -3477,5 +3684,16 @@
     projectTypeIds: projectTypeIds,
     projectTypeList: projectTypeList,
     projectTypeTemplate: projectTypeTemplate,
+    /* model comparison (Phase 22) */
+    COMPARE_MIN_SLOTS: COMPARE_MIN_SLOTS,
+    COMPARE_MAX_SLOTS: COMPARE_MAX_SLOTS,
+    COMPARE_STAGGER_MS: COMPARE_STAGGER_MS,
+    COMPARE_DEFAULT_OUT_TOK: COMPARE_DEFAULT_OUT_TOK,
+    buildCompareBody: buildCompareBody,
+    compareValidateSlots: compareValidateSlots,
+    compareEstimateCost: compareEstimateCost,
+    compareStaggerDelays: compareStaggerDelays,
+    runCompareSlots: runCompareSlots,
+    compareSuggestAlternative: compareSuggestAlternative,
   };
 });

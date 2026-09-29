@@ -2718,3 +2718,23 @@ label.fld-label { display: block; font-size: 12px; font-weight: 600; color: var(
 .small-num {
   font-size: 1.1rem;
 }
+
+/* ---------- model comparison (Phase 22) ---------- */
+.cmp-prompt { width: 100%; resize: vertical; min-height: 96px; }
+.cmp-slots { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 8px; }
+.cmp-slot-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.cmp-slot-title { font-weight: 700; }
+.cmp-addrow { display: flex; align-items: center; gap: 12px; }
+.cmp-cost { margin: 12px 0; }
+.cmp-actions { display: flex; gap: 8px; margin: 12px 0 20px; flex-wrap: wrap; }
+.cmp-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+.cmp-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cmp-card-title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-card-body { overflow-wrap: anywhere; }
+.cmp-card-body pre { overflow-x: auto; background: var(--code-bg, #0f172a); color: #e2e8f0; padding: 10px; border-radius: 6px; font-size: 0.85rem; }
+.cmp-card-body pre code { background: none; padding: 0; }
+.cmp-card-body code { background: var(--chip, rgba(0,0,0,0.06)); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+.cmp-card-body a { color: var(--link, #0284c7); text-decoration: underline; }
+.cmp-error { color: var(--danger, #b91c1c); }
+.cmp-card-foot { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.cmp-btnrow { display: flex; gap: 8px; flex-wrap: wrap; }

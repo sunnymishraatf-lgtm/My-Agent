@@ -624,6 +624,28 @@ export declare function budgetStatus(spent: any, limit: any): "unset" | "ok" | "
 export declare function sumEstimatedSpend(entries: any, rates: { [modelId: string]: { in: number; out: number } } | null | undefined): { dollars: number; costed: number; skipped: number };
 export declare function sanitizeBudget(b: any): { daily: number | null; monthly: number | null };
 export declare function sanitizeMaxTokens(v: any): number | null;
+/* model comparison (Phase 22) */
+export declare const COMPARE_MIN_SLOTS: number;
+export declare const COMPARE_MAX_SLOTS: number;
+export declare const COMPARE_STAGGER_MS: number;
+export declare const COMPARE_DEFAULT_OUT_TOK: number;
+export interface CompareSlot { provider: string; model?: string; status?: string; text?: string; latencyMs?: number; usage?: any; error?: any }
+export declare function buildCompareBody(prompt: any, model: any, maxTokens: any): { messages: Array<{ role: string; content: string }>; model?: string; maxTokens?: number };
+export declare function compareValidateSlots(slots: any): string[];
+export interface CompareCostEstimate { inTok: number; outTok: number; perSlot: Array<{ model: string; cost: number | null }>; total: number; costed: number; uncosted: number }
+export declare function compareEstimateCost(opts: { promptChars?: number; maxOutTok?: number; rates?: { [modelId: string]: { in: number; out: number } }; models?: string[] } | null | undefined): CompareCostEstimate;
+export declare function compareStaggerDelays(n: number, stepMs?: number): number[];
+export interface CompareRunDeps {
+  send: (body: any, opts: { provider: string; signal?: any }) => Promise<any>;
+  log?: (entry: any) => void;
+  onState?: (slot: CompareSlot) => void;
+  staggerMs?: number;
+  now?: () => number;
+  setTimeout?: (fn: () => void, ms: number) => any;
+  AbortController?: any;
+}
+export declare function runCompareSlots(slots: CompareSlot[], prompt: string, maxTokens: number | null, deps: CompareRunDeps): { promise: Promise<CompareSlot[]>; cancel: () => void };
+export declare function compareSuggestAlternative(providers: any, providerId: string, currentModel: string, promptText: string): string;
 export declare const ONBOARDING_STORE_KEY: string;
 export declare const ONBOARDING_STEP_COUNT: number;
 export declare const DISPLAY_NAME_MAX: number;
