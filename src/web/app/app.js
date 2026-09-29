@@ -183,13 +183,15 @@ async function api(method, path, body) {
 
 function showError(msg) {
   var bar = document.getElementById("error-bar");
-  bar.textContent = msg;
+  var txt = document.getElementById("error-text");
+  if (txt) txt.textContent = msg; else bar.textContent = msg;
   bar.classList.remove("hidden");
 }
 
 function clearError() {
   var bar = document.getElementById("error-bar");
-  bar.textContent = "";
+  var txt = document.getElementById("error-text");
+  if (txt) txt.textContent = ""; else bar.textContent = "";
   bar.classList.add("hidden");
 }
 
@@ -2064,5 +2066,7 @@ window.addEventListener("offline", paintOfflineBar);
 document.addEventListener("DOMContentLoaded", function () {
   if (!location.hash) location.hash = "#/dashboard";
   paintOfflineBar();
+  var dismiss = document.getElementById("error-dismiss");
+  if (dismiss) dismiss.addEventListener("click", clearError);
   render();
 });
