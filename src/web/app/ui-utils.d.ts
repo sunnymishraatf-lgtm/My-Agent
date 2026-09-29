@@ -248,3 +248,7 @@ export declare function buildModelOptions(
   customValue: unknown,
   storedModel: unknown
 ): { options: ModelOption[]; selected: string };
+
+export declare function stopSpeechSynthesis(deps?: {
+  window?: unknown;
+}): boolean;

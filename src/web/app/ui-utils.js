@@ -1233,6 +1233,23 @@
     return { options: options, selected: selected };
   }
 
+  /**
+   * Stop any in-progress speech synthesis. `deps.window` lets tests inject
+   * a fake; defaults to the real window. Returns true when cancel() ran,
+   * false when speech isn't available or cancel threw. Never throws.
+   */
+  function stopSpeechSynthesis(deps) {
+    try {
+      var w = (deps && deps.window) || (typeof window !== "undefined" ? window : null);
+      if (w && "speechSynthesis" in w && w.speechSynthesis &&
+          typeof w.speechSynthesis.cancel === "function") {
+        w.speechSynthesis.cancel();
+        return true;
+      }
+    } catch (e) { /* fall through */ }
+    return false;
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -1304,5 +1321,7 @@
     diffLineStats: diffLineStats,
     /* settings model picker */
     buildModelOptions: buildModelOptions,
+    /* voice output */
+    stopSpeechSynthesis: stopSpeechSynthesis,
   };
 });

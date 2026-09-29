@@ -433,6 +433,12 @@ async function render() {
   ChatHooks.moveHistSelection = null;
   ChatHooks.outsideClick = null;
   clearError();
+  /* A reply being read aloud must not keep talking after navigation —
+     stop speech on every route render (leaving chat, switching tasks). */
+  try {
+    var NSU = window.NeutronUI;
+    if (NSU && NSU.stopSpeechSynthesis) NSU.stopSpeechSynthesis();
+  } catch (e) {}
   var route = currentRoute();
   /* Chat gets a full-viewport workspace: hide the sidebar and footer. */
   document.body.classList.toggle("chat-full", route === "chat");
@@ -1574,7 +1580,8 @@ async function renderChat(view) {
     item.provider = storedProvider();
     item.model = storedModel();
     saveConvStore();
-    try { if (synthSupported) window.speechSynthesis.cancel(); } catch (e) {}
+    var NSU2 = window.NeutronUI;
+    if (NSU2 && NSU2.stopSpeechSynthesis) NSU2.stopSpeechSynthesis();
     syncChatToActive({ focus: true });
     paintHistory();
     announce("New task started.");
@@ -2432,7 +2439,10 @@ async function renderChat(view) {
       return;
     }
     setVoiceSpeakEnabled(next);
-    if (!next) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+    if (!next) {
+      var NSU3 = window.NeutronUI;
+      if (NSU3 && NSU3.stopSpeechSynthesis) NSU3.stopSpeechSynthesis();
+    }
     paintVoiceBtn();
     clearError();
     toast(next ? "Voice output on — replies will be read aloud." : "Voice output off.");
@@ -2440,7 +2450,8 @@ async function renderChat(view) {
   function speak(text) {
     if (!voiceSpeakEnabled() || !synthSupported) return;
     try {
-      window.speechSynthesis.cancel();
+      var NSU4 = window.NeutronUI;
+      if (NSU4 && NSU4.stopSpeechSynthesis) NSU4.stopSpeechSynthesis();
       /* Read words, not markdown syntax. */
       var UI = window.NeutronUI;
       var plain = (UI && UI.stripMarkdownForSpeech) ? UI.stripMarkdownForSpeech(text) : String(text || "");
