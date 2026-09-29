@@ -895,8 +895,8 @@ var GoogleProvider = class _GoogleProvider {
     this.apiKey = opts.apiKey;
     this.timeoutMs = opts.timeoutMs ?? 12e4;
   }
-  keyParam(sep) {
-    return this.apiKey ? `${sep}key=${encodeURIComponent(this.apiKey)}` : "";
+  keyParam(sep2) {
+    return this.apiKey ? `${sep2}key=${encodeURIComponent(this.apiKey)}` : "";
   }
   ctx(model) {
     return {
@@ -5649,6 +5649,331 @@ function configForRequest(apiKey, providerId) {
   return loadConfig();
 }
 
+// src/server/chat-attachments.ts
+import { inflateRawSync } from "node:zlib";
+import {
+  mkdirSync as mkdirSync2,
+  mkdtempSync,
+  readFileSync as readFileSync2,
+  rmSync,
+  statSync,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join2, sep } from "node:path";
+var MAX_ATTACHMENTS = 5;
+var MAX_FILE_BYTES = 100 * 1024;
+var MAX_TOTAL_BYTES = 512 * 1024;
+var MAX_ZIP_TEXT_FILE_BYTES = 50 * 1024;
+var MAX_ZIP_TEXT_FILES = 20;
+var MAX_ZIP_ENTRIES = 200;
+var AttachmentError = class extends Error {
+  status = 400;
+  constructor(message) {
+    super(message);
+    this.name = "AttachmentError";
+  }
+};
+function fail(msg) {
+  throw new AttachmentError(msg);
+}
+function classify(name, mime) {
+  const m = (mime || "").toLowerCase();
+  const n = (name || "").toLowerCase();
+  if (m.startsWith("image/")) return "image";
+  if (m === "application/zip" || m === "application/x-zip-compressed" || n.endsWith(".zip")) return "zip";
+  return "text";
+}
+var TEXT_EXTENSIONS = /* @__PURE__ */ new Set([
+  "txt",
+  "md",
+  "markdown",
+  "js",
+  "jsx",
+  "ts",
+  "tsx",
+  "mjs",
+  "cjs",
+  "py",
+  "rb",
+  "java",
+  "kt",
+  "swift",
+  "c",
+  "h",
+  "cpp",
+  "hpp",
+  "cc",
+  "go",
+  "rs",
+  "php",
+  "html",
+  "htm",
+  "css",
+  "scss",
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "cfg",
+  "conf",
+  "xml",
+  "csv",
+  "tsv",
+  "sh",
+  "bash",
+  "zsh",
+  "sql",
+  "log",
+  "diff",
+  "patch",
+  "vue",
+  "svelte"
+]);
+function isUtf8Text(buf) {
+  const win = buf.subarray(0, 8192);
+  for (let i = 0; i < win.length; i++) {
+    if (win[i] === 0) return false;
+  }
+  const s = buf.toString("utf8");
+  return !s.includes("\uFFFD");
+}
+function looksLikeText(name, buf) {
+  const lower = name.toLowerCase();
+  const dot = lower.lastIndexOf(".");
+  const ext = dot >= 0 ? lower.slice(dot + 1) : "";
+  if (ext && TEXT_EXTENSIONS.has(ext)) return isUtf8Text(buf);
+  return isUtf8Text(buf);
+}
+function readZipEntries(buf) {
+  const entries = [];
+  let off = 0;
+  while (off + 30 <= buf.length && entries.length < MAX_ZIP_ENTRIES) {
+    if (buf.readUInt32LE(off) !== 67324752) break;
+    const flags = buf.readUInt16LE(off + 6);
+    const method = buf.readUInt16LE(off + 8);
+    const compressedSize = buf.readUInt32LE(off + 18);
+    const uncompressedSize = buf.readUInt32LE(off + 22);
+    const nameLen = buf.readUInt16LE(off + 26);
+    const extraLen = buf.readUInt16LE(off + 28);
+    const nameStart = off + 30;
+    const nameEnd = nameStart + nameLen;
+    if (nameEnd > buf.length) break;
+    const name = buf.subarray(nameStart, nameEnd).toString("utf8");
+    const dataOffset = nameEnd + extraLen;
+    if (dataOffset > buf.length) break;
+    if (flags & 8) {
+      fail(`Zip entry "${name.slice(0, 80)}" uses a data descriptor, which is not supported.`);
+    }
+    if (dataOffset + compressedSize > buf.length) break;
+    entries.push({ name, flags, method, compressedSize, uncompressedSize, dataOffset });
+    off = dataOffset + compressedSize;
+  }
+  return entries;
+}
+function safeEntryName(raw) {
+  if (!raw || raw.endsWith("/")) return null;
+  const norm = raw.replace(/\\/g, "/");
+  if (norm.startsWith("/") || /^[A-Za-z]:\//.test(norm)) {
+    fail(`Zip entry "${raw.slice(0, 80)}" has an absolute path and was rejected.`);
+  }
+  const parts = norm.split("/").filter((p) => p !== "");
+  if (parts.some((p) => p === "..")) {
+    fail(`Zip entry "${raw.slice(0, 80)}" tries to escape the archive and was rejected.`);
+  }
+  if (parts.length === 0) return null;
+  return parts.join("/");
+}
+function extractZipToTmp(zipBuf) {
+  const entries = readZipEntries(zipBuf);
+  const dir = mkdtempSync(join2(tmpdir2(), "neutron-chat-"));
+  const files = [];
+  try {
+    for (const e of entries) {
+      const safe = safeEntryName(e.name);
+      if (safe === null) continue;
+      const short = safe.slice(0, 80);
+      if (e.flags & 1) fail(`Zip entry "${short}" is encrypted, which is not supported.`);
+      if (e.uncompressedSize === 4294967295 || e.compressedSize === 4294967295) {
+        fail(`Zip entry "${short}" uses zip64, which is not supported.`);
+      }
+      if (e.uncompressedSize > MAX_FILE_BYTES) {
+        fail(`Zip entry "${short}" is larger than ${MAX_FILE_BYTES / 1024} KB after extraction.`);
+      }
+      let data = zipBuf.subarray(e.dataOffset, e.dataOffset + e.compressedSize);
+      if (e.method === 8) {
+        data = inflateRawSync(data);
+      } else if (e.method !== 0) {
+        fail(`Zip entry "${short}" uses an unsupported compression method.`);
+      }
+      const dest = join2(dir, ...safe.split("/"));
+      if (!dest.startsWith(dir + sep)) {
+        fail(`Zip entry "${short}" escapes the extraction directory.`);
+      }
+      mkdirSync2(join2(dir, ...safe.split("/").slice(0, -1)), { recursive: true });
+      writeFileSync2(dest, data);
+      files.push(safe);
+    }
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  return { dir, files };
+}
+function processAttachments(raw) {
+  const notes = [];
+  const empty = { visionParts: [], contextBlocks: [], notes };
+  if (raw === void 0 || raw === null) return empty;
+  if (!Array.isArray(raw)) fail("attachments must be an array.");
+  if (raw.length === 0) return empty;
+  if (raw.length > MAX_ATTACHMENTS) {
+    fail(`Too many attachments (${raw.length}); the maximum is ${MAX_ATTACHMENTS}.`);
+  }
+  const items = raw.map((a, i) => {
+    if (!a || typeof a !== "object") fail(`attachments[${i}] must be an object.`);
+    const o = a;
+    return {
+      name: typeof o.name === "string" && o.name ? o.name.slice(0, 120) : `file-${i + 1}`,
+      mime: typeof o.mime === "string" ? o.mime.slice(0, 120) : "application/octet-stream",
+      kind: typeof o.kind === "string" ? o.kind : "",
+      data: typeof o.data === "string" ? o.data : ""
+    };
+  });
+  let totalBytes = 0;
+  const visionParts = [];
+  const contextBlocks = [];
+  for (const item of items) {
+    if (!item.data) fail(`Attachment "${item.name}" has no data.`);
+    let buf;
+    try {
+      buf = Buffer.from(item.data, "base64");
+    } catch {
+      fail(`Attachment "${item.name}" is not valid base64.`);
+    }
+    if (buf.length === 0) fail(`Attachment "${item.name}" is empty.`);
+    if (buf.length > MAX_FILE_BYTES) {
+      fail(
+        `Attachment "${item.name}" is ${Math.round(buf.length / 1024)} KB; the per-file limit is ${MAX_FILE_BYTES / 1024} KB.`
+      );
+    }
+    totalBytes += buf.length;
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      fail(`Attachments total ${Math.round(totalBytes / 1024)} KB; the limit is ${MAX_TOTAL_BYTES / 1024} KB.`);
+    }
+    const kind = classify(item.name, item.mime);
+    if (kind === "image") {
+      const mime = item.mime.toLowerCase().startsWith("image/") ? item.mime : "image/png";
+      visionParts.push({
+        type: "image_url",
+        image_url: { url: `data:${mime};base64,${buf.toString("base64")}` }
+      });
+      notes.push(`image ${item.name} (${Math.round(buf.length / 1024)} KB)`);
+    } else if (kind === "zip") {
+      const { dir, files } = extractZipToTmp(buf);
+      try {
+        notes.push(`zip ${item.name}: ${files.length} file(s)`);
+        let inlined = 0;
+        for (const f of files) {
+          const full = join2(dir, ...f.split("/"));
+          if (!statSync(full).isFile()) continue;
+          const content = readFileSync2(full);
+          if (content.length > MAX_ZIP_TEXT_FILE_BYTES || !looksLikeText(f, content)) {
+            notes.push(`  listed, not inlined: ${f} (${Math.round(content.length / 1024)} KB)`);
+            continue;
+          }
+          if (inlined >= MAX_ZIP_TEXT_FILES) {
+            notes.push(`  listed, over per-zip inline cap: ${f}`);
+            continue;
+          }
+          contextBlocks.push(`[file: ${item.name}/${f}]
+${content.toString("utf8")}`);
+          inlined++;
+        }
+        if (inlined === 0 && files.length > 0) {
+          notes.push(`  (no text files could be inlined from ${item.name})`);
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    } else {
+      if (!looksLikeText(item.name, buf)) {
+        fail(`Attachment "${item.name}" is not a text file, image, or zip \u2014 binary files are not accepted.`);
+      }
+      contextBlocks.push(`[file: ${item.name}]
+${buf.toString("utf8")}`);
+      notes.push(`text ${item.name} (${Math.round(buf.length / 1024)} KB)`);
+    }
+  }
+  return { visionParts, contextBlocks, notes };
+}
+function applyAttachmentsToMessages(messages, raw) {
+  const { visionParts, contextBlocks, notes } = processAttachments(raw);
+  const out = messages.map((m) => ({ ...m }));
+  if (!visionParts.length && !contextBlocks.length) return { messages: out, notes };
+  let idx = out.length - 1;
+  while (idx >= 0 && out[idx].role !== "user") idx--;
+  if (idx < 0) {
+    out.push({ role: "user", content: "" });
+    idx = out.length - 1;
+  }
+  const target = out[idx];
+  const baseText = target.content;
+  const prefix = contextBlocks.length ? "[attached files \u2014 use the following as context]\n" + contextBlocks.join("\n\n") + "\n\n" : "";
+  if (visionParts.length) {
+    const parts = [];
+    const text = prefix + baseText;
+    if (text) parts.push({ type: "text", text });
+    for (const v of visionParts) parts.push(v);
+    target.content = parts;
+  } else {
+    target.content = prefix + baseText;
+  }
+  return { messages: out, notes };
+}
+
+// src/server/chat-artifacts.ts
+var MAX_ARTIFACTS = 20;
+var MAX_ARTIFACT_BYTES = 200 * 1024;
+var BLOCK_RE = /```neutron-file[ \t]+path="([^"\r\n]{1,200})"[^\r\n]*\r?\n([\s\S]*?)```/g;
+function sanitizeArtifactPath(raw) {
+  const p = raw.trim().replace(/\\/g, "/");
+  if (!p || p.length > 200) return null;
+  if (p.startsWith("/") || /^[A-Za-z]:\//.test(p)) return null;
+  const parts = p.split("/").filter((s) => s !== "" && s !== ".");
+  if (parts.length === 0 || parts.some((s) => s === "..")) return null;
+  return parts.join("/");
+}
+function extractArtifacts(replyText) {
+  const artifacts = [];
+  const notes = [];
+  if (!replyText || !replyText.includes("```neutron-file")) {
+    return { text: replyText, artifacts, notes };
+  }
+  const text = replyText.replace(BLOCK_RE, (_m, rawPath, content) => {
+    const path = sanitizeArtifactPath(String(rawPath ?? ""));
+    if (!path) {
+      notes.push(`skipped artifact with unsafe path "${String(rawPath ?? "").slice(0, 60)}"`);
+      return _m;
+    }
+    const body = content.replace(/\r\n/g, "\n").replace(/\n$/, "");
+    const size = Buffer.byteLength(body, "utf8");
+    if (artifacts.length >= MAX_ARTIFACTS) {
+      notes.push(`skipped "${path}": over the ${MAX_ARTIFACTS}-file cap`);
+      return _m;
+    }
+    if (size > MAX_ARTIFACT_BYTES) {
+      notes.push(`skipped "${path}": ${Math.round(size / 1024)} KB over the ${MAX_ARTIFACT_BYTES / 1024} KB cap`);
+      return _m;
+    }
+    artifacts.push({ path, content: body, size });
+    return "";
+  });
+  const cleaned = text.replace(/\n{3,}/g, "\n\n").trim();
+  return { text: cleaned, artifacts, notes };
+}
+var ARTIFACT_SYSTEM_NUDGE = 'You can deliver file artifacts with fenced blocks like:\n```neutron-file path="relative/path.ext"\n<file content here>\n```\nUse this when the user asks for code, configs, or documents. Artifacts are offered as downloads; you cannot write to the user\'s device or execute code on the server.';
+
 // src/neutron/analyzer.ts
 var FRONTEND_MARKERS = ["pages", "components", "components/", "src/pages", "src/components", "app/"].map((m) => m.toLowerCase());
 var BACKEND_MARKERS = ["controllers", "routes", "services", "api", "middleware", "src/api", "src/services", "src/routes"].map((m) => m.toLowerCase());
@@ -6122,14 +6447,34 @@ async function handler(req, res) {
       sendJson(res, 400, { ok: false, error: "No user message provided" });
       return;
     }
+    if (!messages.some((m) => m.role === "system")) {
+      messages.unshift({ role: "system", content: ARTIFACT_SYSTEM_NUDGE });
+    }
+    let outgoing;
+    try {
+      outgoing = applyAttachmentsToMessages(messages, body.attachments).messages;
+    } catch (err) {
+      if (err instanceof AttachmentError) {
+        sendJson(res, err.status, { ok: false, error: err.message });
+        return;
+      }
+      throw err;
+    }
     const config = configForRequest(apiKey, providerId);
     const api = new ApiSystem({ config, logger: silentLogger });
     try {
       const chatOpts = {};
       if (typeof body.model === "string" && body.model) chatOpts.model = body.model;
       if (providerId) chatOpts.provider = providerId;
-      const reply = await api.chat("general", messages, chatOpts);
-      sendJson(res, 200, { ok: true, text: reply.text, provider: reply.provider, model: reply.model });
+      const reply = await api.chat("general", outgoing, chatOpts);
+      const parsed = extractArtifacts(reply.text);
+      sendJson(res, 200, {
+        ok: true,
+        text: parsed.text,
+        artifacts: parsed.artifacts,
+        provider: reply.provider,
+        model: reply.model
+      });
     } catch (err) {
       sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
     }

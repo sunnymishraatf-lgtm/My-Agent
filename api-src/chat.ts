@@ -16,6 +16,8 @@ import {
   extractRequestKeyFromHeaders,
   extractRequestProviderFromHeaders,
 } from "../src/server/byok";
+import { applyAttachmentsToMessages, AttachmentError } from "../src/server/chat-attachments";
+import { extractArtifacts, ARTIFACT_SYSTEM_NUDGE } from "../src/server/chat-artifacts";
 import type { ChatMessage } from "../src/types";
 import { handleApiError, readJsonBody, requireMethod, sendJson, type VercelRequest, type VercelResponse, handlePreflight } from "./_lib";
 
@@ -47,14 +49,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       sendJson(res, 400, { ok: false, error: "No user message provided" });
       return;
     }
+    // Teach the model the file-artifact convention (short, fixed nudge).
+    if (!messages.some((m) => m.role === "system")) {
+      messages.unshift({ role: "system", content: ARTIFACT_SYSTEM_NUDGE });
+    }
+    // Attachments: validated + merged into the last user message here.
+    // AttachmentError -> honest 400 (names/sizes only, never contents).
+    let outgoing: ChatMessage[];
+    try {
+      outgoing = applyAttachmentsToMessages(messages, body.attachments).messages;
+    } catch (err) {
+      if (err instanceof AttachmentError) {
+        sendJson(res, err.status, { ok: false, error: err.message });
+        return;
+      }
+      throw err;
+    }
     const config = configForRequest(apiKey, providerId);
     const api = new ApiSystem({ config, logger: silentLogger });
     try {
       const chatOpts: { model?: string; provider?: string } = {};
       if (typeof body.model === "string" && body.model) chatOpts.model = body.model;
       if (providerId) chatOpts.provider = providerId;
-      const reply = await api.chat("general", messages, chatOpts);
-      sendJson(res, 200, { ok: true, text: reply.text, provider: reply.provider, model: reply.model });
+      const reply = await api.chat("general", outgoing, chatOpts);
+      const parsed = extractArtifacts(reply.text);
+      sendJson(res, 200, {
+        ok: true,
+        text: parsed.text,
+        artifacts: parsed.artifacts,
+        provider: reply.provider,
+        model: reply.model,
+      });
     } catch (err) {
       sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
     }

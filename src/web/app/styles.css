@@ -554,3 +554,160 @@ details.dump pre {
 label.field.check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 label.field.check input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); }
 details.dump > summary { cursor: pointer; }
+
+/* ---- chat workspace (full-screen) ---- */
+body.chat-full .sidebar { display: none; }
+body.chat-full .footer { display: none; }
+body.chat-full .view {
+  max-width: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 69px);
+}
+.chat-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: calc(100dvh - 69px);
+  padding: 12px 16px 16px;
+  gap: 10px;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+}
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chat-title {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: 0.02em;
+  margin-right: auto;
+}
+.chat-pick {
+  max-width: 180px;
+  font-size: 13px;
+  padding: 8px 10px;
+}
+.chat-hbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn.sm { padding: 8px 12px; font-size: 13px; }
+.btn.ghost.sm.on { border-color: var(--primary); color: var(--primary-dark); }
+
+.prov-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--bg-soft);
+  padding: 14px 16px;
+}
+.prov-name { font-family: var(--display); font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+.kv { display: flex; gap: 12px; padding: 6px 0; border-top: 1px dashed var(--border); font-size: 14px; }
+.kv:first-of-type { border-top: none; }
+.kv .k {
+  flex: 0 0 84px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding-top: 3px;
+}
+.kv .v { flex: 1; min-width: 0; word-break: break-word; }
+
+.chat-log.full {
+  flex: 1;
+  min-height: 240px;
+  max-height: none;
+  margin-bottom: 0;
+}
+.msg.assistant { max-width: 92%; }
+.attach-line { margin-top: 8px; opacity: 0.85; font-size: 12px; }
+
+.attach-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.attach-chip { display: inline-flex; align-items: center; gap: 8px; }
+.chip-x {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: 8px 0 2px;
+}
+.icon-btn {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text-2);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.16s var(--ease), color 0.16s var(--ease);
+}
+.icon-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary-dark); }
+.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.icon-btn.off { opacity: 0.4; }
+.icon-btn.listening {
+  border-color: #e5484d;
+  color: #e5484d;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.35); }
+  50% { box-shadow: 0 0 0 8px rgba(229, 72, 77, 0); }
+}
+.composer-input {
+  flex: 1;
+  resize: none;
+  border-radius: var(--r-card);
+  line-height: 1.5;
+  max-height: 140px;
+}
+.chat-fine { margin: 0; }
+
+/* ---- file artifact cards ---- */
+.artifact-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.artifact-head {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+.artifact-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--surface-line);
+  background: var(--surface-2);
+  border-radius: var(--r-card);
+  padding: 10px 14px;
+}
+.artifact-meta { min-width: 0; }
+.artifact-name { font-size: 13px; font-weight: 600; word-break: break-all; }
+
+@media (max-width: 640px) {
+  .chat-pick { max-width: 140px; }
+  .chat-root { padding: 8px 10px 12px; }
+}

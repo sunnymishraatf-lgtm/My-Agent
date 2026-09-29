@@ -207,13 +207,13 @@ var DEFAULT_MODELS = {
     "nousresearch/hermes-3-llama-3.1-405b",
     "nousresearch/hermes-3-llama-3.1-70b"
   ],
-  // NVIDIA NIM model IDs verified against NVIDIA's hosted catalog as
-  // documented by OpenClaw's provider integration (which tracks NVIDIA's
-  // live inference inventory + featured-models feed). UI sugar only.
+  // NVIDIA NIM model IDs. Verified from NVIDIA's public docs and
+  // third-party OpenAI-compatible integration guides (Sept 2026).
+  // NVIDIA rotates models — if one 404s, use the Custom model field.
   nvidia: [
-    "nvidia/nemotron-3-ultra-550b-a55b",
-    "nvidia/nemotron-3.5-lightning-30b-a3b",
-    "nvidia/nemotron-3-super-120b-a12b"
+    "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "meta/llama-3.1-70b-instruct",
+    "meta/llama-3.3-70b-instruct"
   ]
 };
 function defaultModelsFor(providerId) {
@@ -4704,6 +4704,7 @@ async function handler(req, res) {
       id: e.id,
       displayName: e.displayName,
       description: e.description,
+      baseUrl: e.baseUrl,
       defaultModels: defaultModelsFor(e.id)
     }))
   });

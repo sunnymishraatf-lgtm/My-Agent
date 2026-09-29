@@ -297,6 +297,8 @@ function currentRoute() {
 async function render() {
   clearError();
   var route = currentRoute();
+  /* Chat gets a full-viewport workspace: hide the sidebar and footer. */
+  document.body.classList.toggle("chat-full", route === "chat");
   document.querySelectorAll(".sidebar a[data-route]").forEach(function (a) {
     a.classList.toggle("active", a.getAttribute("data-route") === route);
   });
@@ -890,91 +892,489 @@ async function renderJobDetail(view, id) {
 
 /* ---------- chat (stateless /api/chat, history kept client-side) ---------- */
 
+/* ---------- chat workspace (full-screen, attachments, voice, artifacts) ----------
+   Chat is stateless: history lives in this browser (chatState). The API key
+   goes as x-api-key, the provider as x-provider; neither is stored server-side.
+   There is NO default provider: chat refuses to send until one is chosen.
+   Attachments ride inside the JSON body as base64 (WebView-simple):
+     attachments: [{ name, mime, kind: "image"|"text"|"zip", data: "<base64>" }]
+   Server limits: 5 files, 100 KB per file, 512 KB total (said in the UI).
+   Voice is client-side only: Web Speech API for input, speechSynthesis for
+   output. No audio leaves the device except via the OS speech recognizer.
+   File artifacts come back as res.artifacts and render as download cards.
+   Honest limit: files are generated for DOWNLOAD — the app cannot write to
+   the phone's folders or execute code on the serverless backend. */
+
 var chatState = { messages: [] };
 
-async function renderChat(view) {
-  view.appendChild(el("h1", null, "Chat"));
-  var p = el("section", "panel");
-  p.appendChild(el("h2", null, "Talk to NEUTRON"));
+var VOICE_SPEAK_STORAGE = "neutron_voice_speak";
+function voiceSpeakEnabled() {
+  try { return localStorage.getItem(VOICE_SPEAK_STORAGE) === "1"; } catch (e) { return false; }
+}
+function setVoiceSpeakEnabled(on) {
+  try { localStorage.setItem(VOICE_SPEAK_STORAGE, on ? "1" : "0"); } catch (e) { /* private mode */ }
+}
 
-  var log = el("div", "chat-log");
-  p.appendChild(log);
+function fmtSize(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function downloadBlob(blob, name) {
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = name || "download";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} a.remove(); }, 4000);
+}
+
+function b64encode(buf) {
+  var bytes = new Uint8Array(buf);
+  var s = "";
+  for (var i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
+
+function utf8Decode(buf) {
+  try {
+    var dec = new TextDecoder("utf-8", { fatal: true });
+    return dec.decode(buf);
+  } catch (e) {
+    return null;
+  }
+}
+
+async function renderChat(view) {
+  var providers = await fetchProviders();
+  var byId = {};
+  providers.forEach(function (pr) { byId[pr.id] = pr; });
+
+  var root = el("div", "chat-root");
+
+  /* ----- header: title + provider/model pickers + toggles ----- */
+  var head = el("div", "chat-head");
+  head.appendChild(el("div", "chat-title", "Chat"));
+
+  var provSel = el("select", "input chat-pick");
+  provSel.setAttribute("aria-label", "Provider");
+  var ph = document.createElement("option");
+  ph.value = "";
+  ph.textContent = "Select a provider…";
+  provSel.appendChild(ph);
+  providers.forEach(function (pr) {
+    var o = document.createElement("option");
+    o.value = pr.id;
+    o.textContent = pr.displayName;
+    provSel.appendChild(o);
+  });
+  var savedProv = storedProvider();
+  provSel.value = byId[savedProv] ? savedProv : "";
+
+  var modelSel = el("select", "input chat-pick");
+  modelSel.setAttribute("aria-label", "Model");
+  function paintModelOptions() {
+    var pr = byId[provSel.value];
+    var defs = (pr && Array.isArray(pr.defaultModels) ? pr.defaultModels : []).slice();
+    while (modelSel.firstChild) modelSel.removeChild(modelSel.firstChild);
+    var auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "Model: auto";
+    modelSel.appendChild(auto);
+    defs.forEach(function (m) {
+      var o = document.createElement("option");
+      o.value = m;
+      o.textContent = m;
+      modelSel.appendChild(o);
+    });
+    var cur = storedModel();
+    if (cur && defs.indexOf(cur) === -1) {
+      var o2 = document.createElement("option");
+      o2.value = cur;
+      o2.textContent = cur + " (custom)";
+      modelSel.appendChild(o2);
+    }
+    modelSel.value = defs.indexOf(cur) !== -1 || (cur && defs.indexOf(cur) === -1) ? cur : "";
+    if (!cur) modelSel.value = "";
+  }
+  paintModelOptions();
+
+  provSel.onchange = function () {
+    setStoredProvider(provSel.value);
+    paintModelOptions();
+    paintPanel();
+    clearError();
+  };
+  modelSel.onchange = function () {
+    setStoredModel(modelSel.value);
+    paintPanel();
+    clearError();
+  };
+
+  var detailsBtn = el("button", "btn ghost sm", "Provider info");
+  var voiceBtn = el("button", "btn ghost sm", voiceSpeakEnabled() ? "Voice: on" : "Voice: off");
+  var newBtn = el("button", "btn ghost sm", "New");
+  head.appendChild(provSel);
+  head.appendChild(modelSel);
+  var hbtns = el("div", "chat-hbtns");
+  hbtns.appendChild(detailsBtn);
+  hbtns.appendChild(voiceBtn);
+  hbtns.appendChild(newBtn);
+  head.appendChild(hbtns);
+  root.appendChild(head);
+
+  /* ----- provider details panel ----- */
+  var panel = el("div", "prov-panel hidden");
+  function kv(k, v) {
+    var row = el("div", "kv");
+    row.appendChild(el("span", "k", k));
+    var vv = el("span", "v mono small", v);
+    row.appendChild(vv);
+    return row;
+  }
+  function paintPanel() {
+    panel.innerHTML = "";
+    var id = storedProvider();
+    var pr = byId[id];
+    if (!pr) {
+      panel.appendChild(el("p", "muted small",
+        "Select a provider above to see its endpoint, models, and key status. Your key is never shown here."));
+      return;
+    }
+    panel.appendChild(el("div", "prov-name", pr.displayName + "  (" + pr.id + ")"));
+    if (pr.description) panel.appendChild(el("p", "muted small", pr.description));
+    panel.appendChild(kv("Endpoint", pr.baseUrl || "—"));
+    panel.appendChild(kv("API key", storedApiKey() ? "SET" : "NOT SET"));
+    panel.appendChild(kv("Model", storedModel() || "Auto (provider default)"));
+    var mrow = el("div", "kv");
+    mrow.appendChild(el("span", "k", "Models"));
+    var mc = el("span", "v");
+    var defs = Array.isArray(pr.defaultModels) ? pr.defaultModels : [];
+    if (!defs.length) {
+      mc.appendChild(el("span", "muted small", "provider default"));
+    } else {
+      var c = el("div", "chips");
+      defs.forEach(function (m) { c.appendChild(el("span", "chip", m)); });
+      mc.appendChild(c);
+    }
+    mrow.appendChild(mc);
+    panel.appendChild(mrow);
+  }
+  paintPanel();
+  detailsBtn.onclick = function () { panel.classList.toggle("hidden"); };
+  root.appendChild(panel);
+
+  /* ----- message log ----- */
+  var log = el("div", "chat-log full");
+
+  function artifactCards(artifacts) {
+    var wrap = el("div", "artifact-list");
+    wrap.appendChild(el("div", "artifact-head", "FILE ARTIFACTS"));
+    artifacts.forEach(function (a) {
+      var card = el("div", "artifact-card");
+      var meta = el("div", "artifact-meta");
+      meta.appendChild(el("div", "artifact-name mono", a.path));
+      meta.appendChild(el("div", "muted small", fmtSize(a.size)));
+      card.appendChild(meta);
+      var dl = el("button", "btn ghost sm", "Download");
+      dl.onclick = function () {
+        downloadBlob(new Blob([a.content], { type: "application/octet-stream" }),
+          String(a.path).split("/").pop() || "file");
+      };
+      card.appendChild(dl);
+      wrap.appendChild(card);
+    });
+    var all = el("button", "btn primary sm", "Download all as .zip");
+    all.onclick = function () {
+      try {
+        if (!window.NeutronZip) throw new Error("zip engine missing");
+        var zip = window.NeutronZip.createStoredZip(artifacts.map(function (a) {
+          return { name: a.path, data: a.content };
+        }));
+        downloadBlob(zip, "neutron-files.zip");
+      } catch (e) {
+        showError("Could not build the zip: " + (e && e.message ? e.message : e));
+      }
+    };
+    wrap.appendChild(all);
+    wrap.appendChild(el("p", "muted small",
+      "Files are generated for download — the app cannot write to your phone's folders or run code on the server."));
+    return wrap;
+  }
+
   function paint() {
     log.innerHTML = "";
     if (!chatState.messages.length) {
-      log.appendChild(el("p", "muted", "No messages yet. Ask about your codebase, plans, or past runs."));
+      log.appendChild(el("p", "muted",
+        "No messages yet. Ask about your codebase, attach files, or ask the assistant to generate files for download."));
     }
     chatState.messages.forEach(function (m) {
       var wrap = el("div", "msg " + m.role);
       wrap.appendChild(el("div", "who", m.role === "user" ? "YOU" : "NEUTRON"));
-      wrap.appendChild(el("div", "bubble", m.text));
+      var bubble = el("div", "bubble", m.text);
+      if (m.role === "user" && m.files && m.files.length) {
+        m.files.forEach(function (f) {
+          bubble.appendChild(el("div", "attach-line mono small", "file: " + f.name + " (" + fmtSize(f.size) + ")"));
+        });
+      }
+      wrap.appendChild(bubble);
+      if (m.role === "assistant" && m.artifacts && m.artifacts.length) {
+        wrap.appendChild(artifactCards(m.artifacts));
+      }
       log.appendChild(wrap);
     });
     log.scrollTop = log.scrollHeight;
   }
   paint();
 
-  var row = el("div", "chat-input-row");
-  var input = el("input", "input");
-  input.placeholder = "Type a message… (Enter to send)";
+  /* ----- attachments ----- */
+  var MAX_ATTACH_FILES = 5;
+  var MAX_ATTACH_BYTES = 100 * 1024;
+  var staged = [];
+  var chips = el("div", "attach-chips");
+  function paintChips() {
+    chips.innerHTML = "";
+    staged.forEach(function (f, i) {
+      var chip = el("span", "chip attach-chip");
+      chip.appendChild(el("span", null, f.name + " (" + fmtSize(f.size) + ")"));
+      var x = el("button", "chip-x", "×");
+      x.setAttribute("aria-label", "Remove " + f.name);
+      x.onclick = function () { staged.splice(i, 1); paintChips(); };
+      chip.appendChild(x);
+      chips.appendChild(chip);
+    });
+    chips.classList.toggle("hidden", !staged.length);
+  }
+  paintChips();
+
+  var fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.multiple = true;
+  fileInput.accept = "image/*,.zip,.txt,.md,.js,.jsx,.ts,.tsx,.py,.json,.yaml,.yml,.toml,.css,.html,.xml,.csv,.sh,.java,.c,.h,.cpp,.go,.rs,.php,.swift,.kt,.sql,.log,.ini,.cfg,.diff,.patch";
+  fileInput.className = "hidden";
+  function classifyClient(name, mime) {
+    var m = (mime || "").toLowerCase();
+    var n = (name || "").toLowerCase();
+    if (m.indexOf("image/") === 0) return "image";
+    if (m === "application/zip" || m === "application/x-zip-compressed" || n.slice(-4) === ".zip") return "zip";
+    return "text";
+  }
+  fileInput.onchange = function () {
+    var files = Array.prototype.slice.call(fileInput.files || []);
+    (function next(i) {
+      if (i >= files.length) { fileInput.value = ""; return; }
+      var f = files[i];
+      if (staged.length >= MAX_ATTACH_FILES) {
+        showError("At most " + MAX_ATTACH_FILES + " files per message.");
+        fileInput.value = "";
+        return;
+      }
+      if (f.size > MAX_ATTACH_BYTES) {
+        showError("\"" + f.name + "\" is " + fmtSize(f.size) + "; the per-file limit is " + fmtSize(MAX_ATTACH_BYTES) + ".");
+        return next(i + 1);
+      }
+      var rd = new FileReader();
+      rd.onload = function () {
+        var buf = rd.result;
+        var kind = classifyClient(f.name, f.type);
+        if (kind === "text") {
+          var dec = utf8Decode(new Uint8Array(buf));
+          if (dec === null || dec.indexOf("\0") !== -1) {
+            showError("\"" + f.name + "\" is not a text file, image, or zip — binary files are not accepted.");
+            return next(i + 1);
+          }
+        }
+        staged.push({ name: f.name, mime: f.type || "application/octet-stream", kind: kind, data: b64encode(buf), size: f.size });
+        clearError();
+        paintChips();
+        next(i + 1);
+      };
+      rd.onerror = function () {
+        showError("Could not read \"" + f.name + "\".");
+        next(i + 1);
+      };
+      rd.readAsArrayBuffer(f);
+    })(0);
+  };
+
+  /* ----- composer ----- */
+  var composer = el("div", "composer");
+  var attachBtn = el("button", "icon-btn", "+");
+  attachBtn.title = "Attach images, zip, or text files (max 5, 100 KB each)";
+  attachBtn.setAttribute("aria-label", "Attach files");
+  attachBtn.onclick = function () { fileInput.click(); };
+
+  var micBtn = el("button", "icon-btn", "mic");
+  micBtn.setAttribute("aria-label", "Voice input");
+  var RecCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!RecCtor) {
+    micBtn.disabled = true;
+    micBtn.title = "Voice input isn't supported in this browser";
+    micBtn.classList.add("off");
+  } else {
+    micBtn.title = "Voice input (transcript stays editable before sending)";
+    micBtn.onclick = function () {
+      if (micBtn.classList.contains("listening")) return;
+      var rec;
+      try { rec = new RecCtor(); } catch (e) { showError("Could not start voice input."); return; }
+      rec.lang = (navigator.language || "en-US");
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      var startText = input.value;
+      var finalText = "";
+      micBtn.classList.add("listening");
+      micBtn.title = "Listening… tap Send or wait";
+      rec.onresult = function (ev) {
+        var interim = "";
+        for (var i = ev.resultIndex; i < ev.results.length; i++) {
+          var t = ev.results[i][0].transcript;
+          if (ev.results[i].isFinal) finalText += t;
+          else interim += t;
+        }
+        input.value = (startText ? startText + " " : "") + finalText + interim;
+        autoGrow();
+      };
+      var done = function () {
+        micBtn.classList.remove("listening");
+        micBtn.title = "Voice input (transcript stays editable before sending)";
+        input.value = ((startText ? startText + " " : "") + finalText).trim();
+        autoGrow();
+        try { rec.stop(); } catch (e) {}
+      };
+      rec.onend = done;
+      rec.onerror = function (ev) {
+        done();
+        if (ev && ev.error === "not-allowed") showError("Microphone blocked — allow it in the browser settings to use voice input.");
+        else if (ev && ev.error !== "aborted") showError("Voice input error: " + ev.error);
+      };
+      try { rec.start(); } catch (e) { done(); showError("Could not start voice input."); }
+    };
+  }
+
+  var input = document.createElement("textarea");
+  input.className = "input composer-input";
+  input.rows = 1;
+  input.placeholder = "Type a message… (Enter to send, Shift+Enter for newline)";
   input.setAttribute("aria-label", "Chat message");
-  var send = el("button", "btn primary", "Send");
-  var fresh = el("button", "btn ghost", "New conversation");
+  function autoGrow() {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 140) + "px";
+  }
+  input.addEventListener("input", autoGrow);
+
+  var sendBtn = el("button", "btn primary", "Send");
+
+  /* ----- voice output (speaker toggle) ----- */
+  var synthSupported = ("speechSynthesis" in window);
+  function paintVoiceBtn() {
+    voiceBtn.textContent = voiceSpeakEnabled() ? "Voice: on" : "Voice: off";
+    voiceBtn.classList.toggle("on", voiceSpeakEnabled());
+  }
+  paintVoiceBtn();
+  voiceBtn.onclick = function () {
+    var next = !voiceSpeakEnabled();
+    if (next && !synthSupported) {
+      showError("Voice output isn't supported in this browser.");
+      return;
+    }
+    setVoiceSpeakEnabled(next);
+    if (!next) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+    paintVoiceBtn();
+    clearError();
+  };
+  function speak(text) {
+    if (!voiceSpeakEnabled() || !synthSupported) return;
+    try {
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(String(text || "").slice(0, 1200));
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* unsupported voice */ }
+  }
 
   async function doSend() {
     var text = input.value.trim();
-    if (!text) return;
+    var files = staged.slice();
+    if (!text && !files.length) return;
     /* No silent default: chat needs an explicit provider choice. */
     if (!storedProvider()) {
       var hint = "Please select a provider in Settings first — NEUTRON never picks one for you.";
-      chatState.messages.push({ role: "user", text: text });
+      chatState.messages.push({ role: "user", text: text || "(attachment)" });
       chatState.messages.push({ role: "assistant", text: hint });
       showError(hint);
-      input.value = "";
       paint();
       return;
     }
+    var umsg = { role: "user", text: text || "(sent with attachments)" };
+    if (files.length) {
+      umsg.files = files.map(function (f) { return { name: f.name, size: f.size }; });
+    }
+    chatState.messages.push(umsg);
+    var chatBody = {
+      messages: chatState.messages.map(function (m) { return { role: m.role, content: m.text }; }),
+    };
+    var cm = storedModel();
+    if (cm) chatBody.model = cm;
+    if (files.length) {
+      chatBody.attachments = files.map(function (f) {
+        return { name: f.name, mime: f.mime, kind: f.kind, data: f.data };
+      });
+    }
+    staged = [];
+    paintChips();
     input.value = "";
-    send.disabled = true;
-    chatState.messages.push({ role: "user", text: text });
+    autoGrow();
+    sendBtn.disabled = true;
     paint();
     try {
-      var chatBody = {
-        messages: chatState.messages.map(function (m) { return { role: m.role, content: m.text }; }),
-      };
-      var cm = storedModel();
-      if (cm) chatBody.model = cm;
       var res = await api("POST", "/api/chat", chatBody);
-      chatState.messages.push({ role: "assistant", text: res.text || "(empty reply)" });
+      var amsg = { role: "assistant", text: res.text || "(empty reply)" };
+      if (res.artifacts && res.artifacts.length) amsg.artifacts = res.artifacts;
+      chatState.messages.push(amsg);
       clearError();
+      speak(amsg.text);
     } catch (e) {
       var msg = e && e.message ? e.message : String(e);
       chatState.messages.push({ role: "assistant", text: "Error: " + msg });
       showError(msg);
     }
-    send.disabled = false;
+    sendBtn.disabled = false;
     paint();
   }
-  send.onclick = doSend;
+  sendBtn.onclick = doSend;
   input.addEventListener("keydown", function (ev) {
-    if (ev.key === "Enter") doSend();
+    if (ev.key === "Enter" && !ev.shiftKey) {
+      ev.preventDefault();
+      doSend();
+    }
   });
-  fresh.onclick = function () {
+
+  composer.appendChild(attachBtn);
+  composer.appendChild(micBtn);
+  composer.appendChild(input);
+  composer.appendChild(sendBtn);
+  root.appendChild(log);
+  root.appendChild(chips);
+  root.appendChild(fileInput);
+  root.appendChild(composer);
+  root.appendChild(el("p", "muted small chat-fine",
+    "Stateless chat — history lives in this browser. Attachments: images, .zip, text/code files (max 5, 100 KB each). " +
+    "Voice input/output never leaves your device except via the OS speech recognizer. " +
+    "Without a provider you get an honest error — never a fabricated reply."));
+  view.appendChild(root);
+
+  newBtn.onclick = function () {
     chatState.messages = [];
+    try { if (synthSupported) window.speechSynthesis.cancel(); } catch (e) {}
     clearError();
     paint();
   };
-
-  row.appendChild(input);
-  row.appendChild(send);
-  p.appendChild(row);
-  var row2 = el("div", "row");
-  row2.appendChild(fresh);
-  p.appendChild(row2);
-  p.appendChild(el("p", "muted small",
-    "Chat is stateless: your conversation lives in this browser. It uses your Settings API key when set (sent as x-api-key); otherwise the server's provider. Without any provider you get an honest error — never a fabricated reply."));
-  view.appendChild(p);
 }
+
 
 /* ---------- settings (BYOK + provider/model choice) ---------- */
 

@@ -14,6 +14,8 @@ import { formatImpactGraph } from "../neutron/impact";
 import type { RepoAnalysis, ImpactGraph, NeutronPlan, MaintenanceRequest } from "../neutron/model";
 import type { ChatMessage } from "../types";
 import { extractRequestKey, extractRequestProvider, configForRequest } from "./byok";
+import { applyAttachmentsToMessages, AttachmentError } from "./chat-attachments";
+import { extractArtifacts, ARTIFACT_SYSTEM_NUDGE } from "./chat-artifacts";
 import { listCatalog, defaultModelsFor } from "../providers/catalog";
 import { existsSync, readFileSync, createReadStream } from "node:fs";
 import { dirname, extname, join, normalize, sep } from "node:path";
@@ -767,6 +769,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
         id: e.id,
         displayName: e.displayName,
         description: e.description,
+        baseUrl: e.baseUrl,
         defaultModels: defaultModelsFor(e.id),
       })),
     });
@@ -846,6 +849,7 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
         model?: string;
         provider?: string;
         apiKey?: string;
+        attachments?: unknown;
       };
       const apiKey = extractRequestKey(req, body);
       const providerId = extractRequestProvider(req, body);
@@ -860,14 +864,37 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
         sendJson(res, 400, { ok: false, error: "No user message provided" });
         return;
       }
+      // Teach the model the file-artifact convention (short, fixed nudge).
+      if (!messages.some((m) => m.role === "system")) {
+        messages.unshift({ role: "system", content: ARTIFACT_SYSTEM_NUDGE });
+      }
+      // Attachments: validated + merged into the last user message here.
+      // AttachmentError -> honest 400 (names/sizes only, never contents).
+      let outgoing: ChatMessage[];
+      try {
+        outgoing = applyAttachmentsToMessages(messages, body.attachments).messages;
+      } catch (err) {
+        if (err instanceof AttachmentError) {
+          sendJson(res, err.status, { ok: false, error: err.message });
+          return;
+        }
+        throw err;
+      }
       const config = configForRequest(apiKey, providerId);
       const api = new ApiSystem({ config, logger: silentLogger });
       try {
         const chatOpts: { model?: string; provider?: string } = {};
         if (body.model) chatOpts.model = body.model;
         if (providerId) chatOpts.provider = providerId;
-        const reply = await api.chat("general", messages, chatOpts);
-        sendJson(res, 200, { ok: true, text: reply.text, provider: reply.provider, model: reply.model });
+        const reply = await api.chat("general", outgoing, chatOpts);
+        const parsed = extractArtifacts(reply.text);
+        sendJson(res, 200, {
+          ok: true,
+          text: parsed.text,
+          artifacts: parsed.artifacts,
+          provider: reply.provider,
+          model: reply.model,
+        });
       } catch (err) {
         sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
       }
