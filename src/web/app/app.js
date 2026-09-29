@@ -143,7 +143,14 @@ async function api(method, path, body) {
 
   var res, text = "", json = {};
   try {
-    res = await fetch(url, opts);
+    /* 90s cap: serverless functions top out at 60s, so anything slower is
+       a stall. Timeouts surface through the normal error paths (and the
+       chat Retry button from the message log). */
+    var UI = window.NeutronUI;
+    var doFetch = (UI && UI.fetchWithTimeout)
+      ? function (u, o) { return UI.fetchWithTimeout(u, o, 90000); }
+      : function (u, o) { return fetch(u, o); };
+    res = await doFetch(url, opts);
     text = await res.text();
     try { json = text ? JSON.parse(text) : {}; } catch (e) { json = {}; }
   } catch (e) {

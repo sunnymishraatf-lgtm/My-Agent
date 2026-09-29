@@ -55,10 +55,53 @@
     return (nowMs - lastMs) >= intervalMs;
   }
 
+  /**
+   * fetch() with a timeout. `deps` lets tests substitute fakes for fetch,
+   * AbortController, and the timers. Rejects with
+   * Error("Request timed out after Ns") on timeout.
+   */
+  function fetchWithTimeout(url, opts, ms, deps) {
+    var d = deps || {};
+    var doFetch = d.fetch || (typeof fetch !== "undefined" ? fetch : null);
+    /* `"key" in d` (not ||) so tests can force the no-AbortController path
+       by passing { AbortController: undefined } explicitly. */
+    var AC = ("AbortController" in d) ? d.AbortController
+      : (typeof AbortController !== "undefined" ? AbortController : null);
+    var setT = d.setTimeout || setTimeout;
+    var clearT = d.clearTimeout || clearTimeout;
+    var label = "Request timed out after " + Math.round(ms / 1000) + "s";
+    if (!doFetch) return Promise.reject(new Error("fetch is not available"));
+    if (!AC) {
+      /* No abort support: race the fetch against a timeout rejection. */
+      var timer;
+      var timeoutP = new Promise(function (_, reject) {
+        timer = setT(function () { reject(new Error(label)); }, ms);
+      });
+      return Promise.race([doFetch(url, opts), timeoutP]).then(
+        function (res) { clearT(timer); return res; },
+        function (err) { clearT(timer); throw err; }
+      );
+    }
+    var ctrl = new AC();
+    var timer2 = setT(function () { try { ctrl.abort(); } catch (e) {} }, ms);
+    var out = {};
+    for (var k in opts) { if (Object.prototype.hasOwnProperty.call(opts, k)) out[k] = opts[k]; }
+    out.signal = ctrl.signal;
+    return doFetch(url, out).then(
+      function (res) { clearT(timer2); return res; },
+      function (err) {
+        clearT(timer2);
+        if (err && err.name === "AbortError") throw new Error(label);
+        throw err;
+      }
+    );
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
     cappedSlice: cappedSlice,
     shouldRefreshPill: shouldRefreshPill,
+    fetchWithTimeout: fetchWithTimeout,
   };
 });

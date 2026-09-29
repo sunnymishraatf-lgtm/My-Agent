@@ -84,3 +84,66 @@ describe("shouldRefreshPill", () => {
     expect(shouldRefreshPill(0, Date.now(), 30000)).toBe(true);
   });
 });
+
+describe("fetchWithTimeout", () => {
+  const { fetchWithTimeout } = uiUtils;
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("resolves with the response when fetch is fast", async () => {
+    const fakeRes = { ok: true };
+    const p = fetchWithTimeout("https://x.test/", {}, 5000, {
+      fetch: () => Promise.resolve(fakeRes),
+      setTimeout, clearTimeout,
+    });
+    await expect(p).resolves.toBe(fakeRes);
+  });
+
+  it("rejects with a timeout error when fetch never settles", async () => {
+    let onAbort: (() => void) | null = null;
+    const FakeAC = function (this: any) {
+      this.signal = {};
+      this.abort = () => { if (onAbort) onAbort(); };
+    };
+    const abortErr = new Error("aborted");
+    (abortErr as any).name = "AbortError";
+    const p = fetchWithTimeout("https://x.test/", {}, 5000, {
+      fetch: () => new Promise((_, rej) => { onAbort = () => rej(abortErr); }),
+      AbortController: FakeAC,
+      setTimeout, clearTimeout,
+    });
+    const assertion = expect(p).rejects.toThrow("Request timed out after 5s");
+    await vi.advanceTimersByTimeAsync(5000);
+    await assertion;
+  });
+
+  it("reports a timeout when fetch rejects with AbortError", async () => {
+    const abortErr = new Error("aborted");
+    (abortErr as any).name = "AbortError";
+    const p = fetchWithTimeout("https://x.test/", {}, 3000, {
+      fetch: () => Promise.reject(abortErr),
+      setTimeout, clearTimeout,
+    });
+    await expect(p).rejects.toThrow("Request timed out after 3s");
+  });
+
+  it("passes through non-abort fetch errors unchanged", async () => {
+    const boom = new Error("network down");
+    const p = fetchWithTimeout("https://x.test/", {}, 5000, {
+      fetch: () => Promise.reject(boom),
+      setTimeout, clearTimeout,
+    });
+    await expect(p).rejects.toBe(boom);
+  });
+
+  it("uses the race fallback when AbortController is unavailable", async () => {
+    const p = fetchWithTimeout("https://x.test/", {}, 2000, {
+      fetch: () => new Promise(() => {}),
+      AbortController: undefined,
+      setTimeout, clearTimeout,
+    });
+    const assertion = expect(p).rejects.toThrow("Request timed out after 2s");
+    await vi.advanceTimersByTimeAsync(2000);
+    await assertion;
+  });
+});

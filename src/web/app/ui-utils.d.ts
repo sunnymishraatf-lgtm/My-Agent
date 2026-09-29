@@ -18,3 +18,10 @@ export declare function shouldRefreshPill(
   nowMs: number,
   intervalMs: number
 ): boolean;
+
+export declare function fetchWithTimeout(
+  url: string,
+  opts: any,
+  ms: number,
+  deps?: any
+): Promise<any>;
