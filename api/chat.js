@@ -5972,7 +5972,7 @@ function extractArtifacts(replyText) {
   const cleaned = text.replace(/\n{3,}/g, "\n\n").trim();
   return { text: cleaned, artifacts, notes };
 }
-var ARTIFACT_SYSTEM_NUDGE = 'You can deliver file artifacts with fenced blocks like:\n```neutron-file path="relative/path.ext"\n<file content here>\n```\nUse this when the user asks for code, configs, or documents. Artifacts are offered as downloads; you cannot write to the user\'s device or execute code on the server.';
+var ARTIFACT_SYSTEM_NUDGE = 'You can deliver file artifacts with fenced blocks like:\n```neutron-file path="relative/path.ext"\n<file content here>\n```\nUse this when the user asks for code, configs, or documents. Artifacts are offered as downloads; you cannot write to the user\'s device or execute code on the server.\nThe app has a Skills section (sidebar) with 124 expert playbooks from the Hermes Agent project (code review, debugging, testing, devops, research, \u2026). When a task matches a playbook topic, mention the Skills section by name so the user can read it \u2014 you cannot read skill files yourself.';
 
 // src/neutron/analyzer.ts
 var FRONTEND_MARKERS = ["pages", "components", "components/", "src/pages", "src/components", "app/"].map((m) => m.toLowerCase());

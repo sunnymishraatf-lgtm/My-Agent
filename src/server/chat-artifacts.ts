@@ -91,4 +91,8 @@ export const ARTIFACT_SYSTEM_NUDGE =
   '```neutron-file path="relative/path.ext"\n<file content here>\n```\n' +
   "Use this when the user asks for code, configs, or documents. " +
   "Artifacts are offered as downloads; you cannot write to the user's " +
-  "device or execute code on the server.";
+  "device or execute code on the server.\n" +
+  "The app has a Skills section (sidebar) with 124 expert playbooks from " +
+  "the Hermes Agent project (code review, debugging, testing, devops, " +
+  "research, …). When a task matches a playbook topic, mention the Skills " +
+  "section by name so the user can read it — you cannot read skill files yourself.";
