@@ -624,3 +624,24 @@ export declare function budgetStatus(spent: any, limit: any): "unset" | "ok" | "
 export declare function sumEstimatedSpend(entries: any, rates: { [modelId: string]: { in: number; out: number } } | null | undefined): { dollars: number; costed: number; skipped: number };
 export declare function sanitizeBudget(b: any): { daily: number | null; monthly: number | null };
 export declare function sanitizeMaxTokens(v: any): number | null;
+export declare const ONBOARDING_STORE_KEY: string;
+export declare const ONBOARDING_STEP_COUNT: number;
+export declare const DISPLAY_NAME_MAX: number;
+export interface OnboardingState { version: number; done: boolean; step: number; name: string; projectType: string }
+export declare function sanitizeDisplayName(name: any): string;
+export declare function onboardingInitial(): OnboardingState;
+export declare function sanitizeOnboarding(raw: any): OnboardingState;
+export declare function onboardingNext(st: any): OnboardingState;
+export declare function onboardingBack(st: any): OnboardingState;
+export declare function onboardingSkip(st: any): OnboardingState;
+export declare function onboardingFinish(st: any): OnboardingState;
+export declare function onboardingReplay(st: any): OnboardingState;
+export declare function greetingForHour(h: any): string;
+export declare function dashboardGreeting(name: any, nowMs?: number): string;
+export declare function latestItems(items: any, key: string, n: number): any[];
+export declare function countOpenTasks(tasks: any): number;
+export declare function countUnreadNotifs(notifs: any): number;
+export interface ProjectTypeInfo { id: string; label: string; hint: string }
+export declare function projectTypeIds(): string[];
+export declare function projectTypeList(): ProjectTypeInfo[];
+export declare function projectTypeTemplate(typeId: string): { [section: string]: any } | null;

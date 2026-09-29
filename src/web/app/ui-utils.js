@@ -2812,6 +2812,192 @@
   }
 
   /* ================================================================
+     Onboarding + personal dashboard (Phases 36+37). All pure — safe to
+     test. Device-local only; the display name is stored in this browser
+     and never sent anywhere except where the user explicitly uses it
+     (greetings, room/task assignee defaults).
+     ================================================================ */
+
+  var ONBOARDING_STORE_KEY = "neutron_onboarding";
+  var ONBOARDING_STEP_COUNT = 3;
+  var DISPLAY_NAME_MAX = 40;
+
+  /**
+   * Clean a display name: strip control chars/newlines, collapse
+   * whitespace, trim, cap length. Never throws.
+   */
+  function sanitizeDisplayName(name) {
+    var s = String(name == null ? "" : name);
+    s = s.replace(/[\x00-\x1f\x7f]/g, "");
+    s = s.replace(/\s+/g, " ").trim();
+    return s.slice(0, DISPLAY_NAME_MAX);
+  }
+
+  /** Fresh onboarding state. */
+  function onboardingInitial() {
+    return { version: 1, done: false, step: 0, name: "", projectType: "" };
+  }
+
+  /** Validate a stored onboarding blob; repairs or resets to initial. */
+  function sanitizeOnboarding(raw) {
+    var st = onboardingInitial();
+    if (!raw || typeof raw !== "object") return st;
+    st.done = raw.done === true;
+    var step = Number(raw.step);
+    st.step = (step >= 0 && step < ONBOARDING_STEP_COUNT) ? Math.floor(step) : 0;
+    st.name = sanitizeDisplayName(raw.name);
+    var pt = String(raw.projectType || "");
+    st.projectType = projectTypeIds().indexOf(pt) !== -1 ? pt : "";
+    return st;
+  }
+
+  function onboardingNext(st) {
+    var s = sanitizeOnboarding(st);
+    s.step = Math.min(s.step + 1, ONBOARDING_STEP_COUNT - 1);
+    return s;
+  }
+
+  function onboardingBack(st) {
+    var s = sanitizeOnboarding(st);
+    s.step = Math.max(s.step - 1, 0);
+    return s;
+  }
+
+  function onboardingSkip(st) {
+    var s = sanitizeOnboarding(st);
+    s.done = true;
+    return s;
+  }
+
+  function onboardingFinish(st) {
+    var s = sanitizeOnboarding(st);
+    s.done = true;
+    return s;
+  }
+
+  /** Replay from Settings: keep the name, restart at step 0, not done. */
+  function onboardingReplay(st) {
+    var s = sanitizeOnboarding(st);
+    s.done = false;
+    s.step = 0;
+    return s;
+  }
+
+  /**
+   * Time-of-day greeting for a 0-23 hour. Boundaries: 05:00–11:59 morning,
+   * 12:00–16:59 afternoon, otherwise evening.
+   */
+  function greetingForHour(h) {
+    var hour = Number(h);
+    if (hour >= 5 && hour < 12) return "Good morning";
+    if (hour >= 12 && hour < 17) return "Good afternoon";
+    return "Good evening";
+  }
+
+  /** "Good evening" or "Good evening, Sunny". nowMs injectable for tests. */
+  function dashboardGreeting(name, nowMs) {
+    var d = new Date(typeof nowMs === "number" ? nowMs : Date.now());
+    var g = greetingForHour(d.getHours());
+    var n = sanitizeDisplayName(name);
+    return n ? g + ", " + n : g;
+  }
+
+  /** Normalize an array or id→item map into an array of objects. */
+  function asItemArray(items) {
+    if (Array.isArray(items)) return items.filter(function (x) { return x && typeof x === "object"; });
+    if (items && typeof items === "object") {
+      return Object.keys(items).map(function (k) { return items[k]; })
+        .filter(function (x) { return x && typeof x === "object"; });
+    }
+    return [];
+  }
+
+  /**
+   * Latest n items sorted by numeric key descending. Pure; accepts an
+   * array or an id→item map.
+   */
+  function latestItems(items, key, n) {
+    var arr = asItemArray(items);
+    arr.sort(function (a, b) { return (Number(b[key]) || 0) - (Number(a[key]) || 0); });
+    var c = typeof n === "number" && n >= 0 ? Math.floor(n) : arr.length;
+    return arr.slice(0, c);
+  }
+
+  /** Count of tasks whose status is not "done". Pure. */
+  function countOpenTasks(tasks) {
+    return asItemArray(tasks).filter(function (t) { return t.status !== "done"; }).length;
+  }
+
+  /** Count of notifications not marked read. Pure. */
+  function countUnreadNotifs(notifs) {
+    var arr = Array.isArray(notifs) ? notifs : [];
+    return arr.filter(function (n) { return n && !n.read; }).length;
+  }
+
+  /**
+   * Project-type picker for onboarding step 2. Templates are static,
+   * honest starter text (not AI-generated claims) using the real
+   * project-memory sections.
+   */
+  var PROJECT_TYPES = [
+    {
+      id: "website", label: "Website", hint: "Pages, portfolios, landing sites",
+      memory: {
+        architecture: "Website project — describe the pages and stack as you build.",
+        languages: ["HTML", "CSS", "JavaScript"],
+        conventions: ["Mobile-first responsive layout", "Semantic HTML"],
+      },
+    },
+    {
+      id: "mobile", label: "Mobile App", hint: "iOS / Android apps",
+      memory: {
+        architecture: "Mobile app project — note the platform and navigation structure as you build.",
+        conventions: ["Touch targets at least 44px", "Offline-first where possible"],
+      },
+    },
+    {
+      id: "api", label: "API", hint: "REST / backend services",
+      memory: {
+        architecture: "API project — list endpoints under apis as you add them.",
+        conventions: ["Versioned routes (/v1)", "JSON request/response bodies", "Validate all input server-side"],
+      },
+    },
+    {
+      id: "ai", label: "AI App", hint: "Chatbots, agents, LLM features",
+      memory: {
+        architecture: "AI app — record provider and model choices under decisions.",
+        conventions: ["Never log API keys", "Stream long responses", "Show model and provider in the UI"],
+      },
+    },
+    {
+      id: "other", label: "Other", hint: "Something else entirely",
+      memory: {
+        architecture: "Project — describe what you are building as you go.",
+      },
+    },
+  ];
+
+  function projectTypeIds() {
+    return PROJECT_TYPES.map(function (t) { return t.id; });
+  }
+
+  /** [{id, label, hint}] for the onboarding picker. */
+  function projectTypeList() {
+    return PROJECT_TYPES.map(function (t) { return { id: t.id, label: t.label, hint: t.hint }; });
+  }
+
+  /**
+   * Deep copy of the starter memory template for a type id, or null for
+   * unknown ids. Sections match newProjectMemory() keys.
+   */
+  function projectTypeTemplate(typeId) {
+    var t = null;
+    PROJECT_TYPES.forEach(function (x) { if (x.id === typeId) t = x; });
+    if (!t) return null;
+    try { return JSON.parse(JSON.stringify(t.memory)); } catch (e) { return null; }
+  }
+
+  /* ================================================================
      Model router + usage dashboard + cost control (Phases 21/23/31).
      All pure — safe to test. Heuristics operate only over the user's own
      configured providers/models; they never invent model ids.
@@ -3271,5 +3457,25 @@
     timelineMerge: timelineMerge,
     timelineDayLabel: timelineDayLabel,
     timelineGroupByDay: timelineGroupByDay,
+    /* onboarding + personal dashboard (Phases 36+37) */
+    ONBOARDING_STORE_KEY: ONBOARDING_STORE_KEY,
+    ONBOARDING_STEP_COUNT: ONBOARDING_STEP_COUNT,
+    DISPLAY_NAME_MAX: DISPLAY_NAME_MAX,
+    sanitizeDisplayName: sanitizeDisplayName,
+    onboardingInitial: onboardingInitial,
+    sanitizeOnboarding: sanitizeOnboarding,
+    onboardingNext: onboardingNext,
+    onboardingBack: onboardingBack,
+    onboardingSkip: onboardingSkip,
+    onboardingFinish: onboardingFinish,
+    onboardingReplay: onboardingReplay,
+    greetingForHour: greetingForHour,
+    dashboardGreeting: dashboardGreeting,
+    latestItems: latestItems,
+    countOpenTasks: countOpenTasks,
+    countUnreadNotifs: countUnreadNotifs,
+    projectTypeIds: projectTypeIds,
+    projectTypeList: projectTypeList,
+    projectTypeTemplate: projectTypeTemplate,
   };
 });

@@ -691,5 +691,6 @@
     notify: notify,
     closePanel: closePanel,
     loadTaskStore: loadTaskStore,
+    getNotifications: function () { loadNotifState(); return (notifItems || []).slice(); },
   };
 })();

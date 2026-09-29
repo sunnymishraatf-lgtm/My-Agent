@@ -605,10 +605,353 @@ async function render() {
 
 window.addEventListener("hashchange", render);
 
+/* ---------- onboarding (Phase 36) ----------
+   First-run 3-step flow: welcome + display name → project type →
+   provider setup. Device-local only (neutron_onboarding — the same trust
+   boundary as the API key). Skippable on every step; replayable from
+   Settings. Skip always finishes immediately and never blocks the app. */
+
+var onboardingState = null;
+
+function loadOnboarding() {
+  if (onboardingState) return onboardingState;
+  var UI = window.NeutronUI;
+  try {
+    var raw = localStorage.getItem(UI ? UI.ONBOARDING_STORE_KEY : "neutron_onboarding");
+    onboardingState = UI ? UI.sanitizeOnboarding(raw ? JSON.parse(raw) : null) : UI.onboardingInitial();
+  } catch (e) {
+    var U2 = window.NeutronUI;
+    onboardingState = U2 ? U2.onboardingInitial() : { version: 1, done: false, step: 0, name: "", projectType: "" };
+  }
+  return onboardingState;
+}
+
+function saveOnboarding() {
+  if (!onboardingState) return;
+  try {
+    var UI = window.NeutronUI;
+    localStorage.setItem(UI ? UI.ONBOARDING_STORE_KEY : "neutron_onboarding", JSON.stringify(onboardingState));
+  } catch (e) { /* private mode: onboarding simply won't persist */ }
+}
+
+/* Build the starter project for onboarding step 2. Returns the id or null. */
+function createOnboardingProject(typeId) {
+  var UI = window.NeutronUI;
+  if (!UI) return null;
+  try {
+    loadProjectStore();
+    var info = null;
+    UI.projectTypeList().forEach(function (t) { if (t.id === typeId) info = t; });
+    if (!info) return null;
+    var pr = UI.newProject(genProjectId(), info.label + " Project", Date.now());
+    var tpl = UI.projectTypeTemplate(typeId);
+    if (tpl && pr.memory) {
+      Object.keys(tpl).forEach(function (k) {
+        if (k in pr.memory) pr.memory[k] = tpl[k];
+      });
+    }
+    projectStore.items[pr.id] = pr;
+    if (!saveProjectStore()) return null;
+    return pr.id;
+  } catch (e) { return null; }
+}
+
+function closeOnboarding() {
+  var back = document.getElementById("onboarding-back");
+  if (back && back.parentNode) back.parentNode.removeChild(back);
+}
+
+function finishOnboarding() {
+  var UI = window.NeutronUI;
+  var st = loadOnboarding();
+  onboardingState = UI ? UI.onboardingFinish(st) : st;
+  if (onboardingState) onboardingState.done = true;
+  saveOnboarding();
+  closeOnboarding();
+}
+
+/* Render the first-run overlay. No-op when already done or helpers missing. */
+function showOnboarding() {
+  closeOnboarding();
+  var UI = window.NeutronUI;
+  if (!UI) return;
+  var st = loadOnboarding();
+  if (st.done) return;
+
+  var back = el("div", "hist-modal-back");
+  back.id = "onboarding-back";
+  var modal = el("div", "hist-modal");
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", "Welcome to NEUTRON");
+  var body = el("div");
+  modal.appendChild(body);
+  back.appendChild(modal);
+  document.body.appendChild(back);
+
+  function sync() { onboardingState = st; saveOnboarding(); }
+
+  /* Nav row builder. Returns {row, next} so painters can enable/disable Next. */
+  function navRow(opts) {
+    var row = el("div", "row");
+    if (opts.back) {
+      var b = el("button", "btn ghost", "Back");
+      b.type = "button";
+      b.onclick = function () { st = UI.onboardingBack(st); sync(); paint(); };
+      row.appendChild(b);
+    }
+    var skip = el("button", "btn ghost", "Skip");
+    skip.type = "button";
+    skip.title = "Skip setup";
+    skip.onclick = function () { st = UI.onboardingSkip(st); sync(); closeOnboarding(); render(); };
+    row.appendChild(skip);
+    var spacer = el("span");
+    spacer.style.flex = "1";
+    row.appendChild(spacer);
+    var next = el("button", "btn primary", opts.nextLabel || "Next");
+    next.type = "button";
+    if (opts.nextDisabled) next.disabled = true;
+    next.onclick = opts.onNext;
+    row.appendChild(next);
+    return { row: row, next: next };
+  }
+
+  function paint() {
+    body.innerHTML = "";
+    var prog = el("p", "muted small", "Step " + (st.step + 1) + " of " + UI.ONBOARDING_STEP_COUNT);
+    prog.setAttribute("aria-live", "polite");
+    body.appendChild(prog);
+    if (st.step === 0) paintWelcome();
+    else if (st.step === 1) paintProjectType();
+    else paintProvider();
+    var h = body.querySelector("h2");
+    if (h) {
+      h.setAttribute("tabindex", "-1");
+      try { h.focus({ preventScroll: true }); } catch (e) {}
+    }
+  }
+
+  function paintWelcome() {
+    body.appendChild(el("h2", null, "Welcome to NEUTRON"));
+    body.appendChild(el("p", "muted",
+      "Your AI-powered development workspace — chat, build, collaborate, and ship from one place. Setup takes under a minute."));
+    var lab = el("label", "fld-label", "Display name (optional)");
+    lab.setAttribute("for", "ob-name");
+    body.appendChild(lab);
+    var inp = el("input", "input");
+    inp.id = "ob-name";
+    inp.placeholder = "e.g. Sunny";
+    inp.maxLength = UI.DISPLAY_NAME_MAX || 40;
+    inp.setAttribute("autocomplete", "nickname");
+    inp.value = st.name || "";
+    body.appendChild(inp);
+    var nav = navRow({ back: false, nextLabel: "Next", onNext: function () {
+      st.name = UI.sanitizeDisplayName(inp.value);
+      st = UI.onboardingNext(st); sync(); paint();
+    }});
+    body.appendChild(nav.row);
+    inp.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); nav.next.click(); }
+    });
+  }
+
+  function paintProjectType() {
+    body.appendChild(el("h2", null, "What are you building?"));
+    body.appendChild(el("p", "muted",
+      "We'll create a starter project with a memory template for it. You can rename it and change everything later."));
+    var grid = el("div", "grid cols-2");
+    var selected = st.projectType || "";
+    var nav = navRow({ back: true, nextLabel: "Create project", nextDisabled: !selected, onNext: function () {
+      st.projectType = selected;
+      if (createOnboardingProject(selected)) toast("Project created.");
+      st = UI.onboardingNext(st); sync(); paint();
+    }});
+    UI.projectTypeList().forEach(function (t) {
+      var b = el("button", "btn type-card" + (selected === t.id ? " active" : ""), "");
+      b.type = "button";
+      b.setAttribute("aria-pressed", selected === t.id ? "true" : "false");
+      b.appendChild(el("div", "type-card-label", t.label));
+      b.appendChild(el("div", "muted small", t.hint));
+      b.onclick = function () {
+        selected = t.id;
+        Array.prototype.forEach.call(grid.children, function (c) {
+          c.classList.remove("active");
+          c.setAttribute("aria-pressed", "false");
+        });
+        b.classList.add("active");
+        b.setAttribute("aria-pressed", "true");
+        nav.next.disabled = false;
+      };
+      grid.appendChild(b);
+    });
+    body.appendChild(grid);
+    body.appendChild(nav.row);
+  }
+
+  function paintProvider() {
+    body.appendChild(el("h2", null, "Connect your AI provider"));
+    body.appendChild(el("p", null,
+      "NEUTRON uses your own API key — it's stored only in this browser and sent with your requests, never on a server."));
+    body.appendChild(el("p", "muted small",
+      "Pick a provider and paste your key in Settings to start chatting with AI."));
+    var row = el("div", "row");
+    var b = el("button", "btn ghost", "Back");
+    b.type = "button";
+    b.onclick = function () { st = UI.onboardingBack(st); sync(); paint(); };
+    row.appendChild(b);
+    var spacer = el("span");
+    spacer.style.flex = "1";
+    row.appendChild(spacer);
+    var go = el("button", "btn", "Open Settings");
+    go.type = "button";
+    go.onclick = function () { finishOnboarding(); location.hash = "#/settings"; };
+    row.appendChild(go);
+    var fin = el("button", "btn primary", "Finish");
+    fin.type = "button";
+    fin.onclick = function () { finishOnboarding(); render(); };
+    row.appendChild(fin);
+    body.appendChild(row);
+  }
+
+  paint();
+}
+
 /* ---------- dashboard ---------- */
 
 async function renderDashboard(view) {
-  view.appendChild(el("h1", null, "Dashboard"));
+  var UI = window.NeutronUI;
+
+  /* Personal greeting — time-aware, with the onboarding display name. */
+  var obName = "";
+  try { obName = loadOnboarding().name || ""; } catch (e) {}
+  view.appendChild(el("h1", null, UI ? UI.dashboardGreeting(obName) : "Dashboard"));
+  view.appendChild(el("p", "muted", "Your workspace at a glance — everything below is your real data from this browser."));
+
+  /* Quick actions. */
+  var qa = el("div", "row");
+  qa.setAttribute("aria-label", "Quick actions");
+  var newChat = el("button", "btn primary", "+ New Chat");
+  newChat.type = "button";
+  newChat.onclick = function () {
+    try {
+      loadConvStore();
+      var id = genConvId();
+      var nc = UI.convCreate(convStore, id, Date.now());
+      nc.provider = storedProvider();
+      nc.model = storedModel();
+      convStore.activeId = id;
+      saveConvStore();
+      location.hash = "#/chat/" + encodeURIComponent(id);
+    } catch (e) { location.hash = "#/chat"; }
+  };
+  qa.appendChild(newChat);
+  [["+ New Project", "#/repos"], ["+ New Task", null], ["Join Room", "#/rooms"], ["Open Terminal", "#/terminal"]]
+    .forEach(function (pair) {
+      var b = pair[1] ? el("a", "btn", pair[0]) : el("button", "btn", pair[0]);
+      if (pair[1]) { b.href = pair[1]; }
+      else {
+        b.type = "button";
+        b.onclick = function () {
+          if (window.NeutronTasks) window.NeutronTasks.openTaskDialog({});
+        };
+      }
+      qa.appendChild(b);
+    });
+  view.appendChild(qa);
+
+  /* Continue working — the latest live item of each kind, deep-linked. */
+  var rail = el("section", "panel");
+  rail.appendChild(el("h2", null, "Continue working"));
+  var railGrid = el("div", "grid cols-3");
+  var nowMs = Date.now();
+  function railCard(kind, title, sub, href) {
+    var c = el("div", "rail-card");
+    c.appendChild(el("div", "muted small", kind));
+    if (href) {
+      var a = el("a", null, title);
+      a.href = href;
+      c.appendChild(a);
+    } else {
+      c.appendChild(el("div", null, title));
+    }
+    if (sub) c.appendChild(el("div", "muted small", sub));
+    return c;
+  }
+  try {
+    loadConvStore();
+    var convs = UI.latestItems(convStore.items, "updatedAt", 10)
+      .filter(function (c) { return c && !c.archived; });
+    if (convs.length) {
+      var c0 = convs[0];
+      railGrid.appendChild(railCard("💬 CHAT", UI.convDisplayTitle(c0),
+        UI.relativeTime(c0.updatedAt, nowMs), "#/chat/" + encodeURIComponent(c0.id)));
+    } else {
+      railGrid.appendChild(railCard("💬 CHAT", "No conversations yet", "Start one from + New Chat above.", null));
+    }
+  } catch (e) {
+    railGrid.appendChild(railCard("💬 CHAT", "Couldn't load conversations", null, null));
+  }
+  try {
+    var tstore = window.NeutronTasks ? window.NeutronTasks.loadTaskStore() : null;
+    var open = tstore ? UI.latestItems(tstore.items, "updatedAt", 50)
+      .filter(function (t) { return t && t.status !== "done"; }) : [];
+    if (open.length) {
+      var t0 = open[0];
+      var tsub = (UI.TASK_STATUS_LABELS && UI.TASK_STATUS_LABELS[t0.status] ? UI.TASK_STATUS_LABELS[t0.status] : t0.status) +
+        (t0.updatedAt ? " · " + UI.relativeTime(t0.updatedAt, nowMs) : "");
+      railGrid.appendChild(railCard("✓ TASK", String(t0.title || "Untitled task").slice(0, 42), tsub, "#/tasks"));
+    } else {
+      railGrid.appendChild(railCard("✓ TASK", "No open tasks", "Create one from + New Task above.", null));
+    }
+  } catch (e) {
+    railGrid.appendChild(railCard("✓ TASK", "Couldn't load tasks", null, null));
+  }
+  var jobs = jobHistory();
+  if (jobs.length) {
+    var j0 = jobs[0];
+    var jwhen = "";
+    if (j0.createdAt) { var jt = Date.parse(j0.createdAt); if (!isNaN(jt)) jwhen = UI.relativeTime(jt, nowMs); }
+    railGrid.appendChild(railCard("⚙ RUN", String(j0.request || "Untitled run").slice(0, 42), jwhen,
+      j0.jobId ? "#/reports/" + encodeURIComponent(j0.jobId) : "#/reports"));
+  } else {
+    railGrid.appendChild(railCard("⚙ RUN", "No runs yet", "Start one from Maintain.", null));
+  }
+  rail.appendChild(railGrid);
+  view.appendChild(rail);
+
+  /* Status strip — today's usage, open tasks, unread notifications, last run. */
+  var strip = el("div", "grid cols-4");
+  function miniStat(label, value, href) {
+    var s = el("section", "panel mini-stat");
+    s.appendChild(el("div", "muted small", label));
+    if (href) {
+      var a = el("a", "stat-num small-num", String(value));
+      a.href = href;
+      s.appendChild(a);
+    } else {
+      s.appendChild(el("div", "stat-num small-num", String(value)));
+    }
+    return s;
+  }
+  var todayReq = 0;
+  try { todayReq = UI.usageRollup(loadUsageLog(), 1, nowMs).requests; } catch (e) {}
+  strip.appendChild(miniStat("AI requests today", todayReq, "#/usage"));
+  var openCount = 0;
+  try {
+    var ts2 = window.NeutronTasks ? window.NeutronTasks.loadTaskStore() : null;
+    openCount = ts2 ? UI.countOpenTasks(ts2.items) : 0;
+  } catch (e) {}
+  strip.appendChild(miniStat("Open tasks", openCount, "#/tasks"));
+  var unread = 0;
+  try {
+    unread = (window.NeutronTasks && UI.notifUnreadCount)
+      ? UI.notifUnreadCount(window.NeutronTasks.getNotifications()) : 0;
+  } catch (e) {}
+  strip.appendChild(miniStat("Unread notifications", unread, "#/timeline"));
+  strip.appendChild(miniStat("Last run", jobs.length && jobs[0].request
+    ? String(jobs[0].request).slice(0, 24) : "—",
+    jobs.length && jobs[0].jobId ? "#/reports/" + encodeURIComponent(jobs[0].jobId) : null));
+  view.appendChild(strip);
 
   /* Skeleton placeholders while the two status calls are in flight. */
   var stats = el("div", "grid cols-3");
@@ -731,20 +1074,6 @@ async function renderDashboard(view) {
   actGrid.appendChild(runCol);
   act.appendChild(actGrid);
   view.appendChild(act);
-
-  var actions = el("section", "panel");
-  actions.appendChild(el("h2", null, "Quick actions"));
-  var row = el("div", "row");
-  [["Start maintenance", "#/maintain", "primary"], ["Open chat", "#/chat", ""],
-   ["Settings", "#/settings", ""], ["Guided demo", "/demo", "ghost"]].forEach(function (a) {
-    var b = el("a", "btn " + a[2], a[0]);
-    b.href = a[1];
-    row.appendChild(b);
-  });
-  actions.appendChild(row);
-  actions.appendChild(el("p", "muted small",
-    "Analysis, impact, and planning run without a key. Live execution and chat use your Settings API key when set (sent as x-api-key, never stored on the server); otherwise they report honestly that no provider is configured."));
-  view.appendChild(actions);
 }
 
 /* ---------- projects (project brain) ---------- */
@@ -4565,6 +4894,24 @@ async function renderSettings(view) {
   devBody.appendChild(insp);
 
   view.appendChild(dev);
+
+  /* ----- About: replay the first-run onboarding ----- */
+  var ab = el("section", "panel");
+  ab.appendChild(el("h2", null, "About"));
+  ab.appendChild(el("p", "muted small",
+    "Replay the first-run setup: display name, starter project, and provider walkthrough. Nothing is deleted — it only shows the setup flow again."));
+  var abRow = el("div", "row");
+  var replayBtn = el("button", "btn ghost", "Replay onboarding");
+  replayBtn.type = "button";
+  replayBtn.onclick = function () {
+    var UO = window.NeutronUI;
+    onboardingState = UO ? UO.onboardingReplay(loadOnboarding()) : onboardingState;
+    saveOnboarding();
+    showOnboarding();
+  };
+  abRow.appendChild(replayBtn);
+  ab.appendChild(abRow);
+  view.appendChild(ab);
 }
 
 /* ---------- boot ---------- */
@@ -4695,4 +5042,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (dismiss) dismiss.addEventListener("click", clearError);
   bindChatKeys();
   render();
+  /* First-run onboarding overlay (Phase 36): skippable, replayable from
+     Settings. Never blocks boot — failures are swallowed. */
+  try { if (!loadOnboarding().done) showOnboarding(); } catch (e) {}
 });
