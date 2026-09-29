@@ -237,6 +237,7 @@
       out.text = String(m.text == null ? "" : m.text).slice(0, MAX_STORED_MSG_TEXT);
       if (typeof m.ts === "number") out.ts = m.ts;
       if (m.failed === true) out.failed = true;
+      if (m.local === true) out.local = true;
       if (Array.isArray(m.artifacts)) {
         out.artifacts = m.artifacts.slice(0, 10).map(function (a) {
           if (!a || typeof a !== "object") return null;

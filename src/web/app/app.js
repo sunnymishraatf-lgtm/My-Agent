@@ -1619,7 +1619,7 @@ async function renderChat(view) {
       var hint = "Please select a provider in Settings first — NEUTRON never picks one for you.";
       chatState.messages.push({ role: "user", text: text || "(attachment)", ts: Date.now() });
       appendMsg(chatState.messages[chatState.messages.length - 1]);
-      chatState.messages.push({ role: "assistant", text: hint, ts: Date.now() });
+      chatState.messages.push({ role: "assistant", text: hint, ts: Date.now(), local: true });
       appendMsg(chatState.messages[chatState.messages.length - 1]);
       showError(hint);
       return;
@@ -1630,8 +1630,12 @@ async function renderChat(view) {
     }
     chatState.messages.push(umsg);
     appendMsg(umsg);
+    /* Failed sends and local-only hints are display-only: never let the
+       model see "Error: ..." as if it were its own prior reply. */
     var chatBody = {
-      messages: chatState.messages.map(function (m) { return { role: m.role, content: m.text }; }),
+      messages: chatState.messages
+        .filter(function (m) { return !m.failed && !m.local; })
+        .map(function (m) { return { role: m.role, content: m.text }; }),
     };
     var cm = storedModel();
     if (cm) chatBody.model = cm;
