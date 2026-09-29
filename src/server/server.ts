@@ -477,9 +477,20 @@ async function handleDemoApi(manager: DemoManager, req: IncomingMessage, res: Se
       sendJson(res, 202, { ok: true, ...serializeJob(job) });
       return;
     }
-    if (req.method === "GET" && path === "/api/demo/repos") {
-      sendJson(res, 200, { ok: true, repos: listWorkspaceRepos(manager.workspace) });
-      return;
+    // Workspace repositories (Node mirrors the single Vercel function
+    // api/demo/repos.js: GET lists, POST clones).
+    if (path === "/api/demo/repos") {
+      if (req.method === "GET") {
+        sendJson(res, 200, { ok: true, repos: listWorkspaceRepos(manager.workspace) });
+        return;
+      }
+      if (req.method === "POST") {
+        const body = (await readJsonBody(req)) as { url?: unknown };
+        if (typeof body.url !== "string" || !body.url.trim()) throw new BadRequestError("url is required");
+        const repo = await cloneRepo(manager.workspace, body.url);
+        sendJson(res, 200, { ok: true, repository: repo.name, isDemo: repo.isDemo });
+        return;
+      }
     }
     /* Lightweight file listing + manifests for project auto-detect (Node
        only — serverless has no persistent workspace). The repo name is
@@ -490,13 +501,6 @@ async function handleDemoApi(manager: DemoManager, req: IncomingMessage, res: Se
       const known = listWorkspaceRepos(manager.workspace).some((r) => r.name === repo);
       if (!known) throw new BadRequestError("Unknown repository.");
       sendJson(res, 200, { ok: true, ...listRepoFiles(manager.workspace, repo) });
-      return;
-    }
-    if (req.method === "POST" && path === "/api/demo/clone") {
-      const body = (await readJsonBody(req)) as { url?: unknown };
-      if (typeof body.url !== "string" || !body.url.trim()) throw new BadRequestError("url is required");
-      const repo = await cloneRepo(manager.workspace, body.url);
-      sendJson(res, 200, { ok: true, repository: repo.name, isDemo: repo.isDemo });
       return;
     }
     if (req.method === "GET" && path.startsWith("/api/demo/jobs/")) {

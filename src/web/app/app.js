@@ -1796,7 +1796,7 @@ async function renderRepos(view) {
     clearError();
     go.disabled = true; go.textContent = "Cloning…";
     try {
-      var r = await api("POST", "/api/demo/clone", { url: url });
+      var r = await api("POST", "/api/demo/repos", { url: url });
       c.appendChild(notice("", "Cloned as \"" + r.repository + "\". Use that name as the repository in Maintain."));
       paintRepoList();
     } catch (e) {
@@ -1990,7 +1990,7 @@ async function mzRequest(body) {
     try {
       if (/^https?:\/\//i.test(repo)) {
         go.textContent = "Cloning…";
-        var cl = await api("POST", "/api/demo/clone", { url: repo });
+        var cl = await api("POST", "/api/demo/repos", { url: repo });
         repo = cl.repository;
         mz.form.repo = repo;
         go.textContent = "Analyzing…";

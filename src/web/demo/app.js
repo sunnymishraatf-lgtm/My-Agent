@@ -183,7 +183,7 @@
     }
     $("repo-state").textContent = "Cloning…";
     try {
-      var r = await api("POST", "/api/demo/clone", { url: v });
+      var r = await api("POST", "/api/demo/repos", { url: v });
       $("repo-input").value = r.repository;
       $("repo-state").textContent = "Cloned: " + r.repository;
     } catch (e) {

@@ -5,6 +5,7 @@ var __export = (target, all) => {
 };
 
 // src/server/demo.ts
+import { execFile } from "node:child_process";
 import { existsSync as existsSync13, mkdirSync as mkdirSync7, readdirSync as readdirSync6, statSync as statSync5, readFileSync as readFileSync10 } from "node:fs";
 import { dirname as dirname4, join as join14, normalize, relative as relative6, resolve as resolve9, sep as sep3 } from "node:path";
 
@@ -9927,6 +9928,39 @@ var DemoError = class extends Error {
     this.status = status;
   }
 };
+var GITHUB_URL_RE = /^https:\/\/github\.com\/([A-Za-z0-9_.\-]+)\/([A-Za-z0-9_.\-]+)\/?$/;
+function cloneAllowed() {
+  return process.env.NEUTRON_DEMO_ALLOW_CLONE === "1";
+}
+function cloneRepo(workspace, url) {
+  return new Promise((resolvePromise, reject) => {
+    if (!cloneAllowed()) {
+      reject(new DemoError("Repository URL cloning is disabled on this demo deployment.", 400));
+      return;
+    }
+    const m = GITHUB_URL_RE.exec(url.trim());
+    if (!m) {
+      reject(new DemoError("Only https://github.com/<owner>/<repo> URLs can be cloned.", 400));
+      return;
+    }
+    const dest = join14(workspace, `${m[1]}-${m[2]}`.slice(0, 80));
+    if (existsSync13(dest)) {
+      reject(new DemoError("That repository is already cloned in the demo workspace.", 409));
+      return;
+    }
+    execFile("git", ["clone", "--depth", "1", url.trim(), dest], { timeout: 9e4 }, (err) => {
+      if (err) {
+        reject(new DemoError(`Clone failed: ${shortErr(err)}`, 502));
+        return;
+      }
+      resolvePromise({ dir: dest, name: `${m[1]}/${m[2]}`, isDemo: false });
+    });
+  });
+}
+function shortErr(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.split("\n")[0].slice(0, 200);
+}
 var REPO_FILE_COUNT_CAP = 5e3;
 var COUNT_SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".svn", ".hg"]);
 function countFilesCapped(dir, cap) {
@@ -10404,12 +10438,20 @@ function handlePreflight(req, res) {
   }
   return false;
 }
-function requireMethod(req, res, method) {
-  if (req.method !== method) {
-    sendJson(res, 405, { ok: false, error: "Method not allowed" });
-    return false;
+function readJsonBody(req) {
+  const raw = req.body;
+  if (raw === void 0 || raw === null) return {};
+  if (typeof raw === "string") {
+    if (!raw.trim()) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+    }
+    throw new DemoError("Invalid JSON body", 400);
   }
-  return true;
+  if (typeof raw === "object") return raw;
+  throw new DemoError("Invalid JSON body", 400);
 }
 function demoWorkspace() {
   return resolveDemoWorkspace(process.env.NEUTRON_DEMO_WORKSPACE?.trim() || "/tmp/neutron-demo");
@@ -10429,10 +10471,23 @@ function handleApiError(res, err) {
 // api-src/demo/repos.ts
 async function handler(req, res) {
   if (handlePreflight(req, res)) return;
-  if (!requireMethod(req, res, "GET")) return;
   try {
     const manager = newDemoManager();
-    sendJson(res, 200, { ok: true, repos: listWorkspaceRepos(manager.workspace) });
+    if (req.method === "GET") {
+      sendJson(res, 200, { ok: true, repos: listWorkspaceRepos(manager.workspace) });
+      return;
+    }
+    if (req.method === "POST") {
+      const body = readJsonBody(req);
+      if (typeof body.url !== "string" || !body.url.trim()) {
+        sendJson(res, 400, { ok: false, error: "url is required" });
+        return;
+      }
+      const repo = await cloneRepo(manager.workspace, body.url);
+      sendJson(res, 200, { ok: true, repository: repo.name, isDemo: repo.isDemo });
+      return;
+    }
+    sendJson(res, 405, { ok: false, error: "Method not allowed" });
   } catch (err) {
     handleApiError(res, err);
   }

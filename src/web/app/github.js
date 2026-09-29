@@ -173,7 +173,7 @@
            http.extraHeader and never stores it. */
         res = await api("POST", "/api/git/clone-token", { url: url, token: getToken() });
       } else {
-        res = await api("POST", "/api/demo/clone", { url: url });
+        res = await api("POST", "/api/demo/repos", { url: url });
       }
       clearError();
       toast("Cloned as \"" + (res.repository || res.name || r.name) + "\".");

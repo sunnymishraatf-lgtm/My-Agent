@@ -24,7 +24,7 @@ import analyze from "../api-src/demo/analyze";
 import approve from "../api-src/demo/approve";
 import rejectRoute from "../api-src/demo/reject";
 import execute from "../api-src/demo/execute";
-import clone from "../api-src/demo/clone";
+import clone from "../api-src/demo/repos";
 import jobRoute from "../api-src/demo/jobs/[id]";
 import resultRoute from "../api-src/demo/jobs/[id]/result";
 import chat from "../api-src/chat";
@@ -250,7 +250,7 @@ describe("vercel api: execute is honestly unsupported", () => {
   });
 });
 
-describe("vercel api: jobs & clone", () => {
+describe("vercel api: jobs & repos", () => {
   it("GET /api/demo/jobs/:id honestly reports no jobs on serverless", async () => {
     const res = mockRes();
     await jobRoute(req("GET", undefined, { id: "job-abc123" }), res);
@@ -274,6 +274,21 @@ describe("vercel api: jobs & clone", () => {
     const res = mockRes();
     await clone(req("POST", { url: "https://github.com/octocat/Hello-World" }), res);
     expect(res.statusCode).toBe(400);
+    expect(res.payload.ok).toBe(false);
+  });
+
+  it("GET /api/demo/repos lists workspace repos (merged endpoint)", async () => {
+    const res = mockRes();
+    await clone(req("GET"), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.payload.ok).toBe(true);
+    expect(Array.isArray(res.payload.repos)).toBe(true);
+  });
+
+  it("merged repos endpoint rejects unsupported methods", async () => {
+    const res = mockRes();
+    await clone(req("DELETE"), res);
+    expect(res.statusCode).toBe(405);
     expect(res.payload.ok).toBe(false);
   });
 });
