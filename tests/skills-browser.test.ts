@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pubDir = join(root, "public", "skills");
-// Mirror consumed through the Vercel catch-all rewrite (/:path* <- /src/web/:path*).
-const mirrorDir = join(root, "public", "src", "web", "skills");
+// Primary target: dist/web is the static root (Vercel outputDirectory + local server).
+const distDir = join(root, "dist", "web", "skills");
 const srcDir = join(root, "src", "server", "agent", "skills");
 const appRoot = join(root, "src", "web", "app");
 
@@ -40,13 +40,13 @@ describe("skills publishing", () => {
     }
   });
 
-  it("mirrors the publish to public/src/web/skills/ for the Vercel rewrite", () => {
-    expect(existsSync(join(mirrorDir, "index.json"))).toBe(true);
+  it("publishes to dist/web/skills/ (the static root) matching public/skills/", () => {
+    expect(existsSync(join(distDir, "index.json"))).toBe(true);
     const a = readFileSync(join(pubDir, "index.json"), "utf8");
-    const b = readFileSync(join(mirrorDir, "index.json"), "utf8");
+    const b = readFileSync(join(distDir, "index.json"), "utf8");
     expect(a).toBe(b);
     for (const e of JSON.parse(a).slice(0, 10)) {
-      expect(existsSync(join(mirrorDir, e.file)), `${e.file} mirrored`).toBe(true);
+      expect(existsSync(join(distDir, e.file)), `${e.file} in dist`).toBe(true);
     }
   });
 

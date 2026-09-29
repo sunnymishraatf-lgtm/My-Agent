@@ -1,13 +1,13 @@
 /* NEUTRON Skills — browser for the curated Hermes Agent skill library.
  *
  * The 124 portable skills (Nous Research Hermes Agent, MIT) are published as
- * static files (public/skills/, mirrored to public/src/web/skills/) by
- * scripts/copy-skills-web.mjs, so this works on the serverless deployment
- * with no backend: search the index, read any playbook. Fetches go through
- * /src/web/skills/* so the Vercel catch-all rewrite (/:path* <- /src/web/:path*,
- * the same path every app asset uses) resolves them to public/skills/*.
- * The autonomous agent (Node server) uses the same library through its
- * read_skill tool.
+ * static files (dist/web/skills/) by scripts/copy-skills-web.mjs, so this
+ * works on the serverless deployment with no backend: search the index, read
+ * any playbook. Fetches go through /src/web/skills/*, which resolves on both
+ * hosts: Vercel's catch-all rewrite (/src/web/:path* -> /:path*) serves it
+ * from the dist/web output dir, and the Node server has a /src/web/ static
+ * handler. The autonomous agent (Node server) uses the same library through
+ * its read_skill tool.
  */
 (function (root) {
   "use strict";
