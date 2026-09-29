@@ -1249,6 +1249,95 @@
   }
 
   /**
+   * Normalize a maintain-job SanitizedResult into a render-ready summary.
+   * Pure — the Reports view renders sections from this; the raw JSON dump
+   * stays available underneath. Returns null for invalid input. Lists are
+   * capped (with totals kept) so a huge result can't blow up the DOM.
+   */
+  var SUMMARY_LIST_CAP = 20;
+  function summarizeJobResult(result) {
+    if (!result || typeof result !== "object") return null;
+    function num(v) { return typeof v === "number" && isFinite(v) ? v : 0; }
+    function str(v) { return String(v == null ? "" : v); }
+    function strList(v) {
+      if (!Array.isArray(v)) return [];
+      return v.map(str).filter(function (s) { return s !== ""; });
+    }
+    var out = { deviations: strList(result.deviations), errors: strList(result.errors) };
+
+    var ex = result.execution;
+    if (ex && typeof ex === "object") {
+      var changes = Array.isArray(ex.changes) ? ex.changes : [];
+      out.execution = {
+        completed: num(ex.completed), failed: num(ex.failed), blocked: num(ex.blocked),
+        noLlm: ex.noLlm === true,
+        changeCount: changes.length,
+        changes: changes.slice(0, SUMMARY_LIST_CAP).map(function (c) {
+          c = c || {};
+          return {
+            path: str(c.path).slice(0, 200), kind: str(c.kind),
+            added: num(c.linesAdded), removed: num(c.linesRemoved),
+            agent: str(c.agent), risk: str(c.risk),
+          };
+        }),
+      };
+    } else { out.execution = null; }
+
+    var t = result.tests;
+    if (t && typeof t === "object") {
+      var after = (t.after && typeof t.after === "object") ? t.after : null;
+      out.tests = {
+        command: str(t.command).slice(0, 300),
+        total: after ? num(after.total) : 0,
+        passed: after ? num(after.passed) : 0,
+        failed: after ? num(after.failed) : 0,
+        hasAfter: !!after,
+        regression: t.regression === true,
+        failedTests: strList(t.failedTests).slice(0, SUMMARY_LIST_CAP),
+        failedTestCount: strList(t.failedTests).length,
+      };
+    } else { out.tests = null; }
+
+    function findingsOf(sec, withCategory) {
+      var list = Array.isArray(sec.findings) ? sec.findings : [];
+      return {
+        blocked: sec.blocked === true,
+        summary: str(sec.summary).slice(0, 500),
+        findingCount: list.length,
+        truncated: sec.findingsTruncated === true,
+        findings: list.slice(0, SUMMARY_LIST_CAP).map(function (f) {
+          f = f || {};
+          var o = { severity: str(f.severity), title: str(f.title).slice(0, 300), file: str(f.file).slice(0, 200) };
+          if (withCategory) o.category = str(f.category);
+          return o;
+        }),
+      };
+    }
+    out.security = (result.security && typeof result.security === "object")
+      ? findingsOf(result.security, true) : null;
+    var cr = result.codeReview;
+    if (cr && typeof cr === "object") {
+      var r = findingsOf(cr, false);
+      r.score = num(cr.score); r.passed = cr.passed === true;
+      out.review = r;
+    } else { out.review = null; }
+
+    var rel = result.release;
+    if (rel && typeof rel === "object") {
+      var checks = Array.isArray(rel.checks) ? rel.checks : [];
+      out.release = {
+        status: str(rel.status),
+        blockedBy: strList(rel.blockedBy),
+        checks: checks.slice(0, SUMMARY_LIST_CAP).map(function (c) {
+          c = c || {};
+          return { name: str(c.name).slice(0, 200), ok: c.ok === true, detail: str(c.detail).slice(0, 300) };
+        }),
+      };
+    } else { out.release = null; }
+    return out;
+  }
+
+  /**
    * Stop any in-progress speech synthesis. `deps.window` lets tests inject
    * a fake; defaults to the real window. Returns true when cancel() ran,
    * false when speech isn't available or cancel threw. Never throws.
@@ -1340,5 +1429,7 @@
     stopSpeechSynthesis: stopSpeechSynthesis,
     /* secret scrubbing for logs */
     redactSecrets: redactSecrets,
+    /* reports result summary */
+    summarizeJobResult: summarizeJobResult,
   };
 });

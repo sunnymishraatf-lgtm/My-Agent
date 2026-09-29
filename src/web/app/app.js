@@ -1210,6 +1210,105 @@ async function renderJobDetail(view, id) {
       if (rr.result) {
         var q = el("section", "panel");
         q.appendChild(el("h2", null, "Result"));
+        /* Human-readable summary first — the raw JSON stays available
+           underneath for auditing. */
+        var NUS = window.NeutronUI;
+        var summ = (NUS && NUS.summarizeJobResult) ? NUS.summarizeJobResult(rr.result) : null;
+        if (summ) {
+          if (summ.execution) {
+            var ex = summ.execution;
+            q.appendChild(el("h3", null, "EXECUTION"));
+            q.appendChild(kvGrid([
+              ["Completed", String(ex.completed)],
+              ["Failed", String(ex.failed)],
+              ["Blocked", String(ex.blocked)],
+              ["No-LLM mode", ex.noLlm ? "yes" : "no"],
+            ]));
+            if (ex.changes.length) {
+              q.appendChild(el("p", "muted small",
+                "Showing " + ex.changes.length + " of " + ex.changeCount + " file changes."));
+              q.appendChild(table(["Path", "Kind", "+/−", "Agent", "Risk"],
+                ex.changes.map(function (c) {
+                  return [cell(c.path, true), cell(c.kind),
+                          cell("+" + c.added + " / −" + c.removed),
+                          cell(c.agent), cell(c.risk)];
+                })));
+            }
+          }
+          if (summ.tests) {
+            var ts = summ.tests;
+            q.appendChild(el("h3", null, "TESTS"));
+            var tRows = [["Command", ts.command || "—"]];
+            if (ts.hasAfter) {
+              tRows.push(["Passed", ts.passed + " / " + ts.total]);
+              tRows.push(["Failed", String(ts.failed)]);
+            }
+            tRows.push(["Regression", ts.regression ? "yes" : "no"]);
+            q.appendChild(kvGrid(tRows));
+            if (ts.failedTests.length) {
+              q.appendChild(el("p", "warn",
+                "Failed tests (" + ts.failedTestCount + "): " + ts.failedTests.join(", ") +
+                (ts.failedTestCount > ts.failedTests.length ? " (+" + (ts.failedTestCount - ts.failedTests.length) + " more)" : "")));
+            }
+          }
+          if (summ.security) {
+            var sec = summ.security;
+            q.appendChild(el("h3", null, "SECURITY"));
+            q.appendChild(el("p", sec.blocked ? "warn" : null,
+              (sec.blocked ? "BLOCKED — " : "") + (sec.summary || "No summary.")));
+            if (sec.findings.length) {
+              q.appendChild(table(["Severity", "Finding", "File", "Category"],
+                sec.findings.map(function (f) {
+                  return [cell(f.severity), cell(f.title), cell(f.file, true), cell(f.category)];
+                })));
+              if (sec.truncated || sec.findingCount > sec.findings.length) {
+                q.appendChild(el("p", "muted small",
+                  "Showing " + sec.findings.length + " of " + sec.findingCount + " findings."));
+              }
+            }
+          }
+          if (summ.review) {
+            var cr = summ.review;
+            q.appendChild(el("h3", null, "CODE REVIEW"));
+            q.appendChild(kvGrid([
+              ["Score", String(cr.score)],
+              ["Passed", cr.passed ? "yes" : "no"],
+            ]));
+            if (cr.summary) q.appendChild(el("p", "muted", cr.summary));
+            if (cr.findings.length) {
+              q.appendChild(table(["Severity", "Finding", "File"],
+                cr.findings.map(function (f) {
+                  return [cell(f.severity), cell(f.title), cell(f.file, true)];
+                })));
+            }
+          }
+          if (summ.release) {
+            var rel = summ.release;
+            q.appendChild(el("h3", null, "RELEASE"));
+            q.appendChild(kvGrid([["Status", rel.status || "—"]]));
+            if (rel.checks.length) {
+              q.appendChild(table(["Check", "Result", "Detail"],
+                rel.checks.map(function (c) {
+                  return [cell(c.name), cell(c.ok ? "✓ pass" : "✗ fail"), cell(c.detail)];
+                })));
+            }
+            if (rel.blockedBy.length) {
+              q.appendChild(el("p", "warn", "Blocked by: " + rel.blockedBy.join(", ")));
+            }
+          }
+          if (summ.deviations.length) {
+            q.appendChild(el("h3", null, "DEVIATIONS"));
+            var du = el("ul", "list");
+            summ.deviations.forEach(function (d) { du.appendChild(el("li", "warn", d)); });
+            q.appendChild(du);
+          }
+          if (summ.errors.length) {
+            q.appendChild(el("h3", null, "ERRORS"));
+            var eu = el("ul", "list");
+            summ.errors.forEach(function (d) { eu.appendChild(el("li", "warn", d)); });
+            q.appendChild(eu);
+          }
+        }
         q.appendChild(dump("FULL RESULT JSON", rr.result));
         view.appendChild(q);
       }

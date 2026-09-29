@@ -254,3 +254,33 @@ export declare function stopSpeechSynthesis(deps?: {
 }): boolean;
 
 export declare function redactSecrets(s: unknown): string;
+
+export interface JobResultSummary {
+  deviations: string[];
+  errors: string[];
+  execution: {
+    completed: number; failed: number; blocked: number; noLlm: boolean;
+    changeCount: number;
+    changes: Array<{ path: string; kind: string; added: number; removed: number; agent: string; risk: string }>;
+  } | null;
+  tests: {
+    command: string; total: number; passed: number; failed: number;
+    hasAfter: boolean; regression: boolean;
+    failedTests: string[]; failedTestCount: number;
+  } | null;
+  security: {
+    blocked: boolean; summary: string; findingCount: number; truncated: boolean;
+    findings: Array<{ severity: string; title: string; file: string; category: string }>;
+  } | null;
+  review: {
+    blocked: boolean; summary: string; findingCount: number; truncated: boolean;
+    findings: Array<{ severity: string; title: string; file: string }>;
+    score: number; passed: boolean;
+  } | null;
+  release: {
+    status: string; blockedBy: string[];
+    checks: Array<{ name: string; ok: boolean; detail: string }>;
+  } | null;
+}
+
+export declare function summarizeJobResult(result: unknown): JobResultSummary | null;
