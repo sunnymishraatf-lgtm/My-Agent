@@ -400,6 +400,15 @@ function currentRoute() {
 }
 
 async function render() {
+  /* Tear down chat overlays: menus/dialogs/drawer live on document.body,
+     outside the cleared view. */
+  try { if (ChatHooks.closeOverlays) ChatHooks.closeOverlays(); } catch (e) {}
+  ChatHooks.newTask = null;
+  ChatHooks.toggleHistory = null;
+  ChatHooks.focusHistorySearch = null;
+  ChatHooks.closeOverlays = null;
+  ChatHooks.moveHistSelection = null;
+  ChatHooks.outsideClick = null;
   clearError();
   var route = currentRoute();
   /* Chat gets a full-viewport workspace: hide the sidebar and footer. */
@@ -1135,33 +1144,159 @@ async function renderJobDetail(view, id) {
    Honest limit: files are generated for DOWNLOAD — the app cannot write to
    the phone's folders or execute code on the serverless backend. */
 
-var chatState = { messages: [] };
+/* ---------- conversation workspace (multi-conversation history) ----------
+   BYOK has no accounts: this browser IS the user. Conversations live in
+   localStorage under neutron_conversations — the same trust boundary as the
+   API key. No server, no auth, no mock. The legacy single-chat key
+   (neutron_chat_history) is migrated once into the new store, then removed. */
 
-var CHAT_STORAGE = "neutron_chat_history";
-var CHAT_HISTORY_CAP = 200;
+var chatState = { messages: [] }; /* live alias of the active conversation's messages */
 
-/* Persist chat history to this browser only (same trust boundary as the
-   API key). Best-effort: quota/private-mode failures are silent. */
-function persistChat() {
+var CHAT_STORAGE = "neutron_chat_history"; /* legacy key: read once for migration */
+var CONV_STORAGE = "neutron_conversations";
+
+function genConvId() {
+  return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+var convStore = null;
+var convSaveErrorShown = false;
+
+/* Write the whole store (sanitized). Quota/private-mode failures surface an
+   honest error instead of silently losing data. */
+function saveConvStore() {
+  if (!convStore) return true;
   try {
     var UI = window.NeutronUI;
-    if (!UI) return;
-    localStorage.setItem(CHAT_STORAGE,
-      JSON.stringify(UI.sanitizeChatHistory(chatState.messages, CHAT_HISTORY_CAP)));
-  } catch (e) { /* not fatal */ }
+    if (!UI) return false;
+    var items = {};
+    Object.keys(convStore.items).forEach(function (id) {
+      var clean = UI.sanitizeConversation(convStore.items[id]);
+      /* Never silently drop a conversation: if sanitize rejects it,
+         keep the raw (JSON-safe) item so nothing is lost. */
+      items[id] = (clean && clean.id) ? clean : convStore.items[id];
+    });
+    localStorage.setItem(CONV_STORAGE, JSON.stringify({
+      version: UI.CONV_STORE_VERSION || 1,
+      activeId: convStore.activeId,
+      items: items,
+    }));
+    convSaveErrorShown = false;
+    return true;
+  } catch (e) {
+    if (!convSaveErrorShown) {
+      convSaveErrorShown = true;
+      showError("Changes couldn't be saved — browser storage may be full. Your work is safe in memory for this session.");
+    }
+    return false;
+  }
 }
 
-function restoreChat() {
+function loadConvStore() {
+  if (convStore) return convStore;
+  var UI = window.NeutronUI;
+  if (!UI) throw new Error("UI utilities failed to load.");
   try {
-    var raw = localStorage.getItem(CHAT_STORAGE);
-    if (!raw) return;
-    var arr = JSON.parse(raw);
-    if (Array.isArray(arr) && arr.length) chatState.messages = arr;
-  } catch (e) { /* corrupt history — start fresh */ }
+    var raw = localStorage.getItem(CONV_STORAGE);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.version === UI.CONV_STORE_VERSION &&
+          parsed.items && typeof parsed.items === "object") {
+        convStore = parsed;
+        if (!convStore.items[convStore.activeId]) {
+          convStore.activeId = UI.mostRecentConvId(convStore, null);
+        }
+        if (!convStore.activeId) UI.convCreate(convStore, genConvId(), Date.now());
+        return convStore;
+      }
+    }
+  } catch (e) { /* corrupt → migrate fresh below */ }
+  /* First run (or corrupt store): migrate the legacy single chat so the
+     user's current conversation is never lost. */
+  var legacy = null;
+  try {
+    var lraw = localStorage.getItem(CHAT_STORAGE);
+    if (lraw) {
+      var larr = JSON.parse(lraw);
+      if (Array.isArray(larr)) legacy = larr;
+    }
+  } catch (e) { /* ignore */ }
+  convStore = UI.migrateLegacyChat(legacy || [], storedProvider(), storedModel(),
+    Date.now(), genConvId());
+  try { localStorage.removeItem(CHAT_STORAGE); } catch (e) { /* best-effort */ }
+  saveConvStore();
+  return convStore;
 }
 
-function clearChatHistory() {
-  try { localStorage.removeItem(CHAT_STORAGE); } catch (e) {}
+/* The active conversation; always guarantees one exists. */
+function activeConv() {
+  loadConvStore();
+  var UI = window.NeutronUI;
+  var c = convStore.items[convStore.activeId];
+  if (!c || c.archived) {
+    var id = UI.mostRecentConvId(convStore, null);
+    if (!id || !convStore.items[id]) {
+      id = genConvId();
+      var nc = UI.convCreate(convStore, id, Date.now());
+      nc.provider = storedProvider();
+      nc.model = storedModel();
+      saveConvStore();
+    }
+    convStore.activeId = id;
+    c = convStore.items[id];
+  }
+  return c;
+}
+
+/* Called after message mutations (paint/appendMsg). Auto-saves; updatedAt is
+   bumped by convTouch at send time, not here. */
+function persistChat() {
+  saveConvStore();
+}
+
+/* Screen-reader announcements for workspace actions. */
+function announce(msg) {
+  try {
+    var s = document.getElementById("sr-status");
+    if (!s) {
+      s = document.createElement("div");
+      s.id = "sr-status";
+      s.className = "sr-only";
+      s.setAttribute("role", "status");
+      s.setAttribute("aria-live", "polite");
+      document.body.appendChild(s);
+    }
+    s.textContent = "";
+    setTimeout(function () { s.textContent = msg; }, 30);
+  } catch (e) { /* best-effort */ }
+}
+
+/* Hooks the chat view registers so global shortcuts and route changes can
+   reach it. Reset on every render(); only the chat route sets them. */
+var ChatHooks = {
+  newTask: null,
+  toggleHistory: null,
+  focusHistorySearch: null,
+  closeOverlays: null,
+  moveHistSelection: null,
+  outsideClick: null,
+};
+
+function b64decode(s) {
+  var bin = atob(s);
+  var bytes = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function downloadAttachment(a) {
+  try {
+    if (!a || !a.data) throw new Error("no data");
+    var blob = new Blob([b64decode(a.data)], { type: a.mime || "application/octet-stream" });
+    downloadBlob(blob, a.name || "file");
+  } catch (e) {
+    showError("Could not download \"" + (a && a.name ? a.name : "file") + "\".");
+  }
 }
 
 var VOICE_SPEAK_STORAGE = "neutron_voice_speak";
@@ -1208,12 +1343,484 @@ function utf8Decode(buf) {
 }
 
 async function renderChat(view) {
-  restoreChat(); // reload-safe: history lives in this browser only
+  /* Conversation workspace: load the store (migrating the legacy single
+     chat once), then alias the live message buffer to the active
+     conversation. Everything below mutates through the store. */
+  try {
+    loadConvStore();
+  } catch (e) {
+    view.appendChild(el("h1", null, "Chat"));
+    var errBox = el("div", "panel");
+    errBox.appendChild(el("p", null, "Unable to load history."));
+    errBox.appendChild(el("p", "muted small", e && e.message ? e.message : String(e)));
+    var retryBtn = el("button", "btn primary", "Retry");
+    retryBtn.onclick = function () { render(); };
+    errBox.appendChild(retryBtn);
+    view.appendChild(errBox);
+    return;
+  }
+  chatState.messages = activeConv().messages;
   var providers = await fetchProviders();
   var byId = {};
   providers.forEach(function (pr) { byId[pr.id] = pr; });
 
-  var root = el("div", "chat-root");
+  var root = el("div", "chat-root has-history");
+  var main = el("div", "chat-main");
+
+  /* ================= conversation history workspace ================= */
+  var histOpen = false;
+  try { histOpen = window.innerWidth > 900; } catch (e) { histOpen = false; }
+  var histMode = "list"; /* list | archived */
+  var histQuery = "";
+  var histSearchTimer = null;
+  var histItemMenu = null; /* { id, el, invoker } */
+  var histModal = null;   /* { el, invoker, close } */
+
+  var histBackdrop = el("div", "hist-backdrop hidden");
+  histBackdrop.setAttribute("aria-hidden", "true");
+  histBackdrop.onclick = function () { setHistOpen(false); };
+
+  var histPanel = el("aside", "history-panel");
+  histPanel.setAttribute("aria-label", "Conversation history");
+
+  function setHistOpen(open) {
+    histOpen = !!open;
+    histPanel.classList.toggle("open", histOpen);
+    histPanel.setAttribute("aria-hidden", histOpen ? "false" : "true");
+    histBackdrop.classList.toggle("hidden", !histOpen);
+    try { histBtn.setAttribute("aria-expanded", histOpen ? "true" : "false"); } catch (e) {}
+  }
+
+  var histHead = el("div", "hist-head");
+  histHead.appendChild(el("div", "hist-title", "History"));
+  var histClose = el("button", "icon-btn hist-close", "×");
+  histClose.setAttribute("aria-label", "Close history panel");
+  histClose.onclick = function () { setHistOpen(false); };
+  histHead.appendChild(histClose);
+  histPanel.appendChild(histHead);
+
+  var histSearch = document.createElement("input");
+  histSearch.type = "search";
+  histSearch.className = "input hist-search";
+  histSearch.placeholder = "Search history…";
+  histSearch.setAttribute("aria-label", "Search conversation history");
+  histSearch.autocomplete = "off";
+  histSearch.addEventListener("input", function () {
+    if (histSearchTimer) clearTimeout(histSearchTimer);
+    histSearchTimer = setTimeout(function () {
+      histQuery = histSearch.value;
+      paintHistory();
+    }, 200);
+  });
+  histPanel.appendChild(histSearch);
+
+  var histNewBtn = el("button", "btn primary hist-new", "+ New task");
+  histNewBtn.setAttribute("aria-label", "Start a new task");
+  histNewBtn.onclick = function () { newTask(); };
+  histPanel.appendChild(histNewBtn);
+
+  var histList = el("div", "hist-list");
+  histList.setAttribute("aria-label", "Conversations");
+  histPanel.appendChild(histList);
+
+  var histFoot = el("div", "hist-foot");
+  var histArchBtn = el("button", "btn ghost sm", "Archived");
+  histArchBtn.onclick = function () {
+    histMode = histMode === "archived" ? "list" : "archived";
+    paintHistory();
+  };
+  histFoot.appendChild(histArchBtn);
+  histPanel.appendChild(histFoot);
+
+  /* Re-sync the whole chat column to the store's active conversation. */
+  function syncChatToActive(opts) {
+    opts = opts || {};
+    var c = activeConv();
+    chatState.messages = c.messages;
+    renderAll = false;
+    lastFailedBody = null;
+    syncPickersFromConv();
+    try {
+      var UI = window.NeutronUI;
+      if (UI && chatTitleEl) chatTitleEl.textContent = UI.convDisplayTitle(c);
+    } catch (e) {}
+    paint();
+    if (opts.focus) {
+      try { input.focus({ preventScroll: true }); }
+      catch (e) { try { input.focus(); } catch (e2) {} }
+    }
+  }
+
+  function openConversation(id, opts) {
+    opts = opts || {};
+    var c = convStore.items[id];
+    if (!c || c.archived) return;
+    if (convStore.activeId !== id) {
+      convStore.activeId = id;
+      saveConvStore();
+    }
+    syncChatToActive(opts);
+    paintHistory();
+    announce("Opened " + window.NeutronUI.convDisplayTitle(c) + ".");
+    if (window.innerWidth <= 900) setHistOpen(false);
+  }
+
+  function newTask() {
+    var UI = window.NeutronUI;
+    var id = genConvId();
+    var item = UI.convCreate(convStore, id, Date.now());
+    if (!item) return;
+    /* New tasks inherit the current provider/model choice. */
+    item.provider = storedProvider();
+    item.model = storedModel();
+    saveConvStore();
+    try { if (synthSupported) window.speechSynthesis.cancel(); } catch (e) {}
+    syncChatToActive({ focus: true });
+    paintHistory();
+    announce("New task started.");
+    toast("New task started.");
+    if (window.innerWidth <= 900) setHistOpen(false);
+  }
+
+  function duplicateTask(id) {
+    var UI = window.NeutronUI;
+    var copy = UI.convDuplicate(convStore, id, genConvId(), Date.now());
+    if (!copy) { showError("Could not duplicate this task."); return; }
+    saveConvStore();
+    openConversation(copy.id, { focus: true });
+    toast("Duplicated as a new task.");
+  }
+
+  function histGroupLabel(text) {
+    return el("div", "hist-group", text);
+  }
+
+  function histItemEl(meta, now) {
+    var UI = window.NeutronUI;
+    var item = el("div", "hist-item" + (meta.id === convStore.activeId ? " active" : ""));
+    var openBtn = el("button", "hist-open");
+    openBtn.setAttribute("aria-label", "Open task: " + meta.title);
+    var titleRow = el("div", "hist-item-title");
+    titleRow.appendChild(el("span", null, meta.title));
+    if (meta.pinned) {
+      var pin = el("span", "hist-pin", "📌");
+      pin.setAttribute("role", "img");
+      pin.setAttribute("aria-label", "Pinned");
+      titleRow.appendChild(pin);
+    }
+    openBtn.appendChild(titleRow);
+    openBtn.appendChild(el("div", "hist-item-sub", UI.relativeTime(meta.updatedAt, now)));
+    openBtn.onclick = function () { openConversation(meta.id, { focus: true }); };
+    var kebab = el("button", "icon-btn hist-kebab", "⋮");
+    kebab.setAttribute("aria-label", "Task actions for " + meta.title);
+    kebab.setAttribute("aria-haspopup", "menu");
+    kebab.setAttribute("aria-expanded", "false");
+    kebab.onclick = function (ev) {
+      ev.stopPropagation();
+      toggleHistMenu(meta.id, kebab);
+    };
+    item.appendChild(openBtn);
+    item.appendChild(kebab);
+    return item;
+  }
+
+  function paintHistory() {
+    var UI = window.NeutronUI;
+    if (!UI) return;
+    histList.innerHTML = "";
+    closeHistMenu();
+    var archCount = UI.archivedConversations(convStore.items).length;
+    histArchBtn.textContent = histMode === "archived"
+      ? "← Back to history"
+      : "Archived" + (archCount ? " (" + archCount + ")" : "");
+    if (histMode === "archived") { paintArchivedList(); return; }
+    if (histQuery.trim()) { paintSearchList(); return; }
+    var now = Date.now();
+    var g = UI.groupConversations(convStore.items, now);
+    if (!g.pinned.length && !g.groups.length) {
+      var empty = el("div", "hist-empty");
+      empty.appendChild(el("p", "hist-empty-title", "No tasks yet"));
+      empty.appendChild(el("p", "muted small", "Start your first task and it will appear here."));
+      var b = el("button", "btn primary sm", "+ New task");
+      b.onclick = function () { newTask(); };
+      empty.appendChild(b);
+      histList.appendChild(empty);
+      return;
+    }
+    if (g.pinned.length) {
+      histList.appendChild(histGroupLabel("📌 Pinned"));
+      g.pinned.forEach(function (meta) { histList.appendChild(histItemEl(meta, now)); });
+    }
+    g.groups.forEach(function (grp) {
+      histList.appendChild(histGroupLabel(grp.label));
+      grp.items.forEach(function (meta) { histList.appendChild(histItemEl(meta, now)); });
+    });
+  }
+
+  function paintSearchList() {
+    var UI = window.NeutronUI;
+    var metas = UI.searchConversations(convStore.items, histQuery);
+    var now = Date.now();
+    if (!metas.length) {
+      var empty = el("div", "hist-empty");
+      empty.appendChild(el("p", "hist-empty-title", "No matching tasks"));
+      empty.appendChild(el("p", "muted small", "Try another search term."));
+      histList.appendChild(empty);
+      return;
+    }
+    histList.appendChild(histGroupLabel(metas.length + (metas.length === 1 ? " result" : " results")));
+    metas.forEach(function (meta) { histList.appendChild(histItemEl(meta, now)); });
+  }
+
+  function paintArchivedList() {
+    var UI = window.NeutronUI;
+    var metas = UI.archivedConversations(convStore.items);
+    if (!metas.length) {
+      var empty = el("div", "hist-empty");
+      empty.appendChild(el("p", "hist-empty-title", "No archived tasks"));
+      histList.appendChild(empty);
+      return;
+    }
+    metas.forEach(function (meta) {
+      var item = el("div", "hist-item");
+      var openBtn = el("button", "hist-open");
+      openBtn.setAttribute("aria-label", "Restore and open task: " + meta.title);
+      openBtn.appendChild(el("div", "hist-item-title", meta.title));
+      openBtn.appendChild(el("div", "hist-item-sub", UI.relativeTime(meta.updatedAt, Date.now())));
+      openBtn.onclick = function () {
+        UI.convSetArchived(convStore, meta.id, false, Date.now());
+        saveConvStore();
+        histMode = "list";
+        announce("Task restored.");
+        openConversation(meta.id, { focus: true });
+      };
+      var del = el("button", "btn ghost sm hist-del", "Delete");
+      del.setAttribute("aria-label", "Delete permanently: " + meta.title);
+      del.onclick = function (ev) {
+        ev.stopPropagation();
+        openDeleteDialog(meta.id, del);
+      };
+      item.appendChild(openBtn);
+      item.appendChild(del);
+      histList.appendChild(item);
+    });
+  }
+
+  function paintHistoryLoading() {
+    histList.innerHTML = "";
+    for (var i = 0; i < 6; i++) {
+      var sk = el("div", "hist-sk");
+      sk.appendChild(el("div", "skeleton sk-line sk-w60"));
+      sk.appendChild(el("div", "skeleton sk-line sk-w40"));
+      histList.appendChild(sk);
+    }
+  }
+
+  /* ----- item ⋮ menu ----- */
+  function closeHistMenu() {
+    if (histItemMenu) {
+      if (histItemMenu.el.parentNode) histItemMenu.el.parentNode.removeChild(histItemMenu.el);
+      try { histItemMenu.invoker.setAttribute("aria-expanded", "false"); } catch (e) {}
+      histItemMenu = null;
+    }
+  }
+
+  function toggleHistMenu(id, invoker) {
+    if (histItemMenu && histItemMenu.id === id) { closeHistMenu(); return; }
+    closeHistMenu();
+    var UI = window.NeutronUI;
+    var item = convStore.items[id];
+    if (!item) return;
+    var menu = el("div", "hist-menu");
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Task actions");
+    function addMi(label, fn, danger) {
+      var b = el("button", "hist-menu-item" + (danger ? " danger" : ""));
+      b.setAttribute("role", "menuitem");
+      b.textContent = label;
+      b.onclick = function () { closeHistMenu(); fn(); };
+      menu.appendChild(b);
+      return b;
+    }
+    addMi(item.pinned ? "Unpin" : "Pin", function () {
+      UI.convSetPinned(convStore, id, !item.pinned);
+      saveConvStore();
+      paintHistory();
+      announce(item.pinned ? "Task unpinned." : "Task pinned.");
+      toast(item.pinned ? "Unpinned." : "Pinned to the top.");
+      try { invoker.focus(); } catch (e) {}
+    });
+    addMi("Rename", function () { openRenameDialog(id, invoker); });
+    addMi("Duplicate", function () { duplicateTask(id); });
+    addMi("Archive", function () {
+      UI.convSetArchived(convStore, id, true, Date.now());
+      saveConvStore();
+      syncChatToActive();
+      paintHistory();
+      announce("Task archived.");
+      toast("Task archived.");
+      try { invoker.focus(); } catch (e) {}
+    });
+    addMi("Delete", function () { openDeleteDialog(id, invoker); }, true);
+    document.body.appendChild(menu);
+    /* Position under the kebab, clamped to the viewport. */
+    var r = invoker.getBoundingClientRect();
+    var mw = 200;
+    menu.style.top = Math.max(8, Math.min(r.bottom + 4, window.innerHeight - 240)) + "px";
+    menu.style.left = Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8)) + "px";
+    histItemMenu = { id: id, el: menu, invoker: invoker };
+    invoker.setAttribute("aria-expanded", "true");
+    menu.addEventListener("keydown", function (ev) {
+      if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+      ev.preventDefault();
+      var btns = Array.prototype.slice.call(menu.querySelectorAll("button"));
+      var i = btns.indexOf(document.activeElement);
+      var n = ev.key === "ArrowDown" ? i + 1 : i - 1;
+      if (n < 0) n = btns.length - 1;
+      if (n >= btns.length) n = 0;
+      btns[n].focus();
+    });
+    var first = menu.querySelector("button");
+    if (first) { try { first.focus(); } catch (e) {} }
+  }
+
+  /* ----- modal dialogs (rename / delete confirm) ----- */
+  function openHistModal(title, bodyEl, actions, invoker) {
+    closeHistModal();
+    var back = el("div", "hist-modal-back");
+    var modal = el("div", "hist-modal");
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", title);
+    modal.appendChild(el("div", "hist-modal-title", title));
+    modal.appendChild(bodyEl);
+    var row = el("div", "hist-modal-actions");
+    function close() {
+      closeHistModal();
+      if (invoker && invoker.focus) { try { invoker.focus(); } catch (e) {} }
+    }
+    actions.forEach(function (a) {
+      var b = el("button", "btn " + (a.kind || "ghost"), a.label);
+      b.onclick = function () {
+        var keep = a.onClick ? a.onClick() : undefined;
+        if (keep !== false) close();
+      };
+      row.appendChild(b);
+    });
+    modal.appendChild(row);
+    back.appendChild(modal);
+    back.addEventListener("mousedown", function (ev) {
+      if (ev.target === back) close();
+    });
+    document.body.appendChild(back);
+    histModal = { el: back, invoker: invoker, close: close };
+    var focusable = bodyEl.querySelector("input") || row.querySelector("button");
+    if (focusable) { try { focusable.focus(); } catch (e) {} }
+    return close;
+  }
+
+  function closeHistModal() {
+    if (histModal) {
+      if (histModal.el.parentNode) histModal.el.parentNode.removeChild(histModal.el);
+      histModal = null;
+    }
+  }
+
+  function openRenameDialog(id, invoker) {
+    var UI = window.NeutronUI;
+    var item = convStore.items[id];
+    if (!item) return;
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "input";
+    input.value = item.title || "";
+    input.maxLength = 200;
+    input.setAttribute("aria-label", "Task name");
+    input.autocomplete = "off";
+    var wrap = el("div", "hist-modal-body");
+    wrap.appendChild(input);
+    function doSave() {
+      if (!input.value.trim()) {
+        showError("Task name can't be empty.");
+        input.focus();
+        return false;
+      }
+      UI.convRename(convStore, id, input.value, Date.now());
+      saveConvStore();
+      paintHistory();
+      try {
+        if (chatTitleEl) chatTitleEl.textContent = UI.convDisplayTitle(activeConv());
+      } catch (e) {}
+      announce("Task renamed to " + input.value.trim() + ".");
+      toast("Task renamed.");
+      return true;
+    }
+    openHistModal("Rename task", wrap, [
+      { label: "Cancel", kind: "ghost" },
+      { label: "Save", kind: "primary", onClick: doSave },
+    ], invoker);
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); if (doSave() !== false && histModal) histModal.close(); }
+    });
+    try { input.select(); } catch (e) {}
+  }
+
+  function openDeleteDialog(id, invoker) {
+    var UI = window.NeutronUI;
+    var item = convStore.items[id];
+    if (!item) return;
+    var wrap = el("div", "hist-modal-body");
+    wrap.appendChild(el("p", null, "Delete this task?"));
+    wrap.appendChild(el("p", "hist-del-name", "\u201C" + UI.convDisplayTitle(item) + "\u201D"));
+    wrap.appendChild(el("p", "muted small",
+      "This will permanently remove this task and its conversation."));
+    openHistModal("Delete task", wrap, [
+      { label: "Cancel", kind: "ghost" },
+      { label: "Delete", kind: "danger", onClick: function () {
+          var wasActive = convStore.activeId === id;
+          UI.convDelete(convStore, id);
+          saveConvStore();
+          if (wasActive) syncChatToActive();
+          paintHistory();
+          announce("Task deleted.");
+          toast("Task deleted.");
+        } },
+    ], invoker);
+  }
+
+  /* ----- keyboard selection across history items ----- */
+  function moveHistSelection(dir) {
+    var btns = Array.prototype.slice.call(histList.querySelectorAll(".hist-open"));
+    if (!btns.length) return;
+    var i = btns.indexOf(document.activeElement);
+    var n = i === -1 ? (dir > 0 ? 0 : btns.length - 1) : i + dir;
+    if (n < 0) n = 0;
+    if (n >= btns.length) n = btns.length - 1;
+    btns[n].focus();
+  }
+
+  /* Register global hooks for shortcuts and route teardown. */
+  ChatHooks.newTask = newTask;
+  ChatHooks.toggleHistory = function () { setHistOpen(!histOpen); if (histOpen) paintHistory(); };
+  ChatHooks.focusHistorySearch = function () {
+    if (!histOpen) setHistOpen(true);
+    try { histSearch.focus(); } catch (e) {}
+  };
+  ChatHooks.closeOverlays = function () {
+    if (histModal) { histModal.close(); return; }
+    if (histItemMenu) { closeHistMenu(); return; }
+    if (histOpen && window.innerWidth <= 900) setHistOpen(false);
+  };
+  ChatHooks.moveHistSelection = moveHistSelection;
+  ChatHooks.outsideClick = function (ev) {
+    if (histItemMenu && !histItemMenu.el.contains(ev.target)) closeHistMenu();
+  };
+
+  paintHistoryLoading();
+  setHistOpen(histOpen);
+  requestAnimationFrame(function () { paintHistory(); });
+  /* ================= end history workspace ================= */
+
 
   /* ----- header: title + provider/model pickers + toggles ----- */
   var head = el("div", "chat-head");
@@ -1222,7 +1829,9 @@ async function renderChat(view) {
   backBtn.title = "Back to dashboard";
   backBtn.onclick = function () { location.hash = "#/dashboard"; };
   head.appendChild(backBtn);
-  head.appendChild(el("div", "chat-title", "Chat"));
+  head.appendChild(histBtn);
+  var chatTitleEl = el("div", "chat-title", "Chat");
+  head.appendChild(chatTitleEl);
 
   var provSel = el("select", "input chat-pick");
   provSel.setAttribute("aria-label", "Provider");
@@ -1236,8 +1845,21 @@ async function renderChat(view) {
     o.textContent = pr.displayName;
     provSel.appendChild(o);
   });
-  var savedProv = storedProvider();
-  provSel.value = byId[savedProv] ? savedProv : "";
+  /* This conversation's provider/model win; the globals are the fallback.
+     The choice is synced back to the globals so /api/chat sends it. */
+  function syncPickersFromConv() {
+    var c = activeConv();
+    var p = c.provider || "";
+    setStoredProvider(byId[p] ? p : "");
+    setStoredModel(c.model || "");
+    provSel.value = byId[p] ? p : "";
+    paintModelOptions();
+    paintPanel();
+    try {
+      var UI0 = window.NeutronUI;
+      if (UI0 && chatTitleEl) chatTitleEl.textContent = UI0.convDisplayTitle(c);
+    } catch (e) {}
+  }
 
   var modelSel = el("select", "input chat-pick");
   modelSel.setAttribute("aria-label", "Model");
@@ -1265,23 +1887,35 @@ async function renderChat(view) {
     modelSel.value = defs.indexOf(cur) !== -1 || (cur && defs.indexOf(cur) === -1) ? cur : "";
     if (!cur) modelSel.value = "";
   }
-  paintModelOptions();
+  syncPickersFromConv();
 
   provSel.onchange = function () {
     setStoredProvider(provSel.value);
+    activeConv().provider = provSel.value;
     paintModelOptions();
     paintPanel();
     clearError();
+    saveConvStore();
   };
   modelSel.onchange = function () {
     setStoredModel(modelSel.value);
+    activeConv().model = modelSel.value;
     paintPanel();
     clearError();
+    saveConvStore();
   };
 
   var detailsBtn = el("button", "btn ghost sm", "Provider info");
   var voiceBtn = el("button", "btn ghost sm", voiceSpeakEnabled() ? "Voice: on" : "Voice: off");
-  var newBtn = el("button", "btn ghost sm", "New");
+  var histBtn = el("button", "icon-btn hist-toggle", "\u2630");
+  histBtn.setAttribute("aria-label", "Toggle conversation history");
+  histBtn.setAttribute("aria-expanded", "false");
+  histBtn.title = "Conversation history (Ctrl+K to search)";
+  histBtn.onclick = function () { setHistOpen(!histOpen); if (histOpen) paintHistory(); };
+  try { histBtn.setAttribute("aria-expanded", histOpen ? "true" : "false"); } catch (e) {}
+  var newBtn = el("button", "btn ghost sm", "+ New");
+  newBtn.setAttribute("aria-label", "Start a new task");
+  newBtn.title = "Start a new task (Ctrl+Shift+N)";
   head.appendChild(provSel);
   head.appendChild(modelSel);
   var hbtns = el("div", "chat-hbtns");
@@ -1289,7 +1923,7 @@ async function renderChat(view) {
   hbtns.appendChild(voiceBtn);
   hbtns.appendChild(newBtn);
   head.appendChild(hbtns);
-  root.appendChild(head);
+  main.appendChild(head);
 
   /* ----- provider details panel ----- */
   var panel = el("div", "prov-panel hidden");
@@ -1330,7 +1964,7 @@ async function renderChat(view) {
   }
   paintPanel();
   detailsBtn.onclick = function () { panel.classList.toggle("hidden"); };
-  root.appendChild(panel);
+  main.appendChild(panel);
 
   /* ----- message log ----- */
   var log = el("div", "chat-log full");
@@ -1398,9 +2032,22 @@ async function renderChat(view) {
       }
       bubble.textContent = displayText;
     }
-    if (m.role === "user" && m.files && m.files.length) {
-      m.files.forEach(function (f) {
-        bubble.appendChild(el("div", "attach-line mono small", "file: " + f.name + " (" + fmtSize(f.size) + ")"));
+    var atts = m.attachments || m.files || [];
+    if (m.role === "user" && atts.length) {
+      atts.forEach(function (a) {
+        var line = el("div", "attach-line mono small",
+          "file: " + (a.name || "?") + " (" + fmtSize(a.size) + ")");
+        if (a.data) {
+          var dl = el("button", "attach-dl", "Download");
+          dl.setAttribute("aria-label", "Download " + (a.name || "file"));
+          dl.onclick = (function (att) {
+            return function () { downloadAttachment(att); };
+          })(a);
+          line.appendChild(dl);
+        } else if (a.unavailable) {
+          line.appendChild(el("span", "attach-warn", " \u2014 \u26a0 no longer available"));
+        }
+        bubble.appendChild(line);
       });
     }
     wrap.appendChild(bubble);
@@ -1711,9 +2358,24 @@ async function renderChat(view) {
     }
     var umsg = { role: "user", text: text, ts: Date.now() };
     if (files.length) {
-      umsg.files = files.map(function (f) { return { name: f.name, size: f.size }; });
+      /* Keep bytes only for small text files; anything larger restores
+         honestly as unavailable after a reload. */
+      umsg.attachments = files.map(function (f) {
+        var a = { name: f.name, mime: f.mime, kind: f.kind, size: f.size };
+        if (f.kind === "text" && f.data && f.data.length <= 10240) a.data = f.data;
+        return a;
+      });
     }
     chatState.messages.push(umsg);
+    var UI2 = window.NeutronUI;
+    var wasUntitled = !!(UI2 && !activeConv().title);
+    if (UI2) UI2.convTouch(convStore, activeConv().id, Date.now(), text, files);
+    if (wasUntitled) {
+      /* First message just auto-titled the task: refresh the header
+         and the history list so the new title shows immediately. */
+      paintHistory();
+      try { chatTitleEl.textContent = UI2.convDisplayTitle(activeConv()); } catch (e) {}
+    }
     appendMsg(umsg);
     /* Failed sends and local-only hints are display-only: never let the
        model see "Error: ..." as if it were its own prior reply.
@@ -1725,8 +2387,9 @@ async function renderChat(view) {
         .filter(function (m) { return !m.failed && !m.local; })
         .map(function (m) {
           var content = m.text;
-          if (!content && m.files && m.files.length) {
-            content = "[attached files: " + m.files.map(function (f) { return f.name; }).join(", ") + "]";
+          var matts = m.attachments || m.files;
+          if (!content && matts && matts.length) {
+            content = "[attached files: " + matts.map(function (f) { return f.name; }).join(", ") + "]";
           }
           return { role: m.role, content: content };
         }),
@@ -1758,12 +2421,16 @@ async function renderChat(view) {
       var amsg = { role: "assistant", text: res.text || "(empty reply)", ts: Date.now() };
       if (res.artifacts && res.artifacts.length) amsg.artifacts = res.artifacts;
       chatState.messages.push(amsg);
+      var UI3 = window.NeutronUI;
+      if (UI3) UI3.convTouch(convStore, activeConv().id, Date.now());
       clearError();
       lastFailedBody = null;
       speak(amsg.text);
     } catch (e) {
       var msg = e && e.message ? e.message : String(e);
       chatState.messages.push({ role: "assistant", text: "Error: " + msg, failed: true, ts: Date.now() });
+      var UI4 = window.NeutronUI;
+      if (UI4) UI4.convTouch(convStore, activeConv().id, Date.now());
       showError(msg);
       lastFailedBody = chatBody;
       /* Never read error text aloud — only real replies get spoken. */
@@ -1796,40 +2463,21 @@ async function renderChat(view) {
   composer.appendChild(micBtn);
   composer.appendChild(input);
   composer.appendChild(sendBtn);
-  root.appendChild(log);
-  root.appendChild(chips);
-  root.appendChild(fileInput);
-  root.appendChild(composer);
-  root.appendChild(el("p", "muted small chat-fine",
-    "Stateless chat — history lives in this browser. Attachments: images, .zip, text/code files (max 5, 100 KB each). " +
+  main.appendChild(log);
+  main.appendChild(chips);
+  main.appendChild(fileInput);
+  main.appendChild(composer);
+  main.appendChild(el("p", "muted small chat-fine",
+    "Conversations auto-save to History (\u2630) in this browser. Attachments: images, .zip, text/code files (max 5, 100 KB each). " +
     "Voice input/output never leaves your device except via the OS speech recognizer. " +
     "Without a provider you get an honest error — never a fabricated reply."));
+  root.appendChild(histBackdrop);
+  root.appendChild(histPanel);
+  root.appendChild(main);
   view.appendChild(root);
 
-  var newArmTimer = null;
-  function disarmNew() {
-    if (newArmTimer) { clearTimeout(newArmTimer); newArmTimer = null; }
-    newBtn.classList.remove("armed");
-    newBtn.textContent = "New";
-  }
-  newBtn.onclick = function () {
-    /* Two-tap confirm: conversation history is now persistent, so an
-       accidental tap must not wipe it. */
-    if (!newBtn.classList.contains("armed")) {
-      newBtn.classList.add("armed");
-      newBtn.textContent = "Sure?";
-      toast("Tap again to clear this conversation.");
-      newArmTimer = setTimeout(disarmNew, 3000);
-      return;
-    }
-    disarmNew();
-    chatState.messages = [];
-    clearChatHistory();
-    try { if (synthSupported) window.speechSynthesis.cancel(); } catch (e) {}
-    clearError();
-    paint();
-    toast("Conversation cleared.");
-  };
+  /* "+ New" is non-destructive now: the current task stays in History. */
+  newBtn.onclick = function () { newTask(); };
 }
 
 
@@ -2186,11 +2834,48 @@ function paintOfflineBar() {
 window.addEventListener("online", paintOfflineBar);
 window.addEventListener("offline", paintOfflineBar);
 
+var chatKeysBound = false;
+function bindChatKeys() {
+  if (chatKeysBound) return;
+  chatKeysBound = true;
+  /* Close the history item menu when clicking anywhere else. */
+  document.addEventListener("click", function (ev) {
+    try { if (ChatHooks.outsideClick) ChatHooks.outsideClick(ev); } catch (e) {}
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (currentRoute() !== "chat") return;
+    var mod = ev.ctrlKey || ev.metaKey;
+    var key = ev.key;
+    if (mod && !ev.shiftKey && (key === "k" || key === "K")) {
+      ev.preventDefault();
+      if (ChatHooks.focusHistorySearch) ChatHooks.focusHistorySearch();
+      return;
+    }
+    if (mod && ev.shiftKey && (key === "N" || key === "n")) {
+      ev.preventDefault();
+      if (ChatHooks.newTask) ChatHooks.newTask();
+      return;
+    }
+    if (key === "Escape") {
+      if (ChatHooks.closeOverlays) ChatHooks.closeOverlays();
+      return;
+    }
+    if ((key === "ArrowDown" || key === "ArrowUp") && ChatHooks.moveHistSelection) {
+      var ae = document.activeElement;
+      if (ae && ae.classList && ae.classList.contains("hist-open")) {
+        ev.preventDefault();
+        ChatHooks.moveHistSelection(key === "ArrowDown" ? 1 : -1);
+      }
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   if (!location.hash) location.hash = "#/dashboard";
   applyTheme(); // head script already did this; re-assert for cached pages
   paintOfflineBar();
   var dismiss = document.getElementById("error-dismiss");
   if (dismiss) dismiss.addEventListener("click", clearError);
+  bindChatKeys();
   render();
 });

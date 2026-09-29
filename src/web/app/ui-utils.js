@@ -325,6 +325,431 @@
   }
 
 
+  /* ========================================================================
+     Conversation workspace store — pure helpers.
+     Multi-conversation history is device-local (localStorage key
+     "neutron_conversations"): this browser IS the user (BYOK, no accounts).
+     This module only shapes the data; app.js owns storage and the DOM.
+     ======================================================================== */
+
+  var CONV_STORE_VERSION = 1;
+  /* Max messages persisted per conversation. */
+  var CONV_MESSAGE_CAP = 200;
+  /* Max characters of message text persisted per message. */
+  var CONV_MAX_MSG_TEXT = 20000;
+  /* Max artifact bytes persisted per artifact. */
+  var CONV_MAX_ARTIFACT_BYTES = 100000;
+  /* Attachment data (base64) is kept only for small text files; the running
+     total per conversation is capped so localStorage stays small. Anything
+     else restores honestly as unavailable. */
+  var CONV_MAX_ATTACH_DATA = 10 * 1024;
+
+  function newConversation(id, nowMs) {
+    return {
+      id: String(id),
+      title: "",
+      renamed: false,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+      pinned: false,
+      archived: false,
+      provider: "",
+      model: "",
+      messages: [],
+    };
+  }
+
+  /* Light markdown strip for auto-titles. Unlike the TTS variant, titles
+     drop code blocks entirely instead of saying "[code block]". */
+  function stripForTitle(src) {
+    var s = String(src == null ? "" : src);
+    s = s.replace(/```[\s\S]*?```/g, " ");
+    s = s.replace(/`([^`]*)`/g, "$1");
+    s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+    s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+    s = s.replace(/(\*\*|__)(.*?)\1/g, "$2");
+    s = s.replace(/(^|\W)[*_](\S[^*_]*\S)[*_](?=\W|$)/g, "$1$2");
+    s = s.replace(/^#{1,6}\s+/gm, "");
+    s = s.replace(/^>\s?/gm, "");
+    s = s.replace(/^\s*[-*+]\s+/gm, "");
+    s = s.replace(/[ \t]+/g, " ").replace(/\n+/g, " ");
+    return s.trim();
+  }
+
+  /**
+   * Generate a conversation title from the first user message.
+   * Returns "" when there is nothing to title from (the UI shows a
+   * "New task" placeholder). Never returns "New Chat"/"Untitled".
+   * `files` is used as a fallback for attachment-only first messages.
+   */
+  function autoTitle(text, files) {
+    var t = stripForTitle(text);
+    if (!t && files && files.length) {
+      t = "Files: " + files.map(function (f) {
+        return f && f.name ? String(f.name) : "?";
+      }).join(", ");
+    }
+    t = t.replace(/\s+/g, " ").trim();
+    if (!t) return "";
+    if (t.length > 42) {
+      var cut = t.slice(0, 42);
+      var sp = cut.lastIndexOf(" ");
+      if (sp > 20) cut = cut.slice(0, sp);
+      t = cut + "…";
+    }
+    return t;
+  }
+
+  /** Display title: stored title, or the "New task" placeholder. */
+  function convDisplayTitle(item) {
+    var t = item && typeof item.title === "string" ? item.title.trim() : "";
+    return t || "New task";
+  }
+
+  /**
+   * Relative time: "just now", "5 min ago", "3 hr ago", "Yesterday",
+   * "4 days ago", or "Sep 12" / "Sep 12, 2025". Pure.
+   */
+  function relativeTime(ts, nowMs) {
+    try {
+      var t = Number(ts), n = Number(nowMs);
+      if (!isFinite(t) || !isFinite(n)) return "";
+      var diff = n - t;
+      if (diff < 0) diff = 0;
+      var s = Math.floor(diff / 1000);
+      if (s < 60) return "just now";
+      var m = Math.floor(s / 60);
+      if (m < 60) return m + " min ago";
+      var h = Math.floor(m / 60);
+      if (h < 24) return h + " hr ago";
+      var d = Math.floor(h / 24);
+      if (d === 1) return "Yesterday";
+      if (d < 7) return d + " days ago";
+      var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      var dt = new Date(t);
+      var label = months[dt.getMonth()] + " " + dt.getDate();
+      if (dt.getFullYear() !== new Date(n).getFullYear()) label += ", " + dt.getFullYear();
+      return label;
+    } catch (e) { return ""; }
+  }
+
+  function startOfDayMs(t) {
+    var d = new Date(Number(t));
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  /** Day bucket for grouping: today / yesterday / week / month / older. */
+  function convDayBucket(ts, nowMs) {
+    try {
+      var diff = Math.round((startOfDayMs(nowMs) - startOfDayMs(ts)) / 86400000);
+      if (diff <= 0) return "today";
+      if (diff === 1) return "yesterday";
+      if (diff < 7) return "week";
+      if (diff < 30) return "month";
+      return "older";
+    } catch (e) { return "older"; }
+  }
+
+  function convMeta(item) {
+    return {
+      id: item.id,
+      title: convDisplayTitle(item),
+      updatedAt: item.updatedAt || 0,
+      pinned: !!item.pinned,
+    };
+  }
+
+  var CONV_GROUPS = [
+    { id: "today", label: "Today" },
+    { id: "yesterday", label: "Yesterday" },
+    { id: "week", label: "Previous 7 days" },
+    { id: "month", label: "Previous 30 days" },
+    { id: "older", label: "Older" },
+  ];
+
+  /**
+   * Group non-archived conversations: pinned first, then day buckets,
+   * each sorted by updatedAt desc. `items` is the store's items object.
+   * Returns { pinned: [meta], groups: [{ id, label, items: [meta] }] }
+   * with empty groups omitted.
+   */
+  function groupConversations(items, nowMs) {
+    var pinned = [];
+    var buckets = { today: [], yesterday: [], week: [], month: [], older: [] };
+    Object.keys(items || {}).forEach(function (id) {
+      var it = items[id];
+      if (!it || it.archived) return;
+      var meta = convMeta(it);
+      if (it.pinned) {
+        pinned.push(meta);
+      } else {
+        var b = convDayBucket(it.updatedAt || it.createdAt || nowMs, nowMs);
+        (buckets[b] || buckets.older).push(meta);
+      }
+    });
+    function byRecent(a, b) { return b.updatedAt - a.updatedAt; }
+    pinned.sort(byRecent);
+    var groups = CONV_GROUPS.map(function (g) {
+      return { id: g.id, label: g.label, items: buckets[g.id].sort(byRecent) };
+    }).filter(function (g) { return g.items.length > 0; });
+    return { pinned: pinned, groups: groups };
+  }
+
+  /** Flat list of archived conversations, most recent first. */
+  function archivedConversations(items) {
+    var out = [];
+    Object.keys(items || {}).forEach(function (id) {
+      var it = items[id];
+      if (it && it.archived) out.push(convMeta(it));
+    });
+    out.sort(function (a, b) { return b.updatedAt - a.updatedAt; });
+    return out;
+  }
+
+  /**
+   * Search title + message text (case-insensitive). Returns metas sorted
+   * by updatedAt desc, capped at 100. Empty query → [].
+   */
+  function searchConversations(items, query) {
+    var q = String(query == null ? "" : query).trim().toLowerCase();
+    if (!q) return [];
+    var out = [];
+    Object.keys(items || {}).forEach(function (id) {
+      var it = items[id];
+      if (!it || it.archived) return;
+      var hit = String(it.title || "").toLowerCase().indexOf(q) !== -1;
+      if (!hit && Array.isArray(it.messages)) {
+        for (var i = 0; i < it.messages.length; i++) {
+          var m = it.messages[i];
+          if (m && String(m.text || "").toLowerCase().indexOf(q) !== -1) { hit = true; break; }
+        }
+      }
+      if (hit) out.push(convMeta(it));
+    });
+    out.sort(function (a, b) { return b.updatedAt - a.updatedAt; });
+    return out.slice(0, 100);
+  }
+
+  /**
+   * Pick the persistable subset of one attachment. `budget` ({left}) caps
+   * the running total of base64 data kept per conversation; attachments
+   * without data restore honestly as unavailable.
+   */
+  function sanitizeAttachment(a, budget) {
+    if (!a || typeof a !== "object") return null;
+    var out = {
+      name: String(a.name || "").slice(0, 200),
+      size: Number(a.size) || 0,
+    };
+    if (typeof a.mime === "string" && a.mime) out.mime = a.mime.slice(0, 100);
+    var kind = String(a.kind || "");
+    if (kind === "text" || kind === "image" || kind === "zip") out.kind = kind;
+    var data = typeof a.data === "string" ? a.data : "";
+    if (out.kind === "text" && data && data.length <= budget.left) {
+      out.data = data;
+      budget.left -= data.length;
+    } else {
+      out.unavailable = true;
+    }
+    return out;
+  }
+
+  /**
+   * Pick the persistable subset of a conversation for localStorage.
+   * Caps messages/text/artifacts and attachment data so history stays
+   * small; converts the legacy single-chat `files` shape to attachments.
+   * Returns null for invalid input. Pure.
+   */
+  function sanitizeConversation(item) {
+    if (!item || typeof item !== "object") return null;
+    var out = {
+      id: String(item.id || ""),
+      title: String(item.title || "").slice(0, 200),
+      renamed: !!item.renamed,
+      createdAt: Number(item.createdAt) || 0,
+      updatedAt: Number(item.updatedAt) || 0,
+      pinned: !!item.pinned,
+      archived: !!item.archived,
+      provider: String(item.provider || "").slice(0, 100),
+      model: String(item.model || "").slice(0, 200),
+      messages: [],
+    };
+    var budget = { left: CONV_MAX_ATTACH_DATA };
+    var msgs = Array.isArray(item.messages) ? item.messages.slice(-CONV_MESSAGE_CAP) : [];
+    out.messages = msgs.map(function (m) {
+      if (!m || typeof m !== "object") return null;
+      var mo = { role: m.role === "assistant" ? "assistant" : "user" };
+      mo.text = String(m.text == null ? "" : m.text).slice(0, CONV_MAX_MSG_TEXT);
+      if (typeof m.ts === "number") mo.ts = m.ts;
+      if (m.failed === true) mo.failed = true;
+      if (m.local === true) mo.local = true;
+      /* New shape: attachments. Legacy single-chat shape: files. */
+      var atts = Array.isArray(m.attachments) ? m.attachments : null;
+      if (!atts && Array.isArray(m.files)) {
+        atts = m.files.map(function (f) {
+          return {
+            name: f && f.name ? String(f.name) : "",
+            size: f && f.size ? Number(f.size) : 0,
+            kind: "file",
+            unavailable: true,
+          };
+        });
+      }
+      if (atts) {
+        mo.attachments = atts.map(function (a) {
+          return sanitizeAttachment(a, budget);
+        }).filter(Boolean);
+        if (!mo.attachments.length) delete mo.attachments;
+      }
+      if (Array.isArray(m.artifacts)) {
+        mo.artifacts = m.artifacts.slice(0, 10).map(function (a) {
+          if (!a || typeof a !== "object") return null;
+          return {
+            path: String(a.path || "").slice(0, 200),
+            content: String(a.content || "").slice(0, CONV_MAX_ARTIFACT_BYTES),
+          };
+        }).filter(Boolean);
+        if (!mo.artifacts.length) delete mo.artifacts;
+      }
+      return mo;
+    }).filter(Boolean);
+    return out;
+  }
+
+  /**
+   * Wrap a legacy single-chat message array (the old "neutron_chat_history"
+   * value) as the first conversation of a new store. Never loses the
+   * user's current chat. Pure.
+   */
+  function migrateLegacyChat(messages, provider, model, nowMs, id) {
+    var item = newConversation(id, nowMs);
+    item.provider = String(provider || "");
+    item.model = String(model || "");
+    var clean = sanitizeConversation({
+      id: item.id, title: "", renamed: false, createdAt: 0, updatedAt: 0,
+      pinned: false, archived: false, provider: item.provider, model: item.model,
+      messages: Array.isArray(messages) ? messages : [],
+    });
+    item.messages = clean.messages;
+    var firstTs = 0, lastTs = 0, firstUserText = "";
+    item.messages.forEach(function (m) {
+      if (typeof m.ts === "number") {
+        if (!firstTs || m.ts < firstTs) firstTs = m.ts;
+        if (m.ts > lastTs) lastTs = m.ts;
+      }
+      if (!firstUserText && m.role === "user" && !m.local && m.text) firstUserText = m.text;
+    });
+    item.createdAt = firstTs || nowMs;
+    item.updatedAt = lastTs || nowMs;
+    item.title = autoTitle(firstUserText, null);
+    var store = { version: CONV_STORE_VERSION, activeId: item.id, items: {} };
+    store.items[item.id] = item;
+    return store;
+  }
+
+  function convGet(store, id) {
+    if (!store || !store.items || !id) return null;
+    return store.items[id] || null;
+  }
+
+  /** Most recently updated non-archived conversation id (or null). */
+  function mostRecentConvId(store, excludeId) {
+    if (!store || !store.items) return null;
+    var best = null, bestTs = -1;
+    Object.keys(store.items).forEach(function (id) {
+      if (id === excludeId) return;
+      var it = store.items[id];
+      if (!it || it.archived) return;
+      var ts = it.updatedAt || it.createdAt || 0;
+      if (ts >= bestTs) { bestTs = ts; best = id; }
+    });
+    return best;
+  }
+
+  function convCreate(store, id, nowMs) {
+    if (!store || !store.items || !id || store.items[id]) return null;
+    var item = newConversation(id, nowMs);
+    store.items[id] = item;
+    store.activeId = id;
+    return item;
+  }
+
+  /**
+   * Rename a conversation. Trims and collapses whitespace, rejects empty
+   * names, touches updatedAt, and locks the title against auto-titling.
+   * Returns true on success.
+   */
+  function convRename(store, id, title, nowMs) {
+    var it = convGet(store, id);
+    var t = String(title == null ? "" : title).replace(/\s+/g, " ").trim();
+    if (!it || !t) return false;
+    it.title = t.slice(0, 200);
+    it.renamed = true;
+    it.updatedAt = nowMs;
+    return true;
+  }
+
+  function convSetPinned(store, id, pinned) {
+    var it = convGet(store, id);
+    if (!it) return false;
+    it.pinned = !!pinned;
+    return true;
+  }
+
+  function convSetArchived(store, id, archived, nowMs) {
+    var it = convGet(store, id);
+    if (!it) return false;
+    it.archived = !!archived;
+    it.updatedAt = nowMs;
+    if (archived && store.activeId === id) {
+      store.activeId = mostRecentConvId(store, id);
+    }
+    return true;
+  }
+
+  function convDelete(store, id) {
+    if (!store || !store.items || !store.items[id]) return false;
+    delete store.items[id];
+    if (store.activeId === id) store.activeId = mostRecentConvId(store, null);
+    return true;
+  }
+
+  /**
+   * Duplicate a conversation: new unique id, " — Copy" title, original
+   * untouched, copy not pinned/archived. Returns the copy (or null).
+   */
+  function convDuplicate(store, id, newId, nowMs) {
+    var src = convGet(store, id);
+    if (!src || !newId || store.items[newId]) return null;
+    var copy = JSON.parse(JSON.stringify(src));
+    copy.id = newId;
+    copy.title = (src.title && src.title.trim() ? src.title.trim() : "New task") + " — Copy";
+    copy.renamed = true;
+    copy.createdAt = nowMs;
+    copy.updatedAt = nowMs;
+    copy.pinned = false;
+    copy.archived = false;
+    store.items[newId] = copy;
+    return copy;
+  }
+
+  /**
+   * Record activity: bump updatedAt, and auto-title from the first real
+   * user message unless the user renamed it. `firstUserText` may be "".
+   */
+  function convTouch(store, id, nowMs, firstUserText, firstUserFiles) {
+    var it = convGet(store, id);
+    if (!it) return false;
+    it.updatedAt = nowMs;
+    if (!it.title && !it.renamed && firstUserText !== undefined) {
+      var t = autoTitle(firstUserText, firstUserFiles);
+      if (t) it.title = t;
+    }
+    return true;
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -339,5 +764,26 @@
     sanitizeChatHistory: sanitizeChatHistory,
     renderMarkdown: renderMarkdown,
     stripMarkdownForSpeech: stripMarkdownForSpeech,
+    /* conversation workspace */
+    CONV_STORE_VERSION: CONV_STORE_VERSION,
+    newConversation: newConversation,
+    autoTitle: autoTitle,
+    convDisplayTitle: convDisplayTitle,
+    relativeTime: relativeTime,
+    convDayBucket: convDayBucket,
+    groupConversations: groupConversations,
+    archivedConversations: archivedConversations,
+    searchConversations: searchConversations,
+    sanitizeConversation: sanitizeConversation,
+    migrateLegacyChat: migrateLegacyChat,
+    convGet: convGet,
+    convCreate: convCreate,
+    convRename: convRename,
+    convSetPinned: convSetPinned,
+    convSetArchived: convSetArchived,
+    convDelete: convDelete,
+    convDuplicate: convDuplicate,
+    convTouch: convTouch,
+    mostRecentConvId: mostRecentConvId,
   };
 });

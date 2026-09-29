@@ -44,3 +44,110 @@ export declare function sanitizeChatHistory(messages: any, cap?: number): any[];
 export declare function renderMarkdown(src: string | null | undefined): string;
 
 export declare function stripMarkdownForSpeech(src: string | null | undefined): string;
+
+/* ----- conversation workspace store (device-local, no accounts) ----- */
+
+export declare const CONV_STORE_VERSION: number;
+
+export interface ConvAttachment {
+  name: string;
+  size: number;
+  mime?: string;
+  kind?: string;
+  data?: string;
+  unavailable?: boolean;
+}
+
+export interface ConvMessage {
+  role: "user" | "assistant";
+  text: string;
+  ts?: number;
+  failed?: boolean;
+  local?: boolean;
+  attachments?: ConvAttachment[];
+  artifacts?: Array<{ path: string; content: string }>;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  renamed: boolean;
+  createdAt: number;
+  updatedAt: number;
+  pinned: boolean;
+  archived: boolean;
+  provider: string;
+  model: string;
+  messages: ConvMessage[];
+}
+
+export interface ConvStore {
+  version: number;
+  activeId: string | null;
+  items: Record<string, Conversation>;
+}
+
+export interface ConvMeta {
+  id: string;
+  title: string;
+  updatedAt: number;
+  pinned: boolean;
+}
+
+export declare function newConversation(id: string, nowMs: number): Conversation;
+
+export declare function autoTitle(text: string | null | undefined, files?: Array<{ name?: string } | null> | null): string;
+
+export declare function convDisplayTitle(item: Conversation | null | undefined): string;
+
+export declare function relativeTime(ts: number, nowMs: number): string;
+
+export declare function convDayBucket(ts: number, nowMs: number): string;
+
+export declare function groupConversations(
+  items: Record<string, Conversation> | null | undefined,
+  nowMs: number
+): { pinned: ConvMeta[]; groups: Array<{ id: string; label: string; items: ConvMeta[] }> };
+
+export declare function archivedConversations(
+  items: Record<string, Conversation> | null | undefined
+): ConvMeta[];
+
+export declare function searchConversations(
+  items: Record<string, Conversation> | null | undefined,
+  query: string | null | undefined
+): ConvMeta[];
+
+export declare function sanitizeConversation(item: any): Conversation | null;
+
+export declare function migrateLegacyChat(
+  messages: any,
+  provider: string | null | undefined,
+  model: string | null | undefined,
+  nowMs: number,
+  id: string
+): ConvStore;
+
+export declare function convGet(store: ConvStore | null | undefined, id: string): Conversation | null;
+
+export declare function mostRecentConvId(store: ConvStore | null | undefined, excludeId: string | null): string | null;
+
+export declare function convCreate(store: ConvStore, id: string, nowMs: number): Conversation | null;
+
+export declare function convRename(store: ConvStore, id: string, title: string | null | undefined, nowMs: number): boolean;
+
+export declare function convSetPinned(store: ConvStore, id: string, pinned: boolean): boolean;
+
+export declare function convSetArchived(store: ConvStore, id: string, archived: boolean, nowMs: number): boolean;
+
+export declare function convDelete(store: ConvStore, id: string): boolean;
+
+export declare function convDuplicate(store: ConvStore, id: string, newId: string, nowMs: number): Conversation | null;
+
+export declare function convTouch(
+  store: ConvStore,
+  id: string,
+  nowMs: number,
+  firstUserText?: string,
+  firstUserFiles?: Array<{ name?: string } | null> | null
+): boolean;
