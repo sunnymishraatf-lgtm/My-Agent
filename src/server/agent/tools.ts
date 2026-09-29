@@ -472,6 +472,7 @@ export const TOOL_DEFS: ToolDef[] = [
   { name: "delete_file", description: "Delete a file. Always needs approval.", approval: "always", args: "{ path: string }" },
   { name: "run_command", description: "Run a command (no shell; sandboxed to the repo; 120s timeout). Always needs approval.", approval: "always", args: "{ cmd: string, cwd?: string }" },
   { name: "run_tests", description: "Run the repo's detected test command. Always needs approval.", approval: "always", args: "{}" },
+  { name: "read_skill", description: "Read an expert skill playbook from the curated skills library by name. No approval needed.", approval: "none", args: "{ name: string }" },
 ];
 
 /* Test helpers — exported for vitest; not part of the tool surface. */

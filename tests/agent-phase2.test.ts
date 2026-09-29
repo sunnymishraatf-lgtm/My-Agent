@@ -269,7 +269,7 @@ describe("approval gating", () => {
   it("TOOL_DEFS documents every tool", () => {
     const names = TOOL_DEFS.map((t) => t.name).sort();
     expect(names).toEqual(
-      ["apply_patch", "delete_file", "list_files", "read_file", "run_command", "run_tests", "search_text", "write_file"].sort(),
+      ["apply_patch", "delete_file", "list_files", "read_file", "read_skill", "run_command", "run_tests", "search_text", "write_file"].sort(),
     );
   });
 });

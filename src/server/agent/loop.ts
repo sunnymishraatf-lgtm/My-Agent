@@ -42,6 +42,7 @@ import {
   safeRestoreCheckpoint,
   snapshotFiles,
 } from "./checkpoints";
+import { readSkill, renderSkillIndex } from "./skills";
 
 export type AgentPhase =
   | "understand" | "analyze" | "plan" | "implement"
@@ -391,6 +392,7 @@ function buildSystemPrompt(run: AgentRun): string {
   const tools = TOOL_DEFS.map(
     (t) => `- ${t.name}${t.args}: ${t.description}`,
   ).join("\n");
+  const skillIndex = renderSkillIndex();
   return [
     `You are NEUTRON Agent, an autonomous coding agent. Repository: "${run.repo}".`,
     `Goal: ${run.goal}`,
@@ -408,6 +410,14 @@ function buildSystemPrompt(run: AgentRun): string {
     "Tools:",
     tools,
     "",
+    ...(skillIndex
+      ? [
+          skillIndex,
+          "",
+          "When a task matches a listed skill, call read_skill with {\"name\": \"<skill-name>\"} first and follow its playbook.",
+          "",
+        ]
+      : []),
     "Reply with EXACTLY ONE JSON object per message, no markdown fences, no prose:",
     `{"thought": "short reasoning", "tool": "<name>", "args": {...}}`,
     `{"thought": "...", "phase_done": true, "plan": [...], "files": [...]}`,
@@ -737,6 +747,7 @@ async function runTool(run: AgentRun, tool: string, args: Record<string, unknown
       return p.finally(() => { run.activeChild = undefined; });
     }
     case "run_tests": return runTests(root);
+    case "read_skill": return readSkill(str(args.name));
     default: throw new ToolError("UNKNOWN_TOOL", `Unknown tool: ${tool}`);
   }
 }

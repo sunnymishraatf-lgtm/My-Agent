@@ -1,0 +1,3 @@
+# Keep Vercel deployments lean: the vendored Hermes Agent reference tree
+# (226MB) is for browsing/porting, not for the serverless build.
+vendor/
