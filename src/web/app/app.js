@@ -406,6 +406,9 @@ var ROUTES = {
   chat: renderChat,
   rooms: function (view) { return window.NeutronRooms.renderRooms(view); },
   agent: function (view) { return window.NeutronAgent.renderAgent(view); },
+  security: function (view) { return window.NeutronInsights.renderSecurity(view); },
+  deps: function (view) { return window.NeutronInsights.renderDeps(view); },
+  health: function (view) { return window.NeutronInsights.renderHealth(view); },
   settings: renderSettings,
 };
 

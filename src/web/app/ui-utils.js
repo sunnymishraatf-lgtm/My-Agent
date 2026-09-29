@@ -2013,6 +2013,171 @@
       });
   }
 
+  /* ======================================================================
+     Project intelligence (Phases 7/9/10/11): AI code review prompt
+     building + finding parsing, dependency helpers, health aggregation.
+     All pure — safe to test.
+     ====================================================================== */
+
+  var REVIEW_CATEGORIES = ["BUG", "SECURITY", "PERFORMANCE", "MAINTAINABILITY", "STYLE", "TESTING"];
+  var REVIEW_DIFF_MAX_CHARS = 7000; // /api/chat caps each message at 8000 chars
+
+  var REVIEW_SYSTEM_PROMPT =
+    "You are a senior code reviewer. Review the unified diff below and report " +
+    "only issues you can point to with concrete evidence. Every finding needs: " +
+    "category (one of BUG, SECURITY, PERFORMANCE, MAINTAINABILITY, STYLE, TESTING), " +
+    "a one-line problem, evidence (file path and line quoted from the diff), " +
+    "why it matters, and a suggested fix. " +
+    "Respond with a single ```json fenced block containing an array of findings: " +
+    "[{\"category\": \"...\", \"problem\": \"...\", \"evidence\": \"...\", " +
+    "\"why_it_matters\": \"...\", \"suggested_fix\": \"...\"}]. " +
+    "If you find nothing worth reporting, respond with ```json {\"no_issues\": true} ``` " +
+    "and nothing else. Do not invent issues that are not visible in the diff.";
+
+  /**
+   * Build the review request for a unified diff. The diff is truncated to
+   * REVIEW_DIFF_MAX_CHARS with an honest note — /api/chat caps messages at
+   * 8000 chars, so a huge diff gets a clearly-marked partial review.
+   * Returns { system, user, truncated }.
+   */
+  function buildReviewPrompt(diff, opts) {
+    var o = opts || {};
+    var maxChars = o.maxChars || REVIEW_DIFF_MAX_CHARS;
+    var d = String(diff == null ? "" : diff);
+    var truncated = false;
+    if (d.length > maxChars) {
+      d = d.slice(0, maxChars);
+      truncated = true;
+    }
+    var note = truncated
+      ? "\n\n[NOTE: the diff was truncated to " + maxChars + " characters for this review. " +
+        "This is a partial review of the first part of the changes.]"
+      : "";
+    return {
+      system: REVIEW_SYSTEM_PROMPT,
+      user: "Review this unified diff:\n\n```diff\n" + d + "\n```" + note,
+      truncated: truncated,
+    };
+  }
+
+  function isValidReviewCategory(c) {
+    return REVIEW_CATEGORIES.indexOf(String(c || "").toUpperCase()) !== -1;
+  }
+
+  /**
+   * Parse an AI review response. Expects a ```json fenced array of findings
+   * (or {"no_issues": true}). Returns { findings: [...] } with normalized
+   * categories, or { findings: [], raw: text } when the model did not
+   * produce parseable JSON — the raw text is still shown honestly.
+   */
+  function parseReviewFindings(text) {
+    var s = String(text == null ? "" : text);
+    var m = s.match(/```json\s*([\s\S]*?)```/);
+    var payload = m ? m[1] : null;
+    if (!payload) {
+      // Tolerate a bare JSON object/array without a fence.
+      var t = s.trim();
+      if ((t.charAt(0) === "{" && t.charAt(t.length - 1) === "}") ||
+          (t.charAt(0) === "[" && t.charAt(t.length - 1) === "]")) {
+        payload = t;
+      }
+    }
+    if (!payload) return { findings: [], raw: s };
+    var parsed;
+    try {
+      parsed = JSON.parse(payload);
+    } catch (e) {
+      return { findings: [], raw: s };
+    }
+    if (parsed && parsed.no_issues === true) return { findings: [] };
+    if (!Array.isArray(parsed)) return { findings: [], raw: s };
+    var findings = parsed.map(function (f) {
+      if (!f || typeof f !== "object") return null;
+      var cat = String(f.category || "").toUpperCase();
+      return {
+        category: isValidReviewCategory(cat) ? cat : "MAINTAINABILITY",
+        problem: String(f.problem || "").slice(0, 500),
+        evidence: String(f.evidence || "").slice(0, 800),
+        why_it_matters: String(f.why_it_matters || f.whyItMatters || "").slice(0, 800),
+        suggested_fix: String(f.suggested_fix || f.suggestedFix || "").slice(0, 1200),
+      };
+    }).filter(function (f) {
+      return f && (f.problem || f.evidence);
+    });
+    return { findings: findings };
+  }
+
+  /**
+   * Convert the agent's compact per-file diffs ("- "/"+" prefixes) into a
+   * unified-diff-ish text the code-review prompt can consume.
+   * files: [{path, diff}]. Pure — safe to test.
+   */
+  function compactDiffsToUnified(files) {
+    var list = Array.isArray(files) ? files : [];
+    var parts = [];
+    list.forEach(function (f) {
+      f = f || {};
+      var path = String(f.path || "unknown");
+      var body = String(f.diff || "").split("\n").map(function (ln) {
+        if (ln.indexOf("- ") === 0) return "-" + ln.slice(2);
+        if (ln.indexOf("+ ") === 0) return "+" + ln.slice(2);
+        if (ln === "(no changes)" || ln.charAt(0) === "\u2026") return ln;
+        return ln === "" ? "" : " " + ln;
+      }).join("\n");
+      parts.push("--- a/" + path + "\n+++ b/" + path + "\n" + body);
+    });
+    return parts.join("\n");
+  }
+
+  /**
+   * Aggregate project-health signals into an overall verdict.
+   * Rule (documented in the Health UI):
+   *   "attention" if git is dirty, or any critical/high security finding,
+   *   or any vulnerable dependency, or the last recorded build/test failed.
+   *   "healthy" if every known signal is good AND at least one signal
+   *   produced data. Otherwise "unknown" (honest — never a fake score).
+   * signals: { git: {clean} | null, security: {counts} | null,
+   *            deps: {counts} | null, build: "passed"|"failed"|null,
+   *            tests: "passed"|"failed"|null }
+   */
+  function computeHealth(signals) {
+    var s = signals || {};
+    var items = [];
+    function sevCounts(c) {
+      c = c || {};
+      return {
+        critical: c.critical || 0, high: c.high || 0, medium: c.medium || 0,
+        low: c.low || 0, info: c.info || 0,
+      };
+    }
+    var gitState = !s.git ? "unknown" : (s.git.clean ? "good" : "attention");
+    items.push({ key: "git", state: gitState,
+      label: !s.git ? "Git status unknown" :
+        (s.git.clean ? "Working tree clean" : "Uncommitted changes") });
+    var sc = s.security ? sevCounts(s.security.counts) : null;
+    var secState = !sc ? "unknown" : ((sc.critical + sc.high) > 0 ? "attention" : "good");
+    var secTotal = sc ? (sc.critical + sc.high + sc.medium + sc.low + sc.info) : 0;
+    items.push({ key: "security", state: secState,
+      label: !sc ? "Never scanned" : (secTotal + " finding(s)") });
+    var dc = s.deps ? s.deps.counts : null;
+    var depState = !dc ? "unknown" : ((dc.vulnerable || 0) > 0 ? "attention" : "good");
+    items.push({ key: "deps", state: depState,
+      label: !dc ? "Never scanned" :
+        ((dc.vulnerable || 0) + " vulnerable \u00B7 " + (dc.updates || 0) + " updates available") });
+    var buildState = !s.build ? "unknown" : (s.build === "passed" ? "good" : "attention");
+    items.push({ key: "build", state: buildState,
+      label: !s.build ? "No recorded runs" : ("Last run " + s.build) });
+    var testState = !s.tests ? "unknown" : (s.tests === "passed" ? "good" : "attention");
+    items.push({ key: "tests", state: testState,
+      label: !s.tests ? "No recorded runs" : ("Last run " + s.tests) });
+
+    var overall;
+    if (items.some(function (i) { return i.state === "attention"; })) overall = "attention";
+    else if (items.some(function (i) { return i.state === "good"; })) overall = "healthy";
+    else overall = "unknown";
+    return { overall: overall, items: items };
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -2128,5 +2293,12 @@
     summarizeJobResult: summarizeJobResult,
     /* job history parsing */
     parseJobHistory: parseJobHistory,
+    /* project intelligence: AI code review + health (Phases 7/11) */
+    REVIEW_CATEGORIES: REVIEW_CATEGORIES,
+    REVIEW_DIFF_MAX_CHARS: REVIEW_DIFF_MAX_CHARS,
+    buildReviewPrompt: buildReviewPrompt,
+    parseReviewFindings: parseReviewFindings,
+    compactDiffsToUnified: compactDiffsToUnified,
+    computeHealth: computeHealth,
   };
 });

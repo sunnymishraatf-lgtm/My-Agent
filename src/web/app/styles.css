@@ -2293,3 +2293,55 @@ body.chat-full .view {
 .git-glyph { width: 18px; text-align: center; color: var(--text-3); }
 .git-spacer { flex: 1 1 auto; }
 .git-commit-diff { margin: 6px 0 4px 4px; }
+
+/* ---- project intelligence: review / security / deps / health ---- */
+.review-finding { margin-top: 12px; }
+.review-finding .row { align-items: center; flex-wrap: wrap; }
+.review-evidence {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.review-raw {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+details.sec-finding {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  margin-top: 10px;
+  overflow: hidden;
+}
+details.sec-finding summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  background: var(--bg-soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+}
+details.sec-finding summary::-webkit-details-marker { display: none; }
+details.sec-finding > p { padding: 0 14px; }
+details.sec-finding > p:last-child { padding-bottom: 10px; }
+.sec-counts { flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.health-banner { margin-bottom: 14px; }
+.health-banner.ok { border-left: 3px solid var(--green); }
+.health-banner.bad { border-left: 3px solid var(--red); }
+.health-card { margin-top: 10px; }
+.health-card .row { align-items: center; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-3); flex: none; }
+.dot.ok { background: var(--green); }
+.dot.bad { background: var(--red); }
+.dot.muted { background: var(--text-3); }
+.ag-review { margin-top: 10px; }
+label.fld-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 4px; }
+.text-ok { color: var(--green); }
+.text-bad { color: var(--red); }

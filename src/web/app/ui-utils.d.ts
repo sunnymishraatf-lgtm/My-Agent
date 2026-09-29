@@ -424,3 +424,34 @@ export interface JobResultSummary {
 export declare function summarizeJobResult(result: unknown): JobResultSummary | null;
 
 export declare function parseJobHistory(raw: unknown): unknown[];
+
+export declare const REVIEW_CATEGORIES: string[];
+export declare const REVIEW_DIFF_MAX_CHARS: number;
+export interface ReviewFinding {
+  category: string;
+  problem: string;
+  evidence: string;
+  why_it_matters: string;
+  suggested_fix: string;
+}
+export declare function buildReviewPrompt(
+  diff: unknown,
+  opts: { maxChars?: number },
+): { system: string; user: string; truncated: boolean };
+export declare function parseReviewFindings(
+  text: unknown,
+): { findings: ReviewFinding[]; raw?: string };
+export declare function compactDiffsToUnified(
+  files: Array<{ path?: string; diff?: string }> | null | undefined,
+): string;
+export interface HealthSignals {
+  git?: { clean: boolean } | null;
+  security?: { counts: Record<string, number> } | null;
+  deps?: { counts: { vulnerable?: number; updates?: number } } | null;
+  build?: "passed" | "failed" | null;
+  tests?: "passed" | "failed" | null;
+}
+export declare function computeHealth(signals: HealthSignals): {
+  overall: "healthy" | "attention" | "unknown";
+  items: Array<{ key: string; state: "good" | "attention" | "unknown"; label: string }>;
+};

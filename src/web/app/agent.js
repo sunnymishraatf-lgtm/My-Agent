@@ -98,6 +98,14 @@
     goal.className = "input ag-goal";
     goal.rows = 3;
     goal.placeholder = "e.g. Add input validation to the signup form and cover it with tests";
+    /* Prefill from another view (e.g. Dependency Center's "Plan upgrade with AI"). */
+    try {
+      var pending = sessionStorage.getItem("neutron_pending_goal");
+      if (pending) {
+        goal.value = pending;
+        sessionStorage.removeItem("neutron_pending_goal");
+      }
+    } catch (e) { /* private mode — goal stays empty */ }
     form.appendChild(goalLabel);
     form.appendChild(goal);
 
@@ -482,6 +490,24 @@
         ul.appendChild(li);
       });
       box.appendChild(ul);
+      /* AI code review of the agent's own changes (uses the user's BYOK provider). */
+      var revRow = el("div", "row");
+      var revBtn = el("button", "btn sm", "Review changes");
+      revBtn.type = "button";
+      revBtn.title = "Ask your AI to review these changes";
+      revBtn.setAttribute("aria-label", "Ask AI to review the agent's changes");
+      var revBox = el("div", "ag-review");
+      revBtn.onclick = function () {
+        if (!window.NeutronInsights) {
+          revBox.appendChild(el("p", "error", "Review UI not loaded."));
+          return;
+        }
+        var unified = UI.compactDiffsToUnified(files);
+        window.NeutronInsights.reviewChanges(unified, revBox);
+      };
+      revRow.appendChild(revBtn);
+      box.appendChild(revRow);
+      box.appendChild(revBox);
     } else {
       box.appendChild(el("p", "muted", "No files were changed."));
     }

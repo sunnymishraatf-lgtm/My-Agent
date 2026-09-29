@@ -60,6 +60,7 @@ import {
   gitPush,
   cloneWithToken,
 } from "./git/git-service";
+import { handleInsightsApi } from "./insights";
 import {
   getDemoManager,
   prepareDemoRepo,
@@ -1517,6 +1518,13 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
      which serverless hosting doesn't have). */
   if (url.pathname === "/api/git" || url.pathname.startsWith("/api/git/")) {
     await handleGitApi(getAgentManager(opts.demoWorkspace).workspace, req, res, url);
+    return;
+  }
+
+  /* Project intelligence: security / dependency scans (Node server only —
+     workspace access + process execution, which serverless hosting lacks). */
+  if (url.pathname === "/api/insights" || url.pathname.startsWith("/api/insights/")) {
+    await handleInsightsApi(getAgentManager(opts.demoWorkspace).workspace, req, res, url);
     return;
   }
 

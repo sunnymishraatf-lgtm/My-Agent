@@ -125,6 +125,47 @@ const AUTHZ_PATTERNS: Array<{ re: RegExp; severity: FindingSeverity; category: s
   },
 ];
 
+/**
+ * Apply only the committed-secret patterns to a file's content.
+ * Used by the Security Center's "committed secrets" check, which runs over
+ * git-tracked files specifically. Returns findings with file/line evidence;
+ * line numbers are 1-based and capped at the first match per line.
+ */
+export interface SecretPatternHit {
+  severity: FindingSeverity;
+  title: string;
+  line: number;
+  excerpt: string;
+}
+export function scanContentForSecrets(content: string, rel: string, maxHits = 40): SecretPatternHit[] {
+  const out: SecretPatternHit[] = [];
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length && out.length < maxHits; i++) {
+    const line = lines[i] ?? "";
+    for (const { re, severity, title } of SECRET_PATTERNS) {
+      re.lastIndex = 0;
+      if (re.test(line)) {
+        out.push({
+          severity,
+          title,
+          line: i + 1,
+          // Redact most of the matched secret: keep a short prefix for evidence.
+          excerpt: redactSecretExcerpt(line.trim()),
+        });
+        break; // one hit per line is enough evidence
+      }
+    }
+  }
+  return out;
+}
+
+/** Keep the first ~12 chars of a suspicious line so the finding has
+    evidence without leaking the full secret into UI/logs. */
+function redactSecretExcerpt(line: string): string {
+  const s = line.length > 120 ? line.slice(0, 120) + "…" : line;
+  return s.replace(/(["'])([^"']{12})[^"']*(["'])/g, "$1$2…[redacted]$3");
+}
+
 export function scanSecurity(root: string, graph?: ImpactGraph): SecurityReview {
   const findings: SecurityFinding[] = [];
   const cfg = DEFAULT_CONFIG;

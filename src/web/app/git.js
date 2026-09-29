@@ -354,10 +354,32 @@
     dsBtn.onclick = function () { showDiff(sec, true); };
     diffRow.appendChild(dwBtn);
     diffRow.appendChild(dsBtn);
+    var revBtn = el("button", "btn sm", "Review changes");
+    revBtn.type = "button";
+    revBtn.title = "Ask your AI to review the working-tree diff";
+    revBtn.setAttribute("aria-label", "Ask AI to review working tree changes");
+    revBtn.onclick = async function () {
+      var rbox = sec.querySelector("[data-git-review]");
+      if (!rbox) return;
+      revBtn.disabled = true;
+      try {
+        var d = await api("GET", "/api/git/diff?repo=" + encodeURIComponent(state.repo));
+        if (window.NeutronInsights) window.NeutronInsights.reviewChanges(d.diff || "", rbox);
+        else rbox.appendChild(el("p", "error", "Review UI not loaded."));
+      } catch (e) {
+        rbox.innerHTML = "";
+        rbox.appendChild(el("p", "error", errText(e)));
+      }
+      revBtn.disabled = false;
+    };
+    diffRow.appendChild(revBtn);
     sec.appendChild(diffRow);
     var diffBox = el("div", null);
     diffBox.setAttribute("data-git-diff", "1");
     sec.appendChild(diffBox);
+    var reviewBox = el("div", null);
+    reviewBox.setAttribute("data-git-review", "1");
+    sec.appendChild(reviewBox);
 
     sec.appendChild(el("h3", null, "History"));
     var histBox = el("div", null);
