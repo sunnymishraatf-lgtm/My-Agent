@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { WebSocket } from "ws";
 import { RoomManager } from "../src/server/collab/room-manager";
 import { CollabServer, TokenBucket } from "../src/server/collab/collab-server";
-import { startServer } from "../src/server/server";
+import { startServer, roomCreateRateLimited, resetRoomCreateRateLimit, ROOM_CREATE_LIMIT } from "../src/server/server";
 
 class TestClient {
   ws: WebSocket;
@@ -301,5 +301,48 @@ describe("TokenBucket", () => {  it("allows bursts then refills over time", () =
     t += 1000;
     expect(b.take(t)).toBe(true);
     expect(b.take(t)).toBe(false);
+  });
+});
+
+describe("room creation rate limit", () => {
+  it("unit: allows ROOM_CREATE_LIMIT then rejects until reset", () => {
+    resetRoomCreateRateLimit();
+    const ip = "10.9.9.9";
+    for (let i = 0; i < ROOM_CREATE_LIMIT; i++) {
+      expect(roomCreateRateLimited(ip)).toBe(false);
+    }
+    expect(roomCreateRateLimited(ip)).toBe(true);
+    // A different address is unaffected.
+    expect(roomCreateRateLimited("10.9.9.10")).toBe(false);
+    resetRoomCreateRateLimit();
+    expect(roomCreateRateLimited(ip)).toBe(false);
+  });
+
+  it("HTTP: POST /api/collab/rooms returns 429 past the per-IP limit", async () => {
+    resetRoomCreateRateLimit();
+    const root = mkdtempSync(join(tmpdir(), "neutron-collab-ratelimit-"));
+    const running = await startServer({ root, port: 0, host: "127.0.0.1" });
+    try {
+      const base = `http://127.0.0.1:${running.port}`;
+      const post = () =>
+        fetch(base + "/api/collab/rooms", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "flood" }),
+        });
+      for (let i = 0; i < ROOM_CREATE_LIMIT; i++) {
+        const r = await post();
+        expect(r.status).toBe(201);
+        await r.json();
+      }
+      const limited = await post();
+      expect(limited.status).toBe(429);
+      const body = (await limited.json()) as any;
+      expect(body.ok).toBe(false);
+      expect(typeof body.error).toBe("string");
+    } finally {
+      await running.close();
+      resetRoomCreateRateLimit();
+    }
   });
 });

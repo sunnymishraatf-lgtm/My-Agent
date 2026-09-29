@@ -496,6 +496,31 @@ export function createRequestHandler(opts: ServeOptions): (req: IncomingMessage,
   };
 }
 
+/**
+ * Per-IP rate limiter for collaboration room creation (bounded, in-memory).
+ * 20 rooms per 10 minutes per address — generous for real use, but stops
+ * one client from burning the global MAX_ROOMS cap for everyone.
+ * Exported for tests.
+ */
+const roomCreateBuckets = new Map<string, { count: number; reset: number }>();
+export const ROOM_CREATE_LIMIT = 20;
+export const ROOM_CREATE_WINDOW_MS = 600_000;
+export function roomCreateRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = roomCreateBuckets.get(ip);
+  if (!entry || now > entry.reset) {
+    roomCreateBuckets.set(ip, { count: 1, reset: now + ROOM_CREATE_WINDOW_MS });
+    if (roomCreateBuckets.size > 10_000) roomCreateBuckets.clear();
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > ROOM_CREATE_LIMIT;
+}
+/** Test hook: clear all room-creation buckets. */
+export function resetRoomCreateRateLimit(): void {
+  roomCreateBuckets.clear();
+}
+
 async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   // Reject percent-encoded path traversal in the RAW request target.
   // `new URL()` normalizes %2e/%2f away before routing, so without this check
@@ -552,6 +577,13 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
   if (req.method === "POST" && url.pathname === "/api/collab/rooms") {
     if (!opts.collabManager) {
       sendJson(res, 503, { ok: false, error: "Collaboration rooms are unavailable on this server." });
+      return;
+    }
+    // Per-IP creation limit: without it one client could burn the global
+    // MAX_ROOMS cap and deny room creation to everyone else.
+    const creatorIp = req.socket.remoteAddress ?? "unknown";
+    if (roomCreateRateLimited(creatorIp)) {
+      sendJson(res, 429, { ok: false, error: "Too many rooms created from this address. Wait a few minutes and try again." });
       return;
     }
     const body = (await readJsonBody(req)) as { name?: unknown };
