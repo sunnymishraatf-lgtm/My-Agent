@@ -124,19 +124,22 @@ describe("voice membership", () => {
     const b = await connect();
     const joinedB = await joinRoom(b, room.id, "Rahul");
     await a.next(); // drain MEMBERS for b's arrival
+    await a.next(); // drain ACTIVITY member_join
 
     const membersA = await joinVoice(a);
     expect(membersA).toHaveLength(1);
     expect(membersA[0]).toMatchObject({ id: joinedA.you.id, displayName: "Sunny", muted: false });
 
-    // b already received a's join broadcast; drain it before joining.
+    // b already received a's join broadcasts; the first is its VOICE_MEMBERS.
     const seenByB = await b.next();
     expect(seenByB.type).toBe("VOICE_MEMBERS");
     expect(seenByB.members).toHaveLength(1);
+    await b.next(); // drain ACTIVITY voice_start
     const membersB = await joinVoice(b);
     expect(membersB.map((m: any) => m.displayName).sort()).toEqual(["Rahul", "Sunny"]);
 
-    // a gets the updated broadcast too.
+    // a gets the updated broadcast too (after its own ACTIVITY drain).
+    await a.next(); // drain ACTIVITY voice_start
     const update = await a.next();
     expect(update.type).toBe("VOICE_MEMBERS");
     expect(update.members).toHaveLength(2);
@@ -166,9 +169,12 @@ describe("voice membership", () => {
     const b = await connect();
     await joinRoom(b, room.id, "Rahul");
     await a.next(); // drain MEMBERS
+    await a.next(); // drain ACTIVITY member_join
     await joinVoice(a);
     await joinVoice(b);
+    await a.next(); // drain ACTIVITY voice_start on a
     await a.next(); // drain b's join broadcast on a
+    await b.next(); // drain ACTIVITY voice_start on b
     await b.next(); // drain b's own join broadcast on b
 
     a.send({ type: "VOICE_STATE", muted: true });
@@ -200,21 +206,25 @@ describe("voice membership", () => {
       await joinRoom(c, room.id, "User" + i);
       joined.push(c);
     }
-    // Drain MEMBERS broadcasts on the first six (each later join broadcasts).
+    // Drain queued broadcasts on the first six (each later join broadcasts).
     for (let i = 0; i < MAX_VOICE_PARTICIPANTS; i++) {
       const c = joined[i];
       if (!c) throw new Error("test setup failed");
       c.send({ type: "VOICE_JOIN" });
-      // Queued per client i: (6-i) MEMBERS + i earlier VOICE_MEMBERS + its own.
+      // Queued per client i: (6-i) MEMBERS + (6-i) ACTIVITY member_join +
+      // i earlier VOICE_MEMBERS (+ 1 ACTIVITY voice_start for i > 0, which
+      // arrives after client 0's own broadcast), then its own VOICE_MEMBERS.
+      const drainCount = 2 * (MAX_VOICE_PARTICIPANTS - i) + i + (i === 0 ? 1 : 2);
       let m: any;
-      for (let j = 0; j < 7; j++) m = await c.next();
+      for (let j = 0; j < drainCount; j++) m = await c.next();
       expect(m.type).toBe("VOICE_MEMBERS");
       expect(m.members).toHaveLength(i + 1);
     }
     const extra = joined[MAX_VOICE_PARTICIPANTS];
     if (!extra) throw new Error("test setup failed");
-    // Drain that client's queued broadcasts from the six joins.
-    await extra.drain(MAX_VOICE_PARTICIPANTS);
+    // Drain that client's queued broadcasts from the six joins
+    // (6 VOICE_MEMBERS + 1 ACTIVITY voice_start).
+    await extra.drain(MAX_VOICE_PARTICIPANTS + 1);
     extra.send({ type: "VOICE_JOIN" });
     expect(await extra.next()).toMatchObject({ type: "ERROR", code: "VOICE_FULL" });
   });
@@ -226,14 +236,18 @@ describe("voice membership", () => {
     const b = await connect();
     await joinRoom(b, room.id, "Rahul");
     await a.next(); // drain MEMBERS
+    await a.next(); // drain ACTIVITY member_join
     await joinVoice(a);
     await joinVoice(b);
+    await a.next(); // drain ACTIVITY voice_start on a
     await a.next(); // drain b's join broadcast on a
+    await b.next(); // drain ACTIVITY voice_start on b
     await b.next(); // drain a's join broadcast on b (stale for b)
 
     a.close();
     // Give the server a beat to process the close.
     await new Promise((r) => setTimeout(r, 150));
+    await b.next(); // drain ACTIVITY member_leave
     const update = await b.next();
     expect(update.type).toBe("VOICE_MEMBERS");
     expect(update.members.map((m: any) => m.displayName)).toEqual(["Rahul"]);
@@ -246,6 +260,7 @@ describe("voice membership", () => {
     const first = await joinVoice(a);
     expect(first).toHaveLength(1);
     a.send({ type: "VOICE_JOIN" });
+    await a.next(); // drain ACTIVITY voice_start
     const second = await a.next();
     expect(second.type).toBe("VOICE_MEMBERS");
     expect(second.members).toHaveLength(1);
@@ -263,6 +278,7 @@ describe("voice + signaling isolation", () => {
     const c = await connect();
     const joinedC = await joinRoom(c, r2.id, "Priya");
     await a.next(); // drain MEMBERS
+    await a.next(); // drain ACTIVITY member_join
 
     // c is in a different room: relay refused.
     a.send({ type: "WEBRTC_OFFER", to: joinedC.you.id, payload: { sdp: "x" } });
@@ -277,6 +293,7 @@ describe("voice + signaling isolation", () => {
     const b = await connect();
     const joinedB = await joinRoom(b, room.id, "Rahul");
     await a.next(); // drain MEMBERS
+    await a.next(); // drain ACTIVITY member_join
     // 20/min bucket, frozen clock: the 21st signal is rejected.
     for (let i = 0; i < 20; i++) {
       a.send({ type: "WEBRTC_OFFER", to: joinedB.you.id, payload: { sdp: "s" + i } });

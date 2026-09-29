@@ -1085,6 +1085,131 @@
     return { joined: joined, left: left };
   }
 
+  /* ==========================================================================
+     AI in rooms (Phase 4) — pure helpers, no DOM.
+     ========================================================================== */
+
+  /**
+   * Parse ```neutron-room-edit fenced blocks from an AI reply.
+   * Format:
+   *   ```neutron-room-edit
+   *   path: relative/path.ts
+   *   <complete new file content>
+   *   ```
+   * Returns { blocks: [{path, content}], stripped } where stripped is the
+   * reply with the blocks removed (safe to render as markdown).
+   */
+  function parseRoomEditBlocks(text) {
+    var src = String(text == null ? "" : text);
+    var blocks = [];
+    var stripped = src.replace(/```neutron-room-edit[ \t]*\r?\n([\s\S]*?)```/g, function (m, body) {
+      var lines = String(body).replace(/\r\n?/g, "\n").split("\n");
+      var first = (lines.shift() || "").trim();
+      var pm = /^path\s*:\s*(.+)$/i.exec(first);
+      var path = pm ? pm[1].trim() : "";
+      var content = lines.join("\n").replace(/^\n+/, "").replace(/\s+$/, "");
+      if (path) blocks.push({ path: path, content: content });
+      return "";
+    });
+    stripped = stripped.replace(/\n{3,}/g, "\n\n").trim();
+    return { blocks: blocks, stripped: stripped };
+  }
+
+  /**
+   * Line-level diff via common prefix/suffix. Returns rows
+   * [{t: " " | "add" | "del", text}] — enough for an honest review UI.
+   */
+  function diffLineBlocks(oldText, newText) {
+    var a = String(oldText == null ? "" : oldText).split("\n");
+    var b = String(newText == null ? "" : newText).split("\n");
+    var p = 0;
+    while (p < a.length && p < b.length && a[p] === b[p]) p++;
+    var s = 0;
+    while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+    var out = [];
+    var i;
+    for (i = 0; i < p; i++) out.push({ t: " ", text: a[i] });
+    for (i = p; i < a.length - s; i++) out.push({ t: "del", text: a[i] });
+    for (i = p; i < b.length - s; i++) out.push({ t: "add", text: b[i] });
+    for (i = a.length - s; i < a.length; i++) out.push({ t: " ", text: a[i] });
+    return out;
+  }
+
+  /** Count added/removed lines between two texts. */
+  function diffLineStats(oldText, newText) {
+    var rows = diffLineBlocks(oldText, newText);
+    var added = 0, removed = 0;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].t === "add") added++;
+      else if (rows[i].t === "del") removed++;
+    }
+    return { added: added, removed: removed };
+  }
+
+  var ROOM_AI_MAX_FILE_CHARS = 30000;
+  var ROOM_AI_MAX_TOTAL_CHARS = 60000;
+
+  /**
+   * Build the context string for an Ask-AI request from the member's own
+   * room state. Permission boundary: content is included ONLY for files
+   * present in `files` (the server-listed room files for this session) —
+   * a non-member has no such list, so they get no content. Never invents
+   * paths or content.
+   *
+   * o: { files: [{id, path}], activeFileId, mode: "file"|"snippet"|"list",
+   *      getText: fn(fileId) -> string|undefined,
+   *      selection: string|undefined }
+   * Returns { text, filesIncluded: [paths], truncated }.
+   */
+  function buildRoomAiContext(o) {
+    o = o || {};
+    var files = Array.isArray(o.files) ? o.files : [];
+    var byId = {};
+    var paths = [];
+    files.forEach(function (f) {
+      if (f && typeof f.id === "string" && typeof f.path === "string") {
+        byId[f.id] = f.path;
+        paths.push(f.path);
+      }
+    });
+    var mode = o.mode === "snippet" ? "snippet" : o.mode === "list" ? "list" : "file";
+    var included = [];
+    var parts = [];
+    var truncated = false;
+    function take(text, label) {
+      var t = String(text == null ? "" : text);
+      if (t.length > ROOM_AI_MAX_FILE_CHARS) {
+        t = t.slice(0, ROOM_AI_MAX_FILE_CHARS);
+        truncated = true;
+      }
+      return "--- " + label + " ---\n" + t;
+    }
+    if (mode === "list") {
+      parts.push("Room files:\n" + paths.map(function (p) { return "- " + p; }).join("\n"));
+    } else if (mode === "snippet") {
+      var sel = String(o.selection == null ? "" : o.selection).slice(0, ROOM_AI_MAX_FILE_CHARS);
+      var activePath = byId[o.activeFileId];
+      parts.push("Selected snippet" + (activePath ? " from " + activePath : "") + ":\n```\n" + sel + "\n```");
+      if (activePath) included.push(activePath);
+    } else {
+      var fid = o.activeFileId;
+      if (fid && byId[fid] && typeof o.getText === "function") {
+        var content = o.getText(fid);
+        if (content !== undefined) {
+          included.push(byId[fid]);
+          parts.push(take(content, byId[fid]));
+        }
+      }
+      parts.push("Room files:\n" + paths.map(function (p) { return "- " + p; }).join("\n"));
+    }
+    var text = parts.join("\n\n");
+    if (text.length > ROOM_AI_MAX_TOTAL_CHARS) {
+      text = text.slice(0, ROOM_AI_MAX_TOTAL_CHARS);
+      truncated = true;
+    }
+    return { text: text, filesIncluded: included, truncated: truncated };
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -1145,5 +1270,10 @@
     voicePeerUiState: voicePeerUiState,
     isSpeakingRms: isSpeakingRms,
     diffVoiceMembers: diffVoiceMembers,
+    /* AI in rooms (Phase 4) */
+    parseRoomEditBlocks: parseRoomEditBlocks,
+    diffLineBlocks: diffLineBlocks,
+    diffLineStats: diffLineStats,
+    buildRoomAiContext: buildRoomAiContext,
   };
 });

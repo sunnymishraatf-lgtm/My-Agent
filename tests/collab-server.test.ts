@@ -163,6 +163,7 @@ describe("chat", () => {
     const b = await connect();
     await joinRoom(b, room.id, "Rahul");
     await a.next(); // MEMBERS broadcast from B joining (drain)
+    await a.next(); // ACTIVITY member_join broadcast (drain)
     a.send({ type: "CHAT_MESSAGE", text: "hello room" });
     const onA = await a.next();
     const onB = await b.next();
@@ -211,6 +212,7 @@ describe("webrtc relay (Phase 3 plumbing)", () => {
     const b = await connect();
     const joinedB = await joinRoom(b, r1.id, "Rahul");
     await a.next(); // drain MEMBERS
+    await a.next(); // drain ACTIVITY member_join
     const c = await connect();
     const joinedC = await joinRoom(c, r2.id, "Priya");
 

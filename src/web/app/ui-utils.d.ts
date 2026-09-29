@@ -160,6 +160,34 @@ export declare function sanitizeCollabName(name: unknown): string;
 export declare function sanitizeCollabText(text: unknown): string;
 export declare function timeAgo(ts: number, nowMs: number): string;
 
+/* Collaborative editing (Phase 2): pure client helpers. */
+export declare function b64encodeBytes(bytes: Uint8Array): string;
+export declare function b64decodeBytes(str: string): Uint8Array | null;
+export declare function encodeSyncFrame(type: number, payload: Uint8Array): Uint8Array;
+export declare function decodeSyncFrame(buf: Uint8Array): { type: number; payload: Uint8Array } | null;
+
+export interface TextOp {
+  retain?: number;
+  delete?: number;
+  insert?: string;
+}
+
+export declare function diffTextToOps(oldText: string | null | undefined, newText: string | null | undefined): TextOp[];
+export declare function indexToLineCol(text: string | null | undefined, index: number): { line: number; col: number };
+export declare function sanitizeCollabPath(raw: unknown): string | null;
+export declare function pickPresenceColor(memberId: unknown): string;
+
+export interface CollabFileTreeNode {
+  name: string;
+  path: string;
+  dir: boolean;
+  id?: string;
+  children?: CollabFileTreeNode[];
+  meta?: { id: string; path: string };
+}
+
+export declare function buildFileTree(files: Array<{ id: string; path: string } | null | undefined> | null | undefined): CollabFileTreeNode[];
+
 /* Voice calls (Phase 3): pure client helpers. */
 export declare const MAX_VOICE_PARTICIPANTS: number;
 export declare const DEFAULT_STUN_URLS: string[];
@@ -173,3 +201,43 @@ export declare function diffVoiceMembers(
   prev: Array<{ id: string } | null | undefined> | null | undefined,
   next: Array<{ id: string } | null | undefined> | null | undefined
 ): { joined: Array<{ id: string }>; left: Array<{ id: string }> };
+
+/* AI in rooms (Phase 4): pure client helpers. */
+export interface RoomEditBlock {
+  path: string;
+  content: string;
+}
+
+export declare function parseRoomEditBlocks(text: string | null | undefined): {
+  blocks: RoomEditBlock[];
+  stripped: string;
+};
+
+export interface LineDiffRow {
+  t: " " | "add" | "del";
+  text: string;
+}
+
+export declare function diffLineBlocks(
+  oldText: string | null | undefined,
+  newText: string | null | undefined
+): LineDiffRow[];
+
+export declare function diffLineStats(
+  oldText: string | null | undefined,
+  newText: string | null | undefined
+): { added: number; removed: number };
+
+export interface RoomAiContextOptions {
+  files?: Array<{ id: string; path: string } | null | undefined> | null;
+  activeFileId?: string | null;
+  mode?: "file" | "snippet" | "list";
+  getText?: (fileId: string) => string | undefined;
+  selection?: string | null;
+}
+
+export declare function buildRoomAiContext(o: RoomAiContextOptions | null | undefined): {
+  text: string;
+  filesIncluded: string[];
+  truncated: boolean;
+};

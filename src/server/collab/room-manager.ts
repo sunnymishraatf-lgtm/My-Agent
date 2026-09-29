@@ -34,6 +34,36 @@ export const SNAPSHOT_DEBOUNCE_MS = 2_000;
 export type PresenceStatus = "online" | "idle" | "away";
 export type MemberRole = "owner" | "member";
 
+/** Room activity feed entry (Phase 4). Ephemeral-ish: last 50 kept, snapshotted. */
+export type CollabActivityKind =
+  | "member_join"
+  | "member_leave"
+  | "file_create"
+  | "file_rename"
+  | "file_delete"
+  | "file_edit"
+  | "version_restore"
+  | "voice_start"
+  | "voice_end"
+  | "ai_apply";
+
+export interface CollabActivity {
+  id: string;
+  kind: CollabActivityKind;
+  /** Member id that caused the event ("" for system events like voice_end). */
+  by: string;
+  byName: string;
+  fileId?: string;
+  /** File path involved (new path for renames). */
+  path?: string;
+  /** Extra detail, e.g. the old path for a rename. */
+  extra?: string;
+  ts: number;
+}
+
+/** Activity entries kept per room (ring buffer). */
+export const MAX_ACTIVITY_PER_ROOM = 50;
+
 export interface CollabMember {
   id: string;
   displayName: string;
@@ -76,11 +106,19 @@ interface RoomRecord {
   ownerTokenHash: string;
   members: Record<string, CollabMember>;
   chat: CollabChatMsg[];
+  activity: CollabActivity[];
 }
 
 interface SnapshotFile {
   version: 1;
-  rooms: Array<{ id: string; name: string; createdAt: number; ownerTokenHash: string; chat: CollabChatMsg[] }>;
+  rooms: Array<{
+    id: string;
+    name: string;
+    createdAt: number;
+    ownerTokenHash: string;
+    chat: CollabChatMsg[];
+    activity: CollabActivity[];
+  }>;
 }
 
 /** Normalize a user-typed room code: trim, drop inner whitespace, uppercase. */
@@ -176,6 +214,7 @@ export class RoomManager {
       ownerTokenHash: hashToken(ownerToken),
       members: {},
       chat: [],
+      activity: [],
     };
     this.rooms.set(id, rec);
     this.scheduleSave();
@@ -361,6 +400,54 @@ export class RoomManager {
     return rec ? rec.chat.slice() : [];
   }
 
+  // ----- activity feed (Phase 4) -----------------------------------------
+
+  private static isValidActivity(a: unknown): a is CollabActivity {
+    if (!a || typeof a !== "object") return false;
+    const o = a as Record<string, unknown>;
+    return (
+      typeof o.id === "string" &&
+      typeof o.kind === "string" &&
+      typeof o.by === "string" &&
+      typeof o.byName === "string" &&
+      typeof o.ts === "number"
+    );
+  }
+
+  /**
+   * Append an activity entry to a room's feed (ring buffer, last 50).
+   * The caller (collab-server) has already validated membership and
+   * sanitized names/paths; this only enforces shape and the cap.
+   */
+  postActivity(
+    code: unknown,
+    entry: Omit<CollabActivity, "id" | "ts">,
+  ): CollabActivity | undefined {
+    const rec = this.rooms.get(normalizeRoomCode(code));
+    if (!rec || !entry || typeof entry.kind !== "string") return undefined;
+    const full: CollabActivity = {
+      id: randomId("a"),
+      kind: entry.kind,
+      by: typeof entry.by === "string" ? entry.by : "",
+      byName: sanitizeDisplayName(entry.byName) || "Someone",
+      ts: this.now(),
+    };
+    if (typeof entry.fileId === "string") full.fileId = entry.fileId;
+    if (typeof entry.path === "string") full.path = entry.path.slice(0, 200);
+    if (typeof entry.extra === "string") full.extra = entry.extra.slice(0, 200);
+    rec.activity.push(full);
+    if (rec.activity.length > MAX_ACTIVITY_PER_ROOM) {
+      rec.activity.splice(0, rec.activity.length - MAX_ACTIVITY_PER_ROOM);
+    }
+    this.scheduleSave();
+    return full;
+  }
+
+  getActivity(code: unknown): CollabActivity[] {
+    const rec = this.rooms.get(normalizeRoomCode(code));
+    return rec ? rec.activity.slice() : [];
+  }
+
   // ----- persistence -----------------------------------------------------
 
   scheduleSave(): void {
@@ -390,6 +477,7 @@ export class RoomManager {
         createdAt: r.createdAt,
         ownerTokenHash: r.ownerTokenHash,
         chat: r.chat,
+        activity: r.activity,
       })),
     };
     const path = this.snapshotPath;
@@ -424,6 +512,9 @@ export class RoomManager {
         ownerTokenHash: typeof r.ownerTokenHash === "string" ? r.ownerTokenHash : "",
         members: {},
         chat: Array.isArray(r.chat) ? r.chat.slice(-MAX_CHAT_PER_ROOM) : [],
+        activity: Array.isArray(r.activity)
+          ? r.activity.filter(RoomManager.isValidActivity).slice(-MAX_ACTIVITY_PER_ROOM)
+          : [],
       });
     }
   }

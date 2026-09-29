@@ -19,6 +19,8 @@ import {
   sanitizeRoomName,
   type MemberPublic,
   type RoomPublic,
+  type CollabActivity,
+  type CollabActivityKind,
   type CollabChatMsg,
   type PresenceStatus,
 } from "./room-manager";
@@ -46,6 +48,8 @@ const SYNC_STEP2 = 1;
 const SYNC_UPDATE = 2;
 /** Max base64 chars accepted for a sync payload (≈1MB of bytes). */
 const MAX_SYNC_B64 = 1_420_000;
+/** Max chars of room file text returned per AI context request. */
+const AI_CONTEXT_MAX_CHARS = 60_000;
 
 // ----- y-protocols-compatible sync framing ---------------------------------
 // Frame: varuint(messageType) varuint8array(payload), base64'd inside JSON.
@@ -184,10 +188,19 @@ export type ClientMessage =
     }
   | { type: "VERSION_LIST"; fileId: string }
   | { type: "VERSION_TEXT"; fileId: string; ts: number }
-  | { type: "VERSION_RESTORE"; fileId: string; ts: number };
+  | { type: "VERSION_RESTORE"; fileId: string; ts: number }
+  | { type: "AI_APPLY"; fileId: string }
+  | {
+      type: "AI_CONTEXT_REQUEST";
+      requestId: string;
+      mode: "file" | "snippet" | "list";
+      fileId?: string;
+      selStart?: number;
+      selEnd?: number;
+    };
 
 export type ServerMessage =
-  | { type: "JOINED"; room: RoomPublic; you: { id: string; displayName: string; role: string }; members: MemberPublic[]; chat: CollabChatMsg[]; files: CollabFileMeta[]; ice: IceServerConfig[]; voice: VoiceMemberPublic[] }
+  | { type: "JOINED"; room: RoomPublic; you: { id: string; displayName: string; role: string }; members: MemberPublic[]; chat: CollabChatMsg[]; activity: CollabActivity[]; files: CollabFileMeta[]; ice: IceServerConfig[]; voice: VoiceMemberPublic[] }
   | { type: "LEFT" }
   | { type: "MEMBERS"; members: MemberPublic[] }
   | { type: "CHAT_MESSAGE"; msg: CollabChatMsg }
@@ -211,6 +224,17 @@ export type ServerMessage =
   | { type: "FILE_SNAPSHOT"; fileId: string; ok: boolean; ts: number }
   | { type: "VERSIONS"; fileId: string; versions: CollabVersion[] }
   | { type: "VERSION_TEXT"; fileId: string; ts: number; text: string }
+  | { type: "ACTIVITY"; event: CollabActivity }
+  | {
+      type: "AI_CONTEXT";
+      requestId: string;
+      ok: boolean;
+      code?: string;
+      path?: string;
+      text?: string;
+      truncated?: boolean;
+      files?: { id: string; path: string }[];
+    }
   | { type: "ERROR"; code: string; message: string };
 
 /** Voice-call participant as seen by the room (ephemeral, never persisted). */
@@ -369,6 +393,11 @@ export class CollabServer {
    * sweep/room-delete. Never persisted, never logged with names.
    */
   private voice = new Map<string, Map<string, { displayName: string; muted: boolean }>>();
+  /**
+   * Phase 4 activity feed: last "edited" emission per room+file so live
+   * typing aggregates to at most one feed entry per file per 2 minutes.
+   */
+  private editActivityAt = new Map<string, number>();
 
   constructor(private opts: CollabServerOptions) {
     this.path = opts.path ?? COLLAB_WS_PATH;
@@ -480,6 +509,41 @@ export class CollabServer {
     this.send(ws, { type: "ERROR", code, message: ERROR_TEXT[code] });
   }
 
+  // ----- activity feed (Phase 4) -------------------------------------------
+
+  /**
+   * Post a room activity entry and broadcast it. The member must still be
+   * in the room (call before leaveRoom/sweep drops them) so the display
+   * name resolves server-side — the client is never trusted for it.
+   */
+  private emitActivity(
+    code: string,
+    kind: CollabActivityKind,
+    byMemberId: string,
+    opts?: { fileId?: string; path?: string; extra?: string },
+    exclude?: WebSocket,
+  ): void {
+    const event = this.opts.manager.postActivity(code, {
+      kind,
+      by: byMemberId,
+      byName: this.opts.manager.memberDisplayName(code, byMemberId) ?? "Someone",
+      fileId: opts?.fileId,
+      path: opts?.path,
+      extra: opts?.extra,
+    });
+    if (event) this.broadcast(code, { type: "ACTIVITY", event }, exclude);
+    // Activity entries carry names/paths only — never message or file content.
+  }
+
+  /** Throttled "X edited path" entry: one per file per 2 minutes. */
+  private maybeEmitEditActivity(code: string, fileId: string, memberId: string, path: string): void {
+    const key = `${code} ${fileId}`;
+    const now = this.now();
+    if (now - (this.editActivityAt.get(key) ?? 0) < 120_000) return;
+    this.editActivityAt.set(key, now);
+    this.emitActivity(code, "file_edit", memberId, { fileId, path });
+  }
+
   private broadcast(roomCode: string, msg: ServerMessage, exclude?: WebSocket): void {
     const body = JSON.stringify(msg);
     for (const [ws, st] of this.conns) {
@@ -583,6 +647,12 @@ export class CollabServer {
       case "VERSION_RESTORE":
         this.handleVersionRestore(ws, state, msg, now);
         break;
+      case "AI_APPLY":
+        this.handleAiApply(ws, state, msg, now);
+        break;
+      case "AI_CONTEXT_REQUEST":
+        this.handleAiContext(ws, state, msg, now);
+        break;
       default:
         this.fail(ws, "INVALID_MESSAGE");
     }
@@ -617,18 +687,23 @@ export class CollabServer {
     state.displayName = res.member.displayName;
     state.role = res.member.role;
     const room = this.opts.manager.getRoom(roomId);
+    this.broadcast(roomId, { type: "MEMBERS", members: this.opts.manager.listMembers(roomId) }, ws);
+    // Feed entry after the MEMBERS broadcast (existing clients expect that
+    // order), but before JOINED so the joiner's snapshot includes it. The
+    // joiner is excluded from the ACTIVITY broadcast.
+    this.emitActivity(roomId, "member_join", res.member.id, undefined, ws);
     this.send(ws, {
       type: "JOINED",
       room: room!,
       you: { id: res.member.id, displayName: res.member.displayName, role: res.member.role },
       members: this.opts.manager.listMembers(roomId),
       chat: this.opts.manager.getChat(roomId),
+      activity: this.opts.manager.getActivity(roomId),
       files: this.files.listFiles(roomId),
       // ICE config goes only to validated room members, over this socket.
       ice: this.opts.iceServers ?? [],
       voice: this.voiceList(roomId),
     });
-    this.broadcast(roomId, { type: "MEMBERS", members: this.opts.manager.listMembers(roomId) }, ws);
     this.log(`join room=${roomId} members=${res.members.length + 1}`);
   }
 
@@ -649,6 +724,7 @@ export class CollabServer {
     }
     // IMPORTANT: look up membership by the connection's own member id, never
     // trust a client-supplied id.
+    this.emitActivity(code, "member_leave", state.id);
     this.opts.manager.leaveRoom(code, state.id);
     this.dropVoiceMember(code, state.id);
     state.roomCode = null;
@@ -801,10 +877,18 @@ export class CollabServer {
   private dropVoiceMember(code: string, memberId: string): boolean {
     const set = this.voice.get(code);
     if (!set || !set.has(memberId)) return false;
+    const name = set.get(memberId)?.displayName ?? "Someone";
     set.delete(memberId);
     if (set.size === 0) {
       // Nobody left to notify; the leaver already knows they left.
       this.voice.delete(code);
+      // The call itself ended — worth one feed entry.
+      const event = this.opts.manager.postActivity(code, {
+        kind: "voice_end",
+        by: memberId,
+        byName: name,
+      });
+      if (event) this.broadcast(code, { type: "ACTIVITY", event });
     } else {
       this.broadcastVoice(code);
     }
@@ -828,8 +912,12 @@ export class CollabServer {
       this.fail(ws, "VOICE_FULL");
       return;
     }
+    const first = set.size === 0;
     set.set(state.id, { displayName: state.displayName, muted: false });
+    // VOICE_MEMBERS first (existing clients expect it right after join),
+    // then the feed entry.
     this.broadcastVoice(code);
+    if (first) this.emitActivity(code, "voice_start", state.id);
     this.log(`voice join room=${code} n=${set.size}`);
   }
 
@@ -978,6 +1066,7 @@ export class CollabServer {
       return;
     }
     this.broadcast(code, { type: "FILE_EVENT", event: "created", file: res.meta });
+    this.emitActivity(code, "file_create", state.id, { fileId: res.meta.id, path: res.meta.path });
     this.log(`file create room=${code} path=${res.meta.path}`);
   }
 
@@ -998,12 +1087,18 @@ export class CollabServer {
       this.fail(ws, "INVALID_PAYLOAD");
       return;
     }
+    const oldPath = this.files.getFile(code, msg.fileId)?.meta.path;
     const res = this.files.renameFile(code, msg.fileId, msg.newPath);
     if ("error" in res) {
       this.failFileOp(ws, res.error);
       return;
     }
     this.broadcast(code, { type: "FILE_EVENT", event: "renamed", file: res.meta });
+    this.emitActivity(code, "file_rename", state.id, {
+      fileId: res.meta.id,
+      path: res.meta.path,
+      extra: oldPath,
+    });
     this.log(`file rename room=${code} path=${res.meta.path}`);
   }
 
@@ -1024,6 +1119,7 @@ export class CollabServer {
       this.fail(ws, "INVALID_PAYLOAD");
       return;
     }
+    const doomedPath = this.files.getFile(code, msg.fileId)?.meta.path;
     if (!this.files.deleteFile(code, msg.fileId)) {
       this.fail(ws, "FILE_NOT_FOUND");
       return;
@@ -1033,6 +1129,7 @@ export class CollabServer {
       if (st.roomCode === code) st.openFiles.delete(msg.fileId);
     }
     this.broadcast(code, { type: "FILE_EVENT", event: "deleted", fileId: msg.fileId });
+    this.emitActivity(code, "file_delete", state.id, { fileId: msg.fileId, path: doomedPath });
     this.log(`file delete room=${code}`);
   }
 
@@ -1134,6 +1231,12 @@ export class CollabServer {
         this.failFileOp(ws, res.error);
         return;
       }
+      if (msg.kind === "update") {
+        // Live edit (not the open handshake): aggregate into the activity
+        // feed, at most one entry per file per 2 minutes.
+        const path = this.files.getFile(code, msg.fileId)?.meta.path ?? msg.fileId;
+        this.maybeEmitEditActivity(code, msg.fileId, state.id, path);
+      }
       // Relay the applied update to every other opener (CRDT merge on arrival).
       this.broadcastFileOpeners(
         code,
@@ -1232,7 +1335,119 @@ export class CollabServer {
         data: b64encode(encodeSyncFrame(SYNC_UPDATE, res.update)),
       });
     }
+    const restoredPath = this.files.getFile(code, msg.fileId)?.meta.path;
+    this.emitActivity(code, "version_restore", state.id, { fileId: msg.fileId, path: restoredPath });
     this.log(`version restore room=${code} ts=${msg.ts}`);
+  }
+
+  /**
+   * Phase 4: a member reports that they applied an AI-proposed change to a
+   * shared file. The actual content change travels as a normal Yjs update
+   * (verified by the client's editor flow); this just records the feed
+   * entry. Membership + open-file state are validated server-side.
+   */
+  private handleAiApply(
+    ws: WebSocket,
+    state: ConnState,
+    msg: Extract<ClientMessage, { type: "AI_APPLY" }>,
+    now: number,
+  ): void {
+    const code = this.requireRoom(ws, state);
+    if (!code) return;
+    if (!state.buckets.fileop.take(now)) {
+      this.fail(ws, "RATE_LIMITED");
+      return;
+    }
+    if (!isValidFileId(msg.fileId) || !state.openFiles.has(msg.fileId)) {
+      this.fail(ws, "INVALID_PAYLOAD");
+      return;
+    }
+    const meta = this.files.getFile(code, msg.fileId)?.meta;
+    if (!meta) {
+      this.fail(ws, "FILE_NOT_FOUND");
+      return;
+    }
+    this.emitActivity(code, "ai_apply", state.id, { fileId: msg.fileId, path: meta.path });
+    this.log(`ai apply room=${code} path=${meta.path}`);
+  }
+
+  /**
+   * Phase 4: server-authorized AI context. The client asks for room file
+   * content; the server reads it from its own CollabFileStore and only ever
+   * returns files that belong to the requester's room. Non-members get no
+   * content (only an ok:false reply so the client's pending request can
+   * resolve). Selection indices are validated and clamped server-side.
+   */
+  private handleAiContext(
+    ws: WebSocket,
+    state: ConnState,
+    msg: Extract<ClientMessage, { type: "AI_CONTEXT_REQUEST" }>,
+    now: number,
+  ): void {
+    const requestId =
+      typeof msg.requestId === "string" && msg.requestId ? msg.requestId.slice(0, 64) : "";
+    const deny = (code: ErrorCode): void => {
+      if (requestId) {
+        this.send(ws, { type: "AI_CONTEXT", requestId, ok: false, code });
+      } else {
+        this.fail(ws, code);
+      }
+    };
+    const roomCode = state.roomCode;
+    if (!roomCode) {
+      deny("NOT_JOINED");
+      return;
+    }
+    if (!state.buckets.fileop.take(now)) {
+      deny("RATE_LIMITED");
+      return;
+    }
+    if (!requestId || (msg.mode !== "file" && msg.mode !== "snippet" && msg.mode !== "list")) {
+      deny("INVALID_PAYLOAD");
+      return;
+    }
+    if (msg.mode === "list") {
+      const files = this.files.listFiles(roomCode).map((f) => ({ id: f.id, path: f.path }));
+      this.send(ws, { type: "AI_CONTEXT", requestId, ok: true, files });
+      return;
+    }
+    if (typeof msg.fileId !== "string" || !isValidFileId(msg.fileId)) {
+      deny("INVALID_PAYLOAD");
+      return;
+    }
+    const live = this.files.getFile(roomCode, msg.fileId);
+    if (!live) {
+      deny("FILE_NOT_FOUND");
+      return;
+    }
+    let text = live.ytext.toString();
+    if (msg.mode === "snippet") {
+      if (typeof msg.selStart !== "number" || typeof msg.selEnd !== "number") {
+        deny("INVALID_PAYLOAD");
+        return;
+      }
+      const start = Math.max(0, Math.floor(msg.selStart));
+      const end = Math.min(text.length, Math.floor(msg.selEnd));
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        deny("INVALID_PAYLOAD");
+        return;
+      }
+      text = text.slice(start, end);
+    }
+    let truncated = false;
+    if (text.length > AI_CONTEXT_MAX_CHARS) {
+      text = text.slice(0, AI_CONTEXT_MAX_CHARS);
+      truncated = true;
+    }
+    this.send(ws, {
+      type: "AI_CONTEXT",
+      requestId,
+      ok: true,
+      path: live.meta.path,
+      text,
+      truncated,
+    });
+    this.log(`ai context room=${roomCode} mode=${msg.mode} path=${live.meta.path}`);
   }
 
   private onClose(ws: WebSocket, state: ConnState): void {
@@ -1240,6 +1455,7 @@ export class CollabServer {
     state.openFiles.clear();
     if (state.roomCode) {
       const code = state.roomCode;
+      this.emitActivity(code, "member_leave", state.id);
       this.opts.manager.leaveRoom(code, state.id);
       this.dropVoiceMember(code, state.id);
       state.roomCode = null;
@@ -1260,6 +1476,7 @@ export class CollabServer {
         this.conns.delete(ws);
         if (state.roomCode) {
           const code = state.roomCode;
+          this.emitActivity(code, "member_leave", state.id);
           this.opts.manager.leaveRoom(code, state.id);
           this.dropVoiceMember(code, state.id);
           this.broadcast(code, { type: "MEMBERS", members: this.opts.manager.listMembers(code) });
@@ -1277,9 +1494,26 @@ export class CollabServer {
   }
 
   private sweep(): void {
+    // Capture display names before the sweep drops the memberships, so the
+    // leave entries carry the right names.
+    const names = new Map<string, string>();
+    for (const [, st] of this.conns) {
+      if (st.roomCode) {
+        const n = this.opts.manager.memberDisplayName(st.roomCode, st.id);
+        if (n) names.set(`${st.roomCode} ${st.id}`, n);
+      }
+    }
     const removed = this.opts.manager.sweepPresence(this.now());
     for (const r of removed) {
-      for (const mid of r.removed) this.dropVoiceMember(r.roomId, mid);
+      for (const mid of r.removed) {
+        const event = this.opts.manager.postActivity(r.roomId, {
+          kind: "member_leave",
+          by: mid,
+          byName: names.get(`${r.roomId} ${mid}`) ?? "Someone",
+        });
+        if (event) this.broadcast(r.roomId, { type: "ACTIVITY", event });
+        this.dropVoiceMember(r.roomId, mid);
+      }
       this.broadcast(r.roomId, { type: "MEMBERS", members: this.opts.manager.listMembers(r.roomId) });
       // Drop any connections whose membership was swept.
       for (const [ws, st] of this.conns) {

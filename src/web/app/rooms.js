@@ -16,6 +16,18 @@
   /* Module state. Reset by teardown() when leaving the rooms route. */
   var S = freshState();
 
+  /** Phase 4: Ask-AI panel state (per room session, not persisted). */
+  function freshAiState() {
+    return {
+      mode: "file", // context: file|snippet|list
+      q: "",
+      busy: false,
+      stripped: "", // last answer with edit blocks removed (rendered as markdown)
+      cards: [], // [{path, content, state: "pending"|"applied"|"rejected"|"unknown"}]
+      err: "",
+    };
+  }
+
   function freshState() {
     return {
       screen: "list", // "list" | "workspace"
@@ -49,6 +61,11 @@
       collapsedDirs: {}, // dir path -> true
       editAnnounce: {}, // fileId -> timestamp of last aria-live edit note
       myColor: null,
+      /* Phase 4: AI + activity */
+      sidetab: "chat", // side column tab: chat|ai|activity|members
+      activity: [], // CollabActivity[] (server broadcast, last 50)
+      ai: freshAiState(),
+      editorWaiters: {}, // fileId -> [cb] waiting for the Y.Doc binding
       /* Phase 3: voice calls */
       iceServers: [], // server-advertised STUN/TURN (from JOINED)
       voice: {
@@ -142,6 +159,7 @@
     if (!ed) return;
     ed.disposed = true;
     delete S.editors[fileId];
+    flushEditorWaiters(fileId, null);
     try { ed.doc.destroy(); } catch (e) {}
     if (ed.awareTimer) { clearInterval(ed.awareTimer); ed.awareTimer = null; }
   }
@@ -171,6 +189,35 @@
       try { S.ws.send(JSON.stringify(obj)); return true; } catch (e) { return false; }
     }
     return false;
+  }
+
+  /**
+   * Ask the server for room file context. The server reads the text from its
+   * own file store and only returns files in this room, for members — the
+   * client never invents paths or trusts its own copy. Resolves with the
+   * AI_CONTEXT message ({ ok, path, text, truncated, files, code }).
+   */
+  function requestAiContext(req) {
+    return new Promise(function (resolve) {
+      var requestId = "r" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      var waiters = S.aiCtxWaiters || (S.aiCtxWaiters = {});
+      var timer = setTimeout(function () {
+        if (waiters[requestId]) {
+          delete waiters[requestId];
+          resolve({ ok: false, code: "TIMEOUT" });
+        }
+      }, 10000);
+      waiters[requestId] = { resolve: resolve, timer: timer };
+      var m = { type: "AI_CONTEXT_REQUEST", requestId: requestId, mode: req.mode };
+      if (req.fileId) m.fileId = req.fileId;
+      if (typeof req.selStart === "number") m.selStart = req.selStart;
+      if (typeof req.selEnd === "number") m.selEnd = req.selEnd;
+      if (!sendMsg(m)) {
+        delete waiters[requestId];
+        clearTimeout(timer);
+        resolve({ ok: false, code: "NOT_CONNECTED" });
+      }
+    });
   }
 
   function setConn(status) {
@@ -256,6 +303,7 @@
         }
         S.members = Array.isArray(msg.members) ? msg.members : [];
         S.chat = Array.isArray(msg.chat) ? msg.chat.slice(-200) : [];
+        S.activity = Array.isArray(msg.activity) ? msg.activity.slice(-50) : [];
         S.files = Array.isArray(msg.files) ? msg.files : [];
         S.iceServers = Array.isArray(msg.ice) ? msg.ice : [];
         onVoiceMembers(msg.voice, true);
@@ -263,6 +311,7 @@
         startHeartbeat();
         paintMembers();
         paintChat(true);
+        paintActivity();
         paintFiles();
         paintRoomAdmin();
         paintVoice();
@@ -300,6 +349,18 @@
           paintTyping();
         }
         break;
+      case "ACTIVITY":
+        onActivity(msg);
+        break;
+      case "AI_CONTEXT": {
+        var waiter = S.aiCtxWaiters && S.aiCtxWaiters[msg.requestId];
+        if (waiter) {
+          delete S.aiCtxWaiters[msg.requestId];
+          clearTimeout(waiter.timer);
+          waiter.resolve(msg);
+        }
+        break;
+      }
       case "ERROR":
         handleServerError(msg);
         break;
@@ -461,6 +522,408 @@
     t.textContent = !names.length ? "" : names.length === 1 ? names[0] + " is typing…"
       : names.length === 2 ? names[0] + " and " + names[1] + " are typing…"
       : names[0] + " and " + (names.length - 1) + " others are typing…";
+  }
+
+  /* ---------- activity feed (Phase 4) ---------- */
+
+  function onActivity(msg) {
+    if (!msg || !msg.event || typeof msg.event.kind !== "string") return;
+    S.activity.push(msg.event);
+    if (S.activity.length > 50) S.activity.splice(0, S.activity.length - 50);
+    paintActivity();
+  }
+
+  function activityIcon(kind) {
+    return kind === "member_join" ? "👋"
+      : kind === "member_leave" ? "🚪"
+      : kind === "file_create" ? "📄"
+      : kind === "file_rename" ? "✏️"
+      : kind === "file_delete" ? "🗑️"
+      : kind === "file_edit" ? "📝"
+      : kind === "version_restore" ? "🕘"
+      : kind === "voice_start" ? "🎙️"
+      : kind === "voice_end" ? "🔇"
+      : kind === "ai_apply" ? "🤖" : "•";
+  }
+
+  function activityText(ev) {
+    var who = ev.byName || "Someone";
+    var p = ev.path || "";
+    switch (ev.kind) {
+      case "member_join": return who + " joined the room";
+      case "member_leave": return who + " left the room";
+      case "file_create": return who + " created " + p;
+      case "file_rename": return who + " renamed " + (ev.extra ? ev.extra + " → " : "") + p;
+      case "file_delete": return who + " deleted " + p;
+      case "file_edit": return who + " edited " + p;
+      case "version_restore": return who + " restored a version of " + p;
+      case "voice_start": return who + " started a voice call";
+      case "voice_end": return "Voice call ended";
+      case "ai_apply": return who + " applied an AI change to " + p;
+      default: return who + " — " + ev.kind;
+    }
+  }
+
+  function buildActivityPanel() {
+    var panel = el("aside", "rm-activity-panel");
+    panel.setAttribute("aria-label", "Room activity");
+    panel.appendChild(el("h3", null, "Activity"));
+    var list = el("div", "rm-activity-list");
+    list.id = "rm-activity-list";
+    list.setAttribute("role", "log");
+    list.setAttribute("aria-label", "Room activity feed");
+    panel.appendChild(list);
+    return panel;
+  }
+
+  function paintActivity() {
+    var list = document.getElementById("rm-activity-list");
+    if (!list) return;
+    list.innerHTML = "";
+    if (!S.activity.length) {
+      list.appendChild(el("div", "rm-empty", "No activity yet."));
+      return;
+    }
+    S.activity.slice().reverse().forEach(function (ev) {
+      var row = el("div", "rm-activity-row");
+      var icon = el("span", "rm-activity-icon", activityIcon(ev.kind));
+      icon.setAttribute("aria-hidden", "true");
+      row.appendChild(icon);
+      var body = el("div", "rm-activity-body");
+      body.appendChild(el("div", "rm-activity-text", activityText(ev)));
+      if (ev.ts && UI.timeAgo) body.appendChild(el("div", "rm-activity-time", UI.timeAgo(ev.ts, Date.now())));
+      row.appendChild(body);
+      list.appendChild(row);
+    });
+  }
+
+  /* ---------- Ask AI (Phase 4) ---------- */
+
+  var AI_QUICK = [
+    ["Explain code", "Explain what this code does, section by section, in plain language."],
+    ["Find bug", "Find bugs in this code. For each bug, quote the line or expression involved, explain why it is wrong, and propose a fix."],
+    ["Refactor", "Refactor this code for clarity and maintainability without changing its behavior. Explain each change briefly."],
+    ["Generate tests", "Generate unit tests for this code, covering the main cases and edge cases."],
+    ["Write docs", "Write concise documentation for this code: purpose, inputs/outputs, and any non-obvious behavior."],
+  ];
+
+  var AI_SYSTEM =
+    "You are NEUTRON, an AI pair programmer inside a shared real-time collaboration room. " +
+    "Answer concisely and use markdown. " +
+    "If you want to propose changing a shared file, output the COMPLETE new file content in a fenced block like this:\n" +
+    "```neutron-room-edit\npath: relative/path/from/the/context\n<full new file content>\n```\n" +
+    "Rules: propose edits only for files listed in the context; one block per file; " +
+    "never invent file paths; put explanations outside the fenced blocks.";
+
+  var AI_CTX_LABELS = { file: "Current file", snippet: "Selected text", list: "File list" };
+
+  function buildAiPanel() {
+    var panel = el("section", "rm-ai-panel");
+    panel.setAttribute("aria-label", "Ask AI");
+    panel.appendChild(el("h3", null, "Ask AI"));
+    panel.appendChild(el("p", "muted small",
+      "Uses your Settings API key and model (your key, your provider). Only this room's files are sent as context."));
+
+    var ctxRow = el("div", "rm-ai-ctx");
+    ctxRow.id = "rm-ai-ctx";
+    ctxRow.setAttribute("role", "group");
+    ctxRow.setAttribute("aria-label", "AI context");
+    Object.keys(AI_CTX_LABELS).forEach(function (mode) {
+      var b = el("button", "btn ghost sm", AI_CTX_LABELS[mode]);
+      b.setAttribute("data-mode", mode);
+      b.setAttribute("aria-pressed", "false");
+      b.onclick = function () { S.ai.mode = mode; paintAi(); };
+      ctxRow.appendChild(b);
+    });
+    panel.appendChild(ctxRow);
+
+    var quick = el("div", "rm-ai-quick");
+    quick.setAttribute("aria-label", "Quick actions");
+    AI_QUICK.forEach(function (pair) {
+      var b = el("button", "btn ghost sm", pair[0]);
+      b.onclick = function () {
+        S.ai.q = pair[1];
+        var q = document.getElementById("rm-ai-q");
+        if (q) { q.value = S.ai.q; q.focus(); }
+        paintAi();
+      };
+      quick.appendChild(b);
+    });
+    panel.appendChild(quick);
+
+    var q = el("textarea", "input rm-ai-q");
+    q.id = "rm-ai-q";
+    q.rows = 3;
+    q.placeholder = "Ask about the room's code…";
+    q.setAttribute("aria-label", "Ask the AI about this room");
+    q.addEventListener("input", function () { S.ai.q = q.value; });
+    panel.appendChild(q);
+
+    var ask = el("button", "btn primary sm", "Ask AI");
+    ask.id = "rm-ai-ask";
+    ask.onclick = askAi;
+    panel.appendChild(ask);
+
+    var err = el("div", "rm-ai-err hidden");
+    err.id = "rm-ai-err";
+    err.setAttribute("role", "alert");
+    panel.appendChild(err);
+
+    var res = el("div", "rm-ai-result");
+    res.id = "rm-ai-result";
+    res.setAttribute("aria-live", "polite");
+    res.setAttribute("aria-label", "AI answer");
+    panel.appendChild(res);
+    return panel;
+  }
+
+  function paintAi() {
+    var st = S.ai;
+    var ask = document.getElementById("rm-ai-ask");
+    if (ask) {
+      ask.disabled = st.busy || !S.joined;
+      ask.textContent = st.busy ? "Asking…" : "Ask AI";
+    }
+    var q = document.getElementById("rm-ai-q");
+    if (q && document.activeElement !== q && q.value !== st.q) q.value = st.q;
+    var ctxBtns = document.querySelectorAll("#rm-ai-ctx [data-mode]");
+    for (var i = 0; i < ctxBtns.length; i++) {
+      var on = ctxBtns[i].getAttribute("data-mode") === st.mode;
+      ctxBtns[i].classList.toggle("on", on);
+      ctxBtns[i].setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    var err = document.getElementById("rm-ai-err");
+    if (err) {
+      err.textContent = st.err || "";
+      err.classList.toggle("hidden", !st.err);
+    }
+    var res = document.getElementById("rm-ai-result");
+    if (!res) return;
+    res.innerHTML = "";
+    if (st.busy && !st.stripped && !st.cards.length) {
+      res.appendChild(el("div", "rm-ai-busy", "Thinking…"));
+      return;
+    }
+    if (st.stripped) {
+      var div = el("div", "rm-ai-answer");
+      // renderMarkdown escapes all HTML first — safe for innerHTML.
+      div.innerHTML = UI.renderMarkdown ? UI.renderMarkdown(st.stripped) : "";
+      res.appendChild(div);
+    }
+    st.cards.forEach(function (card) { res.appendChild(aiCardEl(card)); });
+    if (!st.stripped && !st.cards.length && !st.err) {
+      res.appendChild(el("div", "rm-empty", "Ask about the room's code. If the AI proposes file changes, they appear here for your review — nothing is applied silently."));
+    }
+  }
+
+  /** Review card for one AI-proposed file change (approval gate). */
+  function aiCardEl(card) {
+    var meta = null;
+    for (var i = 0; i < S.files.length; i++) {
+      if (S.files[i].path === card.path) { meta = S.files[i]; break; }
+    }
+    var wrap = el("div", "rm-ai-card");
+    var head = el("div", "rm-ai-card-head");
+    head.appendChild(el("span", "rm-ai-card-path", "📄 " + card.path));
+    if (meta && S.editors[meta.id]) {
+      var stats = UI.diffLineStats ? UI.diffLineStats(S.editors[meta.id].ytext.toString(), card.content) : null;
+      if (stats) head.appendChild(el("span", "rm-ai-card-stats", "+" + stats.added + " −" + stats.removed));
+    } else if (!meta) {
+      head.appendChild(el("span", "rm-ai-card-warn", "unknown file — cannot apply"));
+    }
+    wrap.appendChild(head);
+
+    var actions = el("div", "rm-ai-card-actions");
+    if (card.state === "applied") {
+      actions.appendChild(el("span", "rm-ai-card-done", "Applied ✓ — collaborators received it via the shared document."));
+    } else if (card.state === "rejected") {
+      actions.appendChild(el("span", "muted small", "Rejected — nothing changed."));
+    } else if (!meta) {
+      actions.appendChild(el("span", "muted small", "The AI proposed a file that isn't in this room. Nothing was applied."));
+    } else {
+      var review = el("button", "btn sm", card.showDiff ? "Hide changes" : "Review changes");
+      review.onclick = function () {
+        if (card.showDiff) { card.showDiff = false; paintAi(); return; }
+        withEditorForFile(meta.id, function (ed) {
+          if (!ed) { toast("Couldn't open the file for preview."); return; }
+          card.showDiff = true;
+          paintAi();
+        });
+      };
+      var apply = el("button", "btn primary sm", "Apply");
+      apply.setAttribute("aria-label", "Apply AI change to " + card.path);
+      apply.onclick = function () { applyAiCard(card, meta); };
+      var reject = el("button", "btn ghost sm", "Reject");
+      reject.onclick = function () { card.state = "rejected"; paintAi(); };
+      actions.appendChild(review);
+      actions.appendChild(apply);
+      actions.appendChild(reject);
+    }
+    wrap.appendChild(actions);
+
+    if (card.showDiff && meta && card.state === "pending") {
+      var ed = S.editors[meta.id];
+      if (ed && UI.diffLineBlocks) {
+        var rows = UI.diffLineBlocks(ed.ytext.toString(), card.content);
+        var pre = el("pre", "rm-ai-diff");
+        pre.setAttribute("aria-label", "Proposed changes to " + card.path);
+        var capped = rows.slice(0, 400);
+        capped.forEach(function (r) {
+          var line = el("div", "rm-ai-diff-" + (r.t === " " ? "ctx" : r.t));
+          line.textContent = (r.t === " " ? "  " : r.t === "add" ? "+ " : "− ") + r.text;
+          pre.appendChild(line);
+        });
+        if (rows.length > capped.length) {
+          pre.appendChild(el("div", "rm-ai-diff-ctx", "… " + (rows.length - capped.length) + " more lines"));
+        }
+        wrap.appendChild(pre);
+      }
+    }
+    return wrap;
+  }
+
+  /**
+   * Apply an approved AI change through the Yjs document as a normal local
+   * edit: onDocUpdate broadcasts it as a YJS_SYNC update and every
+   * collaborator merges it via CRDT — never a silent overwrite.
+   */
+  function applyAiCard(card, meta) {
+    withEditorForFile(meta.id, function (ed) {
+      if (!ed || ed.disposed) {
+        showError("The editor isn't ready. Reopen the file and try again.");
+        return;
+      }
+      var oldText = ed.ytext.toString();
+      var ops = UI.diffTextToOps ? UI.diffTextToOps(oldText, card.content) : [];
+      if (!ops.length) {
+        card.state = "applied";
+        paintAi();
+        toast("No changes to apply — the file already matches.");
+        return;
+      }
+      try {
+        ed.doc.transact(function () { applyOpsToYText(ed.ytext, ops); }, "ai-apply");
+      } catch (e) {
+        showError("Couldn't apply the change. Reopen the file and try again.");
+        return;
+      }
+      card.state = "applied";
+      card.showDiff = false;
+      // Tell the server so the room's activity feed records it.
+      sendMsg({ type: "AI_APPLY", fileId: meta.id });
+      paintAi();
+      if (typeof announce === "function") announce("AI change applied to " + card.path);
+    });
+  }
+
+  /** Run cb with the Y.Doc editor for a file, opening the tab first if needed. */
+  function withEditorForFile(fileId, cb) {
+    var ed = S.editors[fileId];
+    // Only run against a synced document: a freshly created editor is empty
+    // until the Yjs step2 handshake completes. Unsynced editors queue the
+    // callback; it fires after step2 marks the editor synced.
+    if (ed && !ed.disposed && ed.synced) { cb(ed); return; }
+    var list = S.editorWaiters[fileId] || (S.editorWaiters[fileId] = []);
+    list.push(cb);
+    if (!ed || ed.disposed) openFileTab(fileId, true);
+  }
+
+  function flushEditorWaiters(fileId, ed) {
+    var list = S.editorWaiters[fileId];
+    if (!list) return;
+    delete S.editorWaiters[fileId];
+    list.forEach(function (cb) { try { cb(ed); } catch (e) {} });
+  }
+
+  async function askAi() {
+    var st = S.ai;
+    if (st.busy) return;
+    if (!S.joined) { showError("Not connected yet — wait for the green dot."); return; }
+    var question = (st.q || "").trim();
+    if (!question) { showError("Type a question for the AI first."); return; }
+    var key = (typeof storedApiKey === "function") ? storedApiKey() : "";
+    var prov = (typeof storedProvider === "function") ? storedProvider() : "";
+    if (!key || !prov) {
+      st.err = "Ask AI needs your API key and provider — set them in Settings first. Your key never leaves this browser except to your own provider.";
+      paintAi();
+      return;
+    }
+    var ed = S.activeFileId ? S.editors[S.activeFileId] : null;
+    var selStart = -1, selEnd = -1;
+    if (st.mode === "snippet") {
+      if (ed && ed.ta) {
+        try {
+          selStart = ed.ta.selectionStart || 0;
+          selEnd = ed.ta.selectionEnd || 0;
+        } catch (e) {}
+      }
+      if (!(selEnd > selStart)) {
+        st.err = "Select some text in the editor first, or switch the context to “Current file”.";
+        paintAi();
+        return;
+      }
+    } else if (st.mode === "file" && !S.activeFileId) {
+      st.err = "Open a file first, or switch the context to “File list”.";
+      paintAi();
+      return;
+    }
+    st.busy = true;
+    st.err = "";
+    st.stripped = "";
+    st.cards = [];
+    paintAi();
+    // Server-authorized context: the server reads the room file from its own
+    // store and only returns content for files in THIS room, for members.
+    // Selection indices go to the server; the client never extracts text
+    // itself and never invents paths.
+    var ctxReq = { mode: st.mode };
+    if (st.mode === "file" || st.mode === "snippet") ctxReq.fileId = S.activeFileId;
+    if (st.mode === "snippet") { ctxReq.selStart = selStart; ctxReq.selEnd = selEnd; }
+    var ctxRes = await requestAiContext(ctxReq);
+    if (!ctxRes || !ctxRes.ok) {
+      st.busy = false;
+      st.err = ctxRes && ctxRes.code === "FILE_NOT_FOUND"
+        ? "That file is no longer in the room — pick another from the file list."
+        : "Couldn't get room context from the server (" + ((ctxRes && ctxRes.code) || "unknown") + "). Rejoin the room and try again.";
+      paintAi();
+      return;
+    }
+    var ctxText;
+    if (ctxRes.files) {
+      ctxText = "Files in this room:\n" + ctxRes.files.map(function (f) { return "- " + f.path; }).join("\n");
+    } else if (st.mode === "snippet") {
+      ctxText = "Selected code from " + (ctxRes.path || "the file") + ":\n```\n" + (ctxRes.text || "") + "\n```";
+    } else {
+      ctxText = "File " + (ctxRes.path || "") + ":\n```\n" + (ctxRes.text || "") + "\n```";
+    }
+    if (ctxRes.truncated) ctxText += "\n(Context truncated to fit.)";
+    var body = {
+      messages: [
+        { role: "system", content: AI_SYSTEM },
+        {
+          role: "user",
+          content: "Context from the shared room:\n\n" + ctxText +
+            "\n\nQuestion: " + question,
+        },
+      ],
+    };
+    var cm = (typeof storedModel === "function") ? storedModel() : "";
+    if (cm) body.model = cm;
+    try {
+      var res = await api("POST", "/api/chat", body);
+      var parsed = UI.parseRoomEditBlocks ? UI.parseRoomEditBlocks(res.text || "") : { blocks: [], stripped: res.text || "" };
+      st.stripped = parsed.stripped;
+      st.cards = parsed.blocks.map(function (b) {
+        return { path: b.path, content: b.content, state: "pending", showDiff: false };
+      });
+      if (typeof announce === "function") {
+        announce("AI answered" + (st.cards.length ? " with " + st.cards.length + " file change proposal" + (st.cards.length === 1 ? "" : "s") + " to review." : "."));
+      }
+    } catch (e) {
+      st.err = (e && e.message) || "The AI request failed.";
+    }
+    st.busy = false;
+    paintAi();
   }
 
   /* ---------- screens ---------- */
@@ -723,6 +1186,10 @@
         mtabBtns[k].classList.toggle("on", k === name);
         mtabBtns[k].setAttribute("aria-selected", k === name ? "true" : "false");
       });
+      // Mobile: the "members" tab pins the side column to members; the "chat"
+      // tab shows chat/AI/activity with the sub-tab bar.
+      if (name === "members") setSideTab("members");
+      else if (name === "chat" && S.sidetab === "members") setSideTab("chat");
     }
 
     var body = el("div", "rm-body");
@@ -774,15 +1241,42 @@
     editorPanel.appendChild(edWrap);
     body.appendChild(editorPanel);
 
-    /* Side column: members + chat with their own sub-tabs. */
+    /* Side column: chat / AI / activity / members with their own sub-tabs. */
     var side = el("div", "rm-side panel");
     side.id = "rm-side";
     var subtabs = el("div", "rm-tabs rm-subtabs");
-    var tabChat = el("button", "rm-tab on", "Chat");
-    var tabMembers = el("button", "rm-tab", "Members");
-    subtabs.appendChild(tabChat);
-    subtabs.appendChild(tabMembers);
+    subtabs.setAttribute("role", "tablist");
+    subtabs.setAttribute("aria-label", "Side panels");
+    var sideTabs = {};
+    [["chat", "Chat"], ["ai", "AI"], ["activity", "Activity"], ["members", "Members"]].forEach(function (pair) {
+      (function (name, label) {
+        var b = el("button", "rm-tab", label);
+        b.setAttribute("role", "tab");
+        b.setAttribute("aria-selected", "false");
+        b.onclick = function () { setSideTab(name); };
+        sideTabs[name] = b;
+        subtabs.appendChild(b);
+      })(pair[0], pair[1]);
+    });
     side.appendChild(subtabs);
+
+    function setSideTab(name) {
+      if (["chat", "ai", "activity", "members"].indexOf(name) === -1) name = "chat";
+      S.sidetab = name;
+      var sideEl = document.getElementById("rm-side");
+      if (sideEl) {
+        sideEl.classList.toggle("rm-show-ai", name === "ai");
+        sideEl.classList.toggle("rm-show-activity", name === "activity");
+        sideEl.classList.toggle("rm-show-members", name === "members");
+      }
+      Object.keys(sideTabs).forEach(function (k) {
+        var on = k === name;
+        sideTabs[k].classList.toggle("on", on);
+        sideTabs[k].setAttribute("aria-selected", on ? "true" : "false");
+      });
+      if (name === "ai") paintAi();
+      if (name === "activity") paintActivity();
+    }
 
     var membersPanel = el("aside", "rm-members-panel");
     membersPanel.setAttribute("aria-label", "Room members");
@@ -822,17 +1316,12 @@
 
     side.appendChild(membersPanel);
     side.appendChild(chatPanel);
+    side.appendChild(buildAiPanel());
+    side.appendChild(buildActivityPanel());
     body.appendChild(side);
     view.appendChild(body);
 
-    tabChat.onclick = function () {
-      tabChat.classList.add("on"); tabMembers.classList.remove("on");
-      side.classList.remove("rm-show-members");
-    };
-    tabMembers.onclick = function () {
-      tabMembers.classList.add("on"); tabChat.classList.remove("on");
-      side.classList.add("rm-show-members");
-    };
+    setSideTab(S.sidetab || "chat");
 
     form.addEventListener("submit", function (ev) {
       ev.preventDefault();
@@ -1031,6 +1520,9 @@
         ta: null,
         lastText: "",
         disposed: false,
+        // False until the Yjs step2 handshake applies the server's state;
+        // editor waiters (e.g. AI Apply) only run after this flips true.
+        synced: false,
         awareTimer: null,
         lastAwareSent: 0,
       };
@@ -1092,7 +1584,11 @@
   /** Y.Doc update handler: broadcast local edits, render remote ones. */
   function onDocUpdate(ed, update, origin) {
     if (ed.disposed) return;
-    if (origin === "local") {
+    if (origin === "local" || origin === "ai-apply") {
+      // Keystrokes and approved AI changes both travel as normal Yjs
+      // updates — collaborators merge them via CRDT, never as overwrites.
+      // (The textarea didn't make the AI edit, so it needs re-rendering.)
+      if (origin === "ai-apply") renderRemoteText(ed);
       sendMsg({ type: "YJS_SYNC", fileId: ed.fileId, kind: "update", data: yjsFrame(2, update) });
     } else {
       renderRemoteText(ed);
@@ -1153,6 +1649,12 @@
     } else if (msg.kind === "step2" && frame.type === 1) {
       try { Y.applyUpdate(ed.doc, frame.payload, "sync"); }
       catch (e) { /* corrupt update — the next handshake repairs */ }
+      // The document now holds the server's state: mark synced and run any
+      // waiters (AI Apply) that were queued while the handshake was in flight.
+      if (!ed.synced) {
+        ed.synced = true;
+        flushEditorWaiters(ed.fileId, ed);
+      }
     } else if (msg.kind === "update" && frame.type === 2) {
       try { Y.applyUpdate(ed.doc, frame.payload, "remote"); }
       catch (e) { /* ignore malformed updates */ }
