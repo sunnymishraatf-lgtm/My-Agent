@@ -2655,7 +2655,21 @@ async function renderSettings(view) {
   keyIn.placeholder = "Paste your provider API key";
   keyIn.setAttribute("aria-label", "Provider API key");
   keyIn.autocomplete = "off";
-  p.appendChild(field("API KEY", keyIn));
+  var keyWrap = el("div", "key-wrap");
+  keyWrap.appendChild(keyIn);
+  var keyToggle = el("button", "btn ghost sm", "Show");
+  keyToggle.type = "button";
+  keyToggle.setAttribute("aria-label", "Show API key");
+  keyToggle.setAttribute("aria-pressed", "false");
+  keyToggle.onclick = function () {
+    var show = keyIn.type === "password";
+    keyIn.type = show ? "text" : "password";
+    keyToggle.textContent = show ? "Hide" : "Show";
+    keyToggle.setAttribute("aria-label", show ? "Hide API key" : "Show API key");
+    keyToggle.setAttribute("aria-pressed", show ? "true" : "false");
+  };
+  keyWrap.appendChild(keyToggle);
+  p.appendChild(field("API KEY", keyWrap));
 
   var statusLine = el("p", "mono small", "");
   function paintStatus() {
@@ -2674,6 +2688,10 @@ async function renderSettings(view) {
     if (!k) { showError("Paste a key first."); return; }
     setStoredApiKey(k);
     keyIn.value = "";
+    keyIn.type = "password";
+    keyToggle.textContent = "Show";
+    keyToggle.setAttribute("aria-label", "Show API key");
+    keyToggle.setAttribute("aria-pressed", "false");
     clearError();
     paintStatus();
     toast("API key saved — stored only in this browser.");
@@ -2681,6 +2699,10 @@ async function renderSettings(view) {
   clear.onclick = function () {
     clearStoredApiKey();
     keyIn.value = "";
+    keyIn.type = "password";
+    keyToggle.textContent = "Show";
+    keyToggle.setAttribute("aria-label", "Show API key");
+    keyToggle.setAttribute("aria-pressed", "false");
     clearError();
     paintStatus();
     toast("API key cleared.");

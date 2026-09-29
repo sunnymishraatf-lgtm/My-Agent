@@ -699,6 +699,9 @@ a:hover { text-decoration: underline; }
 
 /* ---- forms ---- */
 label.field { display: block; margin-bottom: 16px; }
+.key-wrap { display: flex; gap: 8px; align-items: center; }
+.key-wrap .input { flex: 1; min-width: 0; }
+.key-wrap .btn { flex: none; }
 label.field > span {
   display: block;
   font-family: var(--mono);
