@@ -176,6 +176,13 @@ export declare function diffTextToOps(oldText: string | null | undefined, newTex
 export declare function indexToLineCol(text: string | null | undefined, index: number): { line: number; col: number };
 export declare function sanitizeCollabPath(raw: unknown): string | null;
 export declare function pickPresenceColor(memberId: unknown): string;
+export declare const PRESENCE_STALE_MS: number;
+export declare function isPresenceStale(ts: unknown, nowMs: number, maxAgeMs?: number | null): boolean;
+export declare function pruneStalePresence(
+  map: Record<string, { ts?: unknown } & Record<string, unknown>> | null | undefined,
+  nowMs: number,
+  maxAgeMs?: number | null
+): Record<string, { ts?: unknown } & Record<string, unknown>>;
 
 export interface CollabFileTreeNode {
   name: string;

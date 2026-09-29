@@ -960,7 +960,6 @@
     "#CC8066", "#0891B2", "#2F9E5F", "#DE6B48", "#7C6BD6",
     "#C9A227", "#E35D8F", "#3E9BE0", "#5BBF6A", "#E07B39",
   ];
-
   function pickPresenceColor(memberId) {
     var h = 0;
     var s = String(memberId || "");
@@ -968,6 +967,31 @@
       h = ((h << 5) - h + s.charCodeAt(i)) | 0;
     }
     return PRESENCE_PALETTE[Math.abs(h) % PRESENCE_PALETTE.length];
+  }
+
+  /** Max age of an awareness entry before the member counts as gone. */
+  var PRESENCE_STALE_MS = 10 * 1000;
+
+  /** True when a presence timestamp is older than maxAgeMs (default 10s). Pure. */
+  function isPresenceStale(ts, nowMs, maxAgeMs) {
+    var age = maxAgeMs == null ? PRESENCE_STALE_MS : maxAgeMs;
+    var t = Number(ts);
+    if (!isFinite(t)) return true;
+    return nowMs - t > age;
+  }
+
+  /**
+   * Return a copy of an awareness map (memberId -> entry) with stale entries
+   * removed. Pure — the caller decides whether to persist the pruned map.
+   */
+  function pruneStalePresence(map, nowMs, maxAgeMs) {
+    var out = {};
+    if (!map || typeof map !== "object") return out;
+    Object.keys(map).forEach(function (mid) {
+      var entry = map[mid];
+      if (!isPresenceStale(entry && entry.ts, nowMs, maxAgeMs)) out[mid] = entry;
+    });
+    return out;
   }
 
   /**
@@ -1261,6 +1285,9 @@
     indexToLineCol: indexToLineCol,
     sanitizeCollabPath: sanitizeCollabPath,
     pickPresenceColor: pickPresenceColor,
+    PRESENCE_STALE_MS: PRESENCE_STALE_MS,
+    isPresenceStale: isPresenceStale,
+    pruneStalePresence: pruneStalePresence,
     buildFileTree: buildFileTree,
     /* voice calls (Phase 3) */
     MAX_VOICE_PARTICIPANTS: MAX_VOICE_PARTICIPANTS,

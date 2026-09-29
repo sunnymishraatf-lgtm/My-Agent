@@ -46,6 +46,7 @@
       reconnectAttempt: 0,
       reconnectTimer: null,
       heartbeatTimer: null,
+      presenceTimer: null,
       typingTimer: null,
       typingSent: false,
       presenceStatus: "online",
@@ -167,6 +168,7 @@
   function stopTimers() {
     if (S.reconnectTimer) { clearTimeout(S.reconnectTimer); S.reconnectTimer = null; }
     if (S.heartbeatTimer) { clearInterval(S.heartbeatTimer); S.heartbeatTimer = null; }
+    if (S.presenceTimer) { clearInterval(S.presenceTimer); S.presenceTimer = null; }
     if (S.typingTimer) { clearTimeout(S.typingTimer); S.typingTimer = null; }
   }
 
@@ -443,6 +445,14 @@
     };
     beat();
     S.heartbeatTimer = setInterval(beat, 15000);
+    // Sweep stale presence chips every 5s: paintPresenceChips otherwise only
+    // runs on incoming awareness, so a departed member's chip could linger
+    // until the next message arrived. Cheap: one small DOM repaint.
+    if (S.presenceTimer) clearInterval(S.presenceTimer);
+    S.presenceTimer = setInterval(function () {
+      if (!S.joined) return;
+      if (document.getElementById("rm-ed-presence")) paintPresenceChips();
+    }, 5000);
   }
 
   function stopHeartbeat() {
@@ -2050,11 +2060,16 @@
     if (!chips || !S.activeFileId) return;
     chips.innerHTML = "";
     var now = Date.now();
-    var map = S.awareness[S.activeFileId] || {};
+    // Drop members whose awareness went stale (closed tab, lost network).
+    // Without the sweep timer below this only ran on incoming messages,
+    // so a departed member's chip could linger indefinitely.
+    var map = UI.pruneStalePresence
+      ? UI.pruneStalePresence(S.awareness[S.activeFileId], now)
+      : (S.awareness[S.activeFileId] || {});
+    S.awareness[S.activeFileId] = map;
     var any = false;
     Object.keys(map).forEach(function (mid) {
       var a = map[mid];
-      if (now - a.ts > 10_000) { delete map[mid]; return; } // stale
       any = true;
       var chip = el("span", "rm-presence-chip");
       var dot = el("span", "rm-presence-dot");

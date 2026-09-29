@@ -149,6 +149,48 @@ describe("pickPresenceColor", () => {
   });
 });
 
+describe("presence staleness (isPresenceStale / pruneStalePresence)", () => {
+  const NOW = 1_000_000;
+  it("marks entries older than 10s stale by default", () => {
+    const uiAny = ui as any;
+    expect(uiAny.PRESENCE_STALE_MS).toBe(10_000);
+    expect(uiAny.isPresenceStale(NOW - 5_000, NOW)).toBe(false);
+    expect(uiAny.isPresenceStale(NOW - 10_001, NOW)).toBe(true);
+    expect(uiAny.isPresenceStale(NOW, NOW)).toBe(false);
+  });
+  it("treats missing/invalid timestamps as stale", () => {
+    const f = (ui as any).isPresenceStale;
+    expect(f(undefined, NOW)).toBe(true);
+    expect(f(null, NOW)).toBe(true);
+    expect(f("nope", NOW)).toBe(true);
+    expect(f(NaN, NOW)).toBe(true);
+  });
+  it("honors an explicit maxAgeMs", () => {
+    const f = (ui as any).isPresenceStale;
+    expect(f(NOW - 5_000, NOW, 60_000)).toBe(false);
+    expect(f(NOW - 5_000, NOW, 1_000)).toBe(true);
+  });
+  it("pruneStalePresence drops stale members and keeps the rest", () => {
+    const f = (ui as any).pruneStalePresence;
+    const map = {
+      a: { name: "A", ts: NOW - 1_000 },
+      b: { name: "B", ts: NOW - 60_000 },
+      c: { name: "C" }, // no ts -> stale
+    };
+    const out = f(map, NOW);
+    expect(Object.keys(out).sort()).toEqual(["a"]);
+    expect(out.a.name).toBe("A");
+    // Original is untouched (pure).
+    expect(Object.keys(map).sort()).toEqual(["a", "b", "c"]);
+  });
+  it("pruneStalePresence handles null/invalid input", () => {
+    const f = (ui as any).pruneStalePresence;
+    expect(f(null, NOW)).toEqual({});
+    expect(f(undefined, NOW)).toEqual({});
+    expect(f("x", NOW)).toEqual({});
+  });
+});
+
 describe("buildFileTree", () => {
   it("nests paths and sorts dirs first", () => {
     const tree = (ui as any).buildFileTree([
