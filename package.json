@@ -1,7 +1,7 @@
 {
   "name": "neutron-agent",
   "version": "0.1.0",
-  "description": "NEUTRON \u2014 Autonomous Software Maintenance Intelligence. Give it a maintenance request; a team of specialised AI agents analyses impact, plans, implements, tests, security-reviews and code-reviews the change behind human approval gates.",
+  "description": "NEUTRON — Autonomous Software Maintenance Intelligence. Give it a maintenance request; a team of specialised AI agents analyses impact, plans, implements, tests, security-reviews and code-reviews the change behind human approval gates.",
   "type": "module",
   "bin": {
     "neutron": "dist/cli-entry.js",
@@ -61,6 +61,7 @@
   "license": "MIT",
   "dependencies": {
     "commander": "^12.1.0",
+    "ws": "^8.22.0",
     "zod": "^3.23.8"
   },
   "optionalDependencies": {
@@ -70,6 +71,7 @@
   "devDependencies": {
     "@types/node": "^24.13.4",
     "@types/react": "^18.3.3",
+    "@types/ws": "^8.18.2",
     "esbuild": "^0.25.12",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",

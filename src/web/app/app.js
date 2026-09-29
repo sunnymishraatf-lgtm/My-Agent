@@ -153,7 +153,8 @@ var API_LOG_MAX = 50;
 function redactSecrets(s) {
   return String(s)
     .replace(/("apiKey"\s*:\s*")[^"]*(")/g, "$1***$2")
-    .replace(/("x-api-key"\s*:\s*")[^"]*(")/g, "$1***$2");
+    .replace(/("x-api-key"\s*:\s*")[^"]*(")/g, "$1***$2")
+    .replace(/("ownerToken"\s*:\s*")[^"]*(")/g, "$1***$2");
 }
 
 function pushApiLog(entry) {
@@ -391,18 +392,32 @@ var ROUTES = {
   repos: renderRepos,
   reports: renderReports,
   chat: renderChat,
+  rooms: function (view) { return window.NeutronRooms.renderRooms(view); },
   settings: renderSettings,
 };
 
 function currentRoute() {
-  var h = (location.hash || "").replace(/^#\/?/, "").split("/")[0];
-  return ROUTES[h] ? h : "dashboard";
+  var h = location.hash || "";
+  /* Deep link into a collaboration room: #room=NEUTRON-XXXXXX */
+  var rm = h.match(/^#room=([A-Za-z0-9-]+)/);
+  if (rm) {
+    window.__neutronPendingRoom = rm[1];
+    return "rooms";
+  }
+  var r = h.replace(/^#\/?/, "").split("/")[0];
+  return ROUTES[r] ? r : "dashboard";
 }
 
 async function render() {
   /* Tear down chat overlays: menus/dialogs/drawer live on document.body,
      outside the cleared view. */
   try { if (ChatHooks.closeOverlays) ChatHooks.closeOverlays(); } catch (e) {}
+  /* Tear down the rooms WebSocket when navigating away from the rooms route. */
+  try {
+    if (currentRoute() !== "rooms" && window.NeutronRooms && window.NeutronRooms.teardown) {
+      window.NeutronRooms.teardown();
+    }
+  } catch (e) {}
   ChatHooks.newTask = null;
   ChatHooks.toggleHistory = null;
   ChatHooks.focusHistorySearch = null;

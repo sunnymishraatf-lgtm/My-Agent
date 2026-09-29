@@ -750,6 +750,67 @@
     return true;
   }
 
+  /* ---------- collaboration rooms (Phase 1): pure client helpers ---------- */
+
+  /**
+   * Normalize a user-typed room code: trim, drop inner whitespace, uppercase.
+   */
+  function normalizeRoomCode(code) {
+    return String(code == null ? "" : code).trim().replace(/\s+/g, "").toUpperCase();
+  }
+
+  /** True for codes shaped like NEUTRON-XXXXXX (unambiguous alphabet). */
+  function isValidRoomCode(code) {
+    return /^NEUTRON-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/.test(normalizeRoomCode(code));
+  }
+
+  /**
+   * Reconnect backoff in ms for a 0-based attempt: 1s, 2s, 4s … capped at 30s.
+   * Deterministic (no jitter) so it is unit-testable; callers may add jitter.
+   */
+  function collabBackoffMs(attempt) {
+    var a = Math.max(0, Math.floor(Number(attempt) || 0));
+    return Math.min(1000 * Math.pow(2, a), 30000);
+  }
+
+  /**
+   * Clean a display name: trim, collapse whitespace, strip control chars,
+   * cap at 32 chars. Returns "" when nothing usable remains.
+   */
+  function sanitizeCollabName(name) {
+    return String(name == null ? "" : name)
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/[\u0000-\u001F\u007F]/g, "")
+      .slice(0, 32);
+  }
+
+  /** Trim a chat message and cap it at 2000 chars. */
+  function sanitizeCollabText(text) {
+    return String(text == null ? "" : text).trim().slice(0, 2000);
+  }
+
+  /**
+   * Short relative time: "just now", "5m ago", "3h ago", "2d ago",
+   * else a locale date. Pure — safe to test.
+   */
+  function timeAgo(ts, nowMs) {
+    var t = Number(ts);
+    var now = Number(nowMs);
+    if (!isFinite(t) || !isFinite(now)) return "";
+    var diff = now - t;
+    if (diff < 0) diff = 0;
+    if (diff < 60 * 1000) return "just now";
+    if (diff < 60 * 60 * 1000) return Math.floor(diff / (60 * 1000)) + "m ago";
+    if (diff < 24 * 60 * 60 * 1000) return Math.floor(diff / (60 * 60 * 1000)) + "h ago";
+    if (diff < 7 * 24 * 60 * 60 * 1000) return Math.floor(diff / (24 * 60 * 60 * 1000)) + "d ago";
+    try {
+      return new Date(t).toLocaleDateString();
+    } catch (e) {
+      return "";
+    }
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -764,6 +825,13 @@
     sanitizeChatHistory: sanitizeChatHistory,
     renderMarkdown: renderMarkdown,
     stripMarkdownForSpeech: stripMarkdownForSpeech,
+    /* collaboration rooms (Phase 1) */
+    normalizeRoomCode: normalizeRoomCode,
+    isValidRoomCode: isValidRoomCode,
+    collabBackoffMs: collabBackoffMs,
+    sanitizeCollabName: sanitizeCollabName,
+    sanitizeCollabText: sanitizeCollabText,
+    timeAgo: timeAgo,
     /* conversation workspace */
     CONV_STORE_VERSION: CONV_STORE_VERSION,
     newConversation: newConversation,

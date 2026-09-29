@@ -151,3 +151,11 @@ export declare function convTouch(
   firstUserText?: string,
   firstUserFiles?: Array<{ name?: string } | null> | null
 ): boolean;
+
+/* Collaboration rooms (Phase 1): pure client helpers. */
+export declare function normalizeRoomCode(code: unknown): string;
+export declare function isValidRoomCode(code: unknown): boolean;
+export declare function collabBackoffMs(attempt: number): number;
+export declare function sanitizeCollabName(name: unknown): string;
+export declare function sanitizeCollabText(text: unknown): string;
+export declare function timeAgo(ts: number, nowMs: number): string;

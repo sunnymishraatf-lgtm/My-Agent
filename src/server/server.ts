@@ -20,6 +20,8 @@ import { listCatalog, defaultModelsFor } from "../providers/catalog";
 import { existsSync, readFileSync, createReadStream } from "node:fs";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { RoomManager } from "./collab/room-manager";
+import { CollabServer, COLLAB_WS_PATH } from "./collab/collab-server";
 import {
   getDemoManager,
   prepareDemoRepo,
@@ -61,6 +63,8 @@ export interface ServeOptions {
   web?: boolean;
   /** Directory that contains the demo workspace (NEUTRON web demo repositories). */
   demoWorkspace?: string;
+  /** Collaboration room manager. Created by startServer; tests may inject one. */
+  collabManager?: RoomManager;
 }
 
 /** Fallback dashboard page (used when no shipped web assets are found). Exported for tests. */
@@ -540,6 +544,37 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
 
   if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/health")) {
     sendJson(res, 200, { ok: true, version: getVersion(), agents: loadAgents(opts.root).map((a) => a.name) });
+    return;
+  }
+
+  /* Collaboration rooms (Phase 1). Node server only — Vercel serverless
+     cannot hold WebSocket connections, so these routes don't exist there. */
+  if (req.method === "POST" && url.pathname === "/api/collab/rooms") {
+    if (!opts.collabManager) {
+      sendJson(res, 503, { ok: false, error: "Collaboration rooms are unavailable on this server." });
+      return;
+    }
+    const body = (await readJsonBody(req)) as { name?: unknown };
+    try {
+      const { room, ownerToken } = opts.collabManager.createRoom(typeof body.name === "string" ? body.name : "");
+      // The owner token is returned exactly once, at creation.
+      sendJson(res, 201, { ok: true, room, ownerToken });
+    } catch (err) {
+      sendJson(res, 429, { ok: false, error: err instanceof Error ? err.message : "Could not create room." });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/collab/rooms/")) {
+    let code: string;
+    try {
+      code = decodeURIComponent(url.pathname.slice("/api/collab/rooms/".length));
+    } catch {
+      sendJson(res, 200, { ok: true, exists: false });
+      return;
+    }
+    const room = opts.collabManager?.getRoom(code);
+    sendJson(res, 200, { ok: true, exists: !!room, ...(room ? { name: room.name } : {}) });
     return;
   }
 
@@ -1111,7 +1146,18 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
 
 export function startServer(opts: ServeOptions): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
-    const server = createServer(createRequestHandler(opts));
+    const collabManager = opts.collabManager ?? new RoomManager(opts.root);
+    try {
+      collabManager.load();
+    } catch {
+      /* A corrupt snapshot must never prevent boot; start with no rooms. */
+    }
+    const server = createServer(createRequestHandler({ ...opts, collabManager }));
+    const collab = new CollabServer({
+      manager: collabManager,
+      log: process.env.NEUTRON_COLLAB_DEBUG ? (m) => console.log(`[collab] ${m}`) : undefined,
+    });
+    collab.attach(server);
     server.on("error", reject);
     server.listen(opts.port, opts.host ?? "127.0.0.1", () => {
       const address = server.address();
@@ -1121,6 +1167,13 @@ export function startServer(opts: ServeOptions): Promise<RunningServer> {
         port,
         close: () =>
           new Promise<void>((done) => {
+            // Terminate collab sockets first: upgraded WebSocket connections
+            // would otherwise keep server.close() hanging.
+            try {
+              collab.close();
+            } catch {
+              /* ignore */
+            }
             server.close(() => done());
           }),
       });
