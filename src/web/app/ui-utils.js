@@ -1310,6 +1310,7 @@
       .replace(/("apiKey"\s*:\s*")[^"]*(")/g, "$1***$2")
       .replace(/("x-api-key"\s*:\s*")[^"]*(")/g, "$1***$2")
       .replace(/("ownerToken"\s*:\s*")[^"]*(")/g, "$1***$2")
+      .replace(/("token"\s*:\s*")[^"]*(")/g, "$1***$2")
       .replace(/(\bhttps?:\/\/)[^\/\s@]*@/g, "$1***@");
   }
 
@@ -1909,6 +1910,109 @@
     return text;
   }
 
+  /* ---------------------------------------------------------------- */
+  /* GitHub integration — pure client core. The token lives only in
+     browser localStorage and is sent as an Authorization header per
+     request; it is never stored server-side and never logged.        */
+  /* ---------------------------------------------------------------- */
+
+  var GITHUB_API_BASE = "https://api.github.com";
+  var GITHUB_REPO_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/;
+
+  function githubApiUrl(path) {
+    var p = String(path == null ? "" : path);
+    if (p.charAt(0) !== "/") p = "/" + p;
+    return GITHUB_API_BASE + p;
+  }
+
+  function githubAuthHeaders(token) {
+    return {
+      "Authorization": "Bearer " + String(token || ""),
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    };
+  }
+
+  /** Replace every occurrence of the token in text with [redacted]. */
+  function redactGithubToken(text, token) {
+    var s = String(text == null ? "" : text);
+    var t = String(token == null ? "" : token);
+    if (!t) return s;
+    return s.split(t).join("[redacted]");
+  }
+
+  /** Friendly message for a GitHub API failure. Never includes the token. */
+  function githubErrorMessage(status, bodyText) {
+    var body = String(bodyText == null ? "" : bodyText).slice(0, 300);
+    var apiMsg = "";
+    try {
+      var parsed = JSON.parse(body);
+      if (parsed && typeof parsed.message === "string") apiMsg = parsed.message.slice(0, 200);
+    } catch (e) { /* not JSON — ignore */ }
+    if (status === 401) {
+      return "GitHub rejected the token (401). Check it hasn't expired and was copied in full — " +
+        "no extra spaces." + (apiMsg ? " GitHub says: " + apiMsg : "");
+    }
+    if (status === 403) {
+      if (/rate limit/i.test(apiMsg) || /rate limit/i.test(body)) {
+        return "GitHub rate limit reached (403). Wait a few minutes and try again.";
+      }
+      return "GitHub refused the request (403) — the token may lack the needed permission " +
+        "(the repo scope for private repositories)." + (apiMsg ? " GitHub says: " + apiMsg : "");
+    }
+    if (status === 404) {
+      return "Not found (404). Check the owner/repository name." + (apiMsg ? " GitHub says: " + apiMsg : "");
+    }
+    if (status === 422) {
+      return "GitHub couldn't process the request (422)." + (apiMsg ? " GitHub says: " + apiMsg : "");
+    }
+    return "GitHub request failed (HTTP " + status + ")." + (apiMsg ? " GitHub says: " + apiMsg : "");
+  }
+
+  function githubRepoUrlOk(url) {
+    return typeof url === "string" && GITHUB_REPO_URL_RE.test(url.trim());
+  }
+
+  /**
+   * Authenticated GitHub API request. fetchImpl is injectable for tests.
+   * Rejects when no token is set; failures become friendly messages and
+   * the token is scrubbed from every error.
+   */
+  function githubRequest(path, token, opts, fetchImpl) {
+    opts = opts || {};
+    var fetchFn = fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
+    if (!fetchFn) return Promise.reject(new Error("fetch is not available."));
+    var t = String(token == null ? "" : token);
+    if (!t) {
+      return Promise.reject(new Error("GitHub token is not connected. Add it in Settings → Connect GitHub."));
+    }
+    var url = githubApiUrl(path);
+    var init = { method: opts.method || "GET", headers: githubAuthHeaders(t) };
+    if (opts.body !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(opts.body);
+    }
+    function fail(msg) {
+      throw new Error(redactGithubToken(msg, t));
+    }
+    return Promise.resolve()
+      .then(function () { return fetchFn(url, init); })
+      .then(function (res) {
+        return Promise.resolve(res.text()).then(function (text) {
+          if (res.status >= 200 && res.status < 300) {
+            if (!text) return null;
+            try { return JSON.parse(text); } catch (e) { return text; }
+          }
+          fail(githubErrorMessage(res.status, text));
+          return null; // unreachable — fail throws
+        });
+      })
+      .catch(function (e) {
+        fail(e && e.message ? e.message : String(e));
+        return null; // unreachable — fail throws
+      });
+  }
+
   return {
     CHAT_RENDER_CAP: CHAT_RENDER_CAP,
     debounce: debounce,
@@ -2013,6 +2117,13 @@
     stopSpeechSynthesis: stopSpeechSynthesis,
     /* secret scrubbing for logs */
     redactSecrets: redactSecrets,
+    /* GitHub integration (pure client core — DOM lives in github.js) */
+    githubApiUrl: githubApiUrl,
+    githubAuthHeaders: githubAuthHeaders,
+    githubErrorMessage: githubErrorMessage,
+    githubRepoUrlOk: githubRepoUrlOk,
+    redactGithubToken: redactGithubToken,
+    githubRequest: githubRequest,
     /* reports result summary */
     summarizeJobResult: summarizeJobResult,
     /* job history parsing */

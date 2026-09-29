@@ -41,6 +41,26 @@ import {
 } from "./agent/checkpoints";
 import { resolveSafePath, ToolError } from "./agent/tools";
 import {
+  GitError,
+  assertGitRepo,
+  gitStatus,
+  gitStage,
+  gitBranches,
+  createBranch,
+  switchBranch,
+  gitCommit,
+  gitLog,
+  gitDiff,
+  discardFile,
+  stashList,
+  stashPush,
+  stashPop,
+  gitMerge,
+  gitPull,
+  gitPush,
+  cloneWithToken,
+} from "./git/git-service";
+import {
   getDemoManager,
   prepareDemoRepo,
   getDemoStatus,
@@ -741,6 +761,208 @@ async function handleCheckpointsApi(
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Git workspace API (Node only — git repos live in the server workspace,
+   which serverless hosting doesn't have).
+ *
+ *   GET    /api/git/status?repo=            → status + branch + ahead/behind
+ *   GET    /api/git/branches?repo=          → current + branch list
+ *   POST   /api/git/branches                {repo, name} → create branch
+ *   POST   /api/git/checkout                {repo, branch} → switch branch
+ *   POST   /api/git/commit                  {repo, message} → commit staged
+ *   POST   /api/git/stage                   {repo, paths?} → stage (all if omitted)
+ *   GET    /api/git/log?repo=&n=            → recent commits (cap 100)
+ *   GET    /api/git/diff?repo=&staged=1&ref= → unified diff
+ *   POST   /api/git/discard                 {repo, path} → restore file from HEAD
+ *   GET    /api/git/stash?repo=             → stash list
+ *   POST   /api/git/stash                   {repo, message?} → stash changes
+ *   POST   /api/git/stash/pop               {repo, index?} → apply stash
+ *   POST   /api/git/merge                   {repo, branch} → merge (honest conflicts)
+ *   POST   /api/git/pull                    {repo} → pull (env git auth)
+ *   POST   /api/git/push                    {repo} → push (env git auth)
+ *   POST   /api/git/clone-token             {url, token} → token clone (transient)
+ *
+ * The repo name must be a known workspace repo AND a git repo. Pull/push
+ * rely on the server environment's existing git authentication — the API
+ * never accepts or stores git passwords. The clone token is used once via
+ * http.extraHeader and never persisted or logged.
+ * ------------------------------------------------------------------ */
+
+const gitBuckets = new Map<string, { count: number; reset: number }>();
+export const GIT_LIMIT = 60;
+export const GIT_WINDOW_MS = 60_000;
+function gitRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = gitBuckets.get(ip);
+  if (!entry || now > entry.reset) {
+    gitBuckets.set(ip, { count: 1, reset: now + GIT_WINDOW_MS });
+    if (gitBuckets.size > 10_000) gitBuckets.clear();
+    return false;
+  }
+  entry.count++;
+  return entry.count > GIT_LIMIT;
+}
+/** Test hook: clear all git buckets. */
+export function resetGitRateLimit(): void {
+  gitBuckets.clear();
+}
+
+/** Resolve a repo name to its root; must be a known workspace repo and a git repo. */
+function resolveGitRepo(workspace: string, repo: unknown): string {
+  const name = typeof repo === "string" ? repo : "";
+  const known = listWorkspaceRepos(workspace).some((r) => r.name === name);
+  if (!known) throw new AgentHttpError(400, "Unknown repository.");
+  const root = resolveSafePath(workspace, name);
+  assertGitRepo(root); // throws GitError(NOT_A_REPO) otherwise
+  return root;
+}
+
+async function handleGitApi(
+  workspace: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+): Promise<void> {
+  const ip = req.socket.remoteAddress ?? "unknown";
+  if (gitRateLimited(ip)) {
+    sendJson(res, 429, { ok: false, error: "Too many git requests. Please slow down." });
+    return;
+  }
+  const sub = url.pathname.slice("/api/git".length);
+  const seg = sub.split("/").filter((s) => s.length > 0);
+  const bad = (msg: string) => { throw new AgentHttpError(400, msg); };
+  try {
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "status") {
+      const root = resolveGitRepo(workspace, url.searchParams.get("repo"));
+      sendJson(res, 200, { ok: true, ...(await gitStatus(root)) });
+      return;
+    }
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "branches") {
+      const root = resolveGitRepo(workspace, url.searchParams.get("repo"));
+      sendJson(res, 200, { ok: true, ...(await gitBranches(root)) });
+      return;
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "branches") {
+      const body = (await readJsonBody(req)) as { repo?: unknown; name?: unknown };
+      const root = resolveGitRepo(workspace, body.repo);
+      if (typeof body.name !== "string" || !body.name.trim()) bad("Branch name is required.");
+      sendJson(res, 201, { ok: true, ...(await createBranch(root, body.name as string)) });
+      return;
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "checkout") {
+      const body = (await readJsonBody(req)) as { repo?: unknown; branch?: unknown };
+      const root = resolveGitRepo(workspace, body.repo);
+      if (typeof body.branch !== "string" || !body.branch.trim()) bad("Branch is required.");
+      sendJson(res, 200, { ok: true, ...(await switchBranch(root, body.branch as string)) });
+      return;
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "commit") {
+      const body = (await readJsonBody(req)) as { repo?: unknown; message?: unknown };
+      const root = resolveGitRepo(workspace, body.repo);
+      sendJson(res, 201, { ok: true, ...(await gitCommit(root, typeof body.message === "string" ? body.message : "")) });
+      return;
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "stage") {
+      const body = (await readJsonBody(req)) as { repo?: unknown; paths?: unknown };
+      const root = resolveGitRepo(workspace, body.repo);
+      const paths = body.paths === undefined ? undefined : (Array.isArray(body.paths) ? body.paths : null);
+      if (paths === null) bad("paths must be an array of strings.");
+      sendJson(res, 200, { ok: true, ...(await gitStage(root, paths as string[] | undefined)) });
+      return;
+    }
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "log") {
+      const root = resolveGitRepo(workspace, url.searchParams.get("repo"));
+      const n = parseInt(url.searchParams.get("n") ?? "30", 10);
+      sendJson(res, 200, { ok: true, commits: await gitLog(root, Number.isFinite(n) ? n : 30) });
+      return;
+    }
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "diff") {
+      const root = resolveGitRepo(workspace, url.searchParams.get("repo"));
+      const ref = url.searchParams.get("ref") ?? undefined;
+      sendJson(res, 200, {
+        ok: true,
+        ...(await gitDiff(root, { staged: url.searchParams.get("staged") === "1", ref: ref || undefined })),
+      });
+      return;
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "discard") {
+      const body = (await readJsonBody(req)) as { repo?: unknown; path?: unknown };
+      const root = resolveGitRepo(workspace, body.repo);
+      if (typeof body.path !== "string" || !body.path.trim()) bad("path is required.");
+      sendJson(res, 200, { ok: true, ...(await discardFile(root, body.path as string)) });
+      return;
+    }
+    if (seg.length >= 1 && seg[0] === "stash") {
+      if (req.method === "GET" && seg.length === 1) {
+        const root = resolveGitRepo(workspace, url.searchParams.get("repo"));
+        sendJson(res, 200, { ok: true, stash: await stashList(root) });
+        return;
+      }
+      if (req.method === "POST" && seg.length === 1) {
+        const body = (await readJsonBody(req)) as { repo?: unknown; message?: unknown };
+        const root = resolveGitRepo(workspace, body.repo);
+        sendJson(res, 201, {
+          ok: true,
+          ...(await stashPush(root, typeof body.message === "string" ? body.message : undefined)),
+        });
+        return;
+      }
+      if (req.method === "POST" && seg.length === 2 && seg[1] === "pop") {
+        const body = (await readJsonBody(req)) as { repo?: unknown; index?: unknown };
+        const root = resolveGitRepo(workspace, body.repo);
+        const idx = typeof body.index === "number" ? body.index : 0;
+        sendJson(res, 200, { ok: true, ...(await stashPop(root, idx)) });
+        return;
+      }
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "merge") {
+      const body = (await readJsonBody(req)) as { repo?: unknown; branch?: unknown };
+      const root = resolveGitRepo(workspace, body.repo);
+      if (typeof body.branch !== "string" || !body.branch.trim()) bad("Branch is required.");
+      sendJson(res, 200, { ok: true, ...(await gitMerge(root, body.branch as string)) });
+      return;
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "pull") {
+      const body = (await readJsonBody(req)) as { repo?: unknown };
+      const root = resolveGitRepo(workspace, body.repo);
+      sendJson(res, 200, { ok: true, ...(await gitPull(root)) });
+      return;
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "push") {
+      const body = (await readJsonBody(req)) as { repo?: unknown };
+      const root = resolveGitRepo(workspace, body.repo);
+      sendJson(res, 200, { ok: true, ...(await gitPush(root)) });
+      return;
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "clone-token") {
+      const body = (await readJsonBody(req)) as { url?: unknown; token?: unknown };
+      if (typeof body.url !== "string" || !body.url.trim()) bad("url is required.");
+      if (typeof body.token !== "string" || !body.token.trim()) bad("token is required.");
+      sendJson(res, 201, {
+        ok: true,
+        ...(await cloneWithToken(workspace, body.url as string, body.token as string)),
+      });
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: `Not found: ${req.method} ${url.pathname}` });
+  } catch (e) {
+    if (e instanceof GitError) {
+      const status = e.code === "NOT_A_REPO" ? 404 : e.code === "TIMEOUT" ? 504 : 400;
+      sendJson(res, status, { ok: false, error: e.message, code: e.code });
+      return;
+    }
+    if (e instanceof ToolError) {
+      sendJson(res, 400, { ok: false, error: e.message });
+      return;
+    }
+    if (e instanceof AgentHttpError) {
+      sendJson(res, e.status, { ok: false, error: e.message });
+      return;
+    }
+    throw e;
+  }
+}
+
 export function createRequestHandler(opts: ServeOptions): (req: IncomingMessage, res: ServerResponse) => void { return (req, res) => {    void handle(opts, req, res).catch((err) => {
       if (err instanceof BadRequestError) {
         sendJson(res, 400, { ok: false, error: err.message });
@@ -1288,6 +1510,13 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
      which serverless hosting doesn't have). */
   if (url.pathname === "/api/checkpoints" || url.pathname.startsWith("/api/checkpoints/")) {
     await handleCheckpointsApi(getAgentManager(opts.demoWorkspace).workspace, req, res, url);
+    return;
+  }
+
+  /* Git workspace (Node server only — git repos live in the server workspace,
+     which serverless hosting doesn't have). */
+  if (url.pathname === "/api/git" || url.pathname.startsWith("/api/git/")) {
+    await handleGitApi(getAgentManager(opts.demoWorkspace).workspace, req, res, url);
     return;
   }
 

@@ -386,6 +386,13 @@ export declare function stopSpeechSynthesis(deps?: {
 
 export declare function redactSecrets(s: unknown): string;
 
+export declare function githubApiUrl(path: string): string;
+export declare function githubAuthHeaders(token: string): Record<string, string>;
+export declare function githubErrorMessage(status: number, bodyText: string): string;
+export declare function githubRepoUrlOk(url: string): boolean;
+export declare function redactGithubToken(text: string, token: string): string;
+export declare function githubRequest(path: string, token: string, opts?: { method?: string; body?: unknown }, fetchImpl?: unknown): Promise<unknown>;
+
 export interface JobResultSummary {
   deviations: string[];
   errors: string[];

@@ -1276,6 +1276,20 @@ async function renderRepos(view) {
       window.NeutronCheckpoints.renderPanel(cpWrap);
     }
   } catch (e) { /* checkpoints are additive — never break the repos view */ }
+  try {
+    if (window.NeutronGit) {
+      var gitWrap = el("div", "repos-git");
+      view.appendChild(gitWrap);
+      window.NeutronGit.renderPanel(gitWrap);
+    }
+  } catch (e) { /* git panel is additive — never break the repos view */ }
+  try {
+    if (window.NeutronGitHub) {
+      var ghWrap = el("div", "repos-github");
+      view.appendChild(ghWrap);
+      window.NeutronGitHub.renderPanel(ghWrap);
+    }
+  } catch (e) { /* github panel is additive — never break the repos view */ }
   /* Skeleton while the status call is in flight — no blank screen. */
   var sk = el("section", "panel skeleton-card");
   sk.setAttribute("aria-busy", "true");
@@ -3848,6 +3862,11 @@ async function renderSettings(view) {
   row.appendChild(clear);
   p.appendChild(row);
   view.appendChild(p);
+
+  /* ----- Connect GitHub (additive) ----- */
+  try {
+    if (window.NeutronGitHub) window.NeutronGitHub.renderConnectSettings(view);
+  } catch (e) { /* github connect is additive — never break settings */ }
 
   var s = el("section", "panel");
   s.appendChild(el("h2", null, "Server provider state"));
