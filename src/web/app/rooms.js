@@ -344,6 +344,12 @@
           appendChatMsg(msg.msg, true);
         }
         break;
+      case "CHAT_DELETED":
+        if (typeof msg.id === "string" && msg.id) {
+          S.chat = S.chat.filter(function (x) { return x.id !== msg.id; });
+          removeChatMsgEl(msg.id);
+        }
+        break;
       case "CHAT_TYPING":
         if (msg.memberId && msg.memberId !== S.memberId) {
           if (msg.typing) S.typing[msg.memberId] = msg.displayName || "Someone";
@@ -503,13 +509,46 @@
 
   function chatMsgEl(m) {
     var wrap = el("div", "rm-msg" + (m.memberId === S.memberId ? " mine" : ""));
+    if (m.id) wrap.setAttribute("data-mid", m.id);
     var head = el("div", "rm-msg-head");
     head.appendChild(el("span", "rm-msg-name", m.displayName || "Someone"));
     var ts = m.ts && UI.fmtTime ? UI.fmtTime(m.ts) : "";
     if (ts) head.appendChild(el("span", "rm-msg-time", ts));
+    /* Authors can delete their own messages; the owner can moderate any. */
+    if (m.id && (m.memberId === S.memberId || isOwner())) {
+      var del = el("button", "rm-msg-del", "×");
+      del.setAttribute("aria-label", "Delete message");
+      del.title = "Delete message";
+      del.onclick = function () {
+        openConfirmDialog({
+          title: "Delete this message?",
+          body: "It will be removed for everyone in the room.",
+          okText: "Delete",
+          danger: true,
+          onOk: function () { sendMsg({ type: "CHAT_DELETE", id: m.id }); },
+        });
+      };
+      head.appendChild(del);
+    }
     wrap.appendChild(head);
     wrap.appendChild(el("div", "rm-msg-text", m.text || ""));
     return wrap;
+  }
+
+  /** Remove a deleted message's DOM node (id-matched; never trust selectors). */
+  function removeChatMsgEl(id) {
+    var log = document.getElementById("rm-chat-log");
+    if (!log || !id) return;
+    var kids = log.children;
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i].getAttribute("data-mid") === id) {
+        log.removeChild(kids[i]);
+        break;
+      }
+    }
+    if (!log.children.length) {
+      log.appendChild(el("div", "rm-empty", "No messages yet. Say hello!"));
+    }
   }
 
   function paintChat(scroll) {

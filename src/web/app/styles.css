@@ -1798,6 +1798,24 @@ body.chat-full .view {
 .rm-msg-name { font-weight: 700; font-size: 13px; color: var(--primary-dark); }
 .rm-msg.mine .rm-msg-name { color: var(--text-2); }
 .rm-msg-time { font-size: 11px; color: var(--text-3); }
+.rm-msg-del {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  padding: 2px 6px;
+  min-height: 32px;
+  min-width: 32px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-3);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+}
+.rm-msg:hover .rm-msg-del,
+.rm-msg:focus-within .rm-msg-del { opacity: 1; }
+.rm-msg-del:hover { color: var(--red); background: var(--red-soft); }
+@media (hover: none) { .rm-msg-del { opacity: 1; } }
 .rm-msg-text {
   background: var(--bg-soft);
   border: 1px solid var(--border);

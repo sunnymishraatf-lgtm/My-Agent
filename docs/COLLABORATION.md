@@ -42,14 +42,14 @@ no fake "connecting" state, no mock data.
 ## Wire protocol (`/collab` WebSocket)
 
 Client → server: `ROOM_JOIN`, `ROOM_LEAVE`, `ROOM_RENAME`, `ROOM_DELETE`,
-`PRESENCE_UPDATE`, `CHAT_MESSAGE`, `CHAT_TYPING`, `WEBRTC_OFFER/ANSWER/ICE`
+`PRESENCE_UPDATE`, `CHAT_MESSAGE`, `CHAT_DELETE {id}`, `CHAT_TYPING`, `WEBRTC_OFFER/ANSWER/ICE`
 (`to` + `payload`), `VOICE_JOIN`, `VOICE_LEAVE`, `VOICE_STATE {muted}`,
 `FILE_*` (list/create/rename/delete/open/close/snapshot), `YJS_SYNC`
 (step1/step2/update, y-protocols-compatible framing), `AWARENESS_UPDATE`,
 `VERSION_*`, `AI_CONTEXT_REQUEST {requestId, fileId, selection}`, `AI_APPLY {fileId}`.
 
 Server → client: `JOINED` (room, you, members, chat, files, `ice`, `voice`),
-`LEFT`, `MEMBERS`, `CHAT_MESSAGE`, `CHAT_TYPING`, `VOICE_MEMBERS`,
+`LEFT`, `MEMBERS`, `CHAT_MESSAGE`, `CHAT_DELETED {id}`, `CHAT_TYPING`, `VOICE_MEMBERS`,
 `WEBRTC_*` (with `from`/`fromName`), `FILE_*`, `YJS_SYNC`, `AWARENESS`,
 `ROOM_RENAMED`, `ROOM_DELETED`, `FILE_SNAPSHOT`, `VERSIONS`,
 `AI_CONTEXT {requestId, ok, code?, path?, text?, truncated?}`,

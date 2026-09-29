@@ -136,6 +136,32 @@ describe("chat", () => {
     expect(sanitizeDisplayName("  Jo\nhn  ")).toBe("Jo hn");
     expect(sanitizeDisplayName("x".repeat(100)).length).toBe(32);
   });
+  it("deletes chat messages: author or owner only", () => {
+    const { mgr } = freshManager();
+    const { room, ownerToken } = mgr.createRoom("D");
+    const owner: any = mgr.joinRoom(room.id, "Owner", ownerToken);
+    const member: any = mgr.joinRoom(room.id, "Member");
+    const m1 = mgr.postChat(room.id, member.member.id, "member msg")!;
+    const m2 = mgr.postChat(room.id, owner.member.id, "owner msg")!;
+    // Author deletes their own message.
+    expect(mgr.deleteChatMsg(room.id, member.member.id, m1.id, false)).toBe(true);
+    expect(mgr.getChat(room.id).map((m) => m.id)).not.toContain(m1.id);
+    // Member cannot delete someone else's message.
+    expect(mgr.deleteChatMsg(room.id, member.member.id, m2.id, false)).toBe(false);
+    expect(mgr.getChat(room.id).map((m) => m.id)).toContain(m2.id);
+    // Owner can moderate anyone's message.
+    expect(mgr.deleteChatMsg(room.id, owner.member.id, m2.id, true)).toBe(true);
+    expect(mgr.getChat(room.id)).toHaveLength(0);
+  });
+  it("deleteChatMsg rejects unknown rooms/messages and bad ids", () => {
+    const { mgr } = freshManager();
+    const { room, ownerToken } = mgr.createRoom("D2");
+    const owner: any = mgr.joinRoom(room.id, "Owner", ownerToken);
+    expect(mgr.deleteChatMsg("NEUTRON-ZZZZZZ", owner.member.id, "c1", true)).toBe(false);
+    expect(mgr.deleteChatMsg(room.id, owner.member.id, "nope", true)).toBe(false);
+    expect(mgr.deleteChatMsg(room.id, owner.member.id, "", true)).toBe(false);
+    expect(mgr.deleteChatMsg(room.id, owner.member.id, null as any, true)).toBe(false);
+  });
 });
 
 describe("presence", () => {

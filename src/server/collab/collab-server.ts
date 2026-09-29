@@ -166,6 +166,7 @@ export type ClientMessage =
   | { type: "ROOM_DELETE" }
   | { type: "PRESENCE_UPDATE"; status: PresenceStatus; activity?: string }
   | { type: "CHAT_MESSAGE"; text: string }
+  | { type: "CHAT_DELETE"; id: string }
   | { type: "CHAT_TYPING"; typing: boolean }
   | { type: "WEBRTC_OFFER" | "WEBRTC_ANSWER" | "WEBRTC_ICE"; to: string; payload: unknown }
   | { type: "VOICE_JOIN" }
@@ -204,6 +205,7 @@ export type ServerMessage =
   | { type: "LEFT" }
   | { type: "MEMBERS"; members: MemberPublic[] }
   | { type: "CHAT_MESSAGE"; msg: CollabChatMsg }
+  | { type: "CHAT_DELETED"; id: string }
   | { type: "CHAT_TYPING"; memberId: string; displayName: string; typing: boolean }
   | { type: "WEBRTC_OFFER" | "WEBRTC_ANSWER" | "WEBRTC_ICE"; from: string; fromName: string; payload: unknown }
   | { type: "VOICE_MEMBERS"; members: VoiceMemberPublic[] }
@@ -267,6 +269,7 @@ export type ErrorCode =
   | "UPDATE_TOO_LARGE"
   | "VERSION_NOT_FOUND"
   | "VOICE_FULL"
+  | "CHAT_NOT_FOUND"
   | "RATE_LIMITED";
 
 // ----- rate limiting -------------------------------------------------------
@@ -376,6 +379,7 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   UPDATE_TOO_LARGE: "That update was too large.",
   VERSION_NOT_FOUND: "That version is no longer available.",
   VOICE_FULL: "Voice is full in this room (6 max). Try again later.",
+  CHAT_NOT_FOUND: "That message is gone or can't be deleted.",
   RATE_LIMITED: "You're sending messages too fast. Slow down a little.",
 };
 
@@ -594,6 +598,9 @@ export class CollabServer {
       case "CHAT_MESSAGE":
         this.handleChat(ws, state, msg, now);
         break;
+      case "CHAT_DELETE":
+        this.handleChatDelete(ws, state, msg, now);
+        break;
       case "CHAT_TYPING":
         this.handleTyping(ws, state, msg, now);
         break;
@@ -789,6 +796,34 @@ export class CollabServer {
     this.broadcast(code, { type: "CHAT_MESSAGE", msg: posted });
     // Message text is never logged.
     this.log(`chat room=${code} n=1`);
+  }
+
+  private handleChatDelete(
+    ws: WebSocket,
+    state: ConnState,
+    msg: Extract<ClientMessage, { type: "CHAT_DELETE" }>,
+    now: number,
+  ): void {
+    const code = this.requireRoom(ws, state);
+    if (!code) return;
+    if (!state.buckets.chat.take(now)) {
+      this.fail(ws, "RATE_LIMITED");
+      return;
+    }
+    if (typeof msg.id !== "string" || !msg.id) {
+      this.fail(ws, "INVALID_PAYLOAD");
+      return;
+    }
+    // Own messages, or any message for the room owner (moderation).
+    // Role comes from the server-side join — the client is never trusted.
+    const isOwner = state.role === "owner" && this.opts.manager.isRoomOwner(code, state.id);
+    const ok = this.opts.manager.deleteChatMsg(code, state.id, msg.id, isOwner);
+    if (!ok) {
+      this.fail(ws, "CHAT_NOT_FOUND");
+      return;
+    }
+    this.broadcast(code, { type: "CHAT_DELETED", id: msg.id });
+    this.log(`chat delete room=${code}`);
   }
 
   private handleTyping(

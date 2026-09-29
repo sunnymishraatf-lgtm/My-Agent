@@ -400,6 +400,24 @@ export class RoomManager {
     return rec ? rec.chat.slice() : [];
   }
 
+  /**
+   * Delete a chat message. Allowed for the message's own author or a room
+   * owner (moderation). Returns false when the room/message doesn't exist
+   * or the caller may not delete it. Never throws.
+   */
+  deleteChatMsg(code: unknown, memberId: string, msgId: string, isOwner: boolean): boolean {
+    const rec = this.rooms.get(normalizeRoomCode(code));
+    if (!rec || typeof msgId !== "string" || !msgId) return false;
+    const idx = rec.chat.findIndex((m) => m.id === msgId);
+    if (idx < 0) return false;
+    const msg = rec.chat[idx];
+    if (!msg) return false;
+    if (msg.memberId !== memberId && !isOwner) return false;
+    rec.chat.splice(idx, 1);
+    this.scheduleSave();
+    return true;
+  }
+
   // ----- activity feed (Phase 4) -----------------------------------------
 
   private static isValidActivity(a: unknown): a is CollabActivity {
