@@ -22,10 +22,26 @@ function themeIds(): string[] {
 }
 
 describe("theme registration", () => {
-  it("registers 48 named themes plus System", () => {
+  it("registers 148 named themes plus System", () => {
     const ids = themeIds();
-    expect(ids.length).toBe(48);
+    expect(ids.length).toBe(148);
     expect(new Set(ids).size).toBe(ids.length); // no duplicate ids
+  });
+
+  it("theme names are unique", () => {
+    const m = appJs.match(/var THEMES = \[([\s\S]*?)\];/);
+    const body: string = (m as RegExpMatchArray)[1] as string;
+    const names = [...body.matchAll(/name:\s*"([^"]+)"/g)].map((x) => x[1] as string);
+    expect(names.length).toBe(148);
+    expect(new Set(names).size).toBe(names.length); // no duplicate names
+  });
+
+  it("every theme has a distinct swatch triple", () => {
+    const m = appJs.match(/var THEMES = \[([\s\S]*?)\];/);
+    const body: string = (m as RegExpMatchArray)[1] as string;
+    const swatches = [...body.matchAll(/swatch:\s*\[([^\]]+)\]/g)].map((x) => x[1] as string);
+    expect(swatches.length).toBe(148);
+    expect(new Set(swatches).size).toBe(swatches.length);
   });
 
   it("every theme has a stylesheet block (light is the :root default)", () => {

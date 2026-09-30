@@ -191,7 +191,7 @@ function isVerbose() {
 function setVerbose(on) {
   try { localStorage.setItem(VERBOSE_STORAGE, on ? "1" : "0"); } catch (e) { /* private mode */ }
 }
-/* ----- Theme (Appearance): 48 named themes + System. Stored as the theme
+/* ----- Theme (Appearance): 148 named themes + System. Stored as the theme
    name or "system"; applied via the data-theme attribute. ----- */
 var THEME_STORAGE = "neutron_theme";
 var THEMES = [
@@ -251,6 +251,106 @@ var THEMES = [
   { id: "ghost", name: "Ghost", swatch: ["#0E0F10", "#CBD5E1", "#292B2D"] },
   { id: "plum-night", name: "Plum Night", swatch: ["#0D0912", "#C084FC", "#261A32"] },
   { id: "forest-night", name: "Forest Night", swatch: ["#051009", "#4ADE80", "#0F2C1A"] },
+{ id: "arctic", name: "Arctic", swatch: ["#FFFFFF", "#2563EB", "#1E293B"] },
+  { id: "skyline", name: "Skyline", swatch: ["#F5FAFE", "#0284C7", "#0A2A40"] },
+  { id: "glacier", name: "Glacier", swatch: ["#F4FAFD", "#0EA5E9", "#0C2B3D"] },
+  { id: "powder", name: "Powder Blue", swatch: ["#F8FAFE", "#60A5FA", "#1E2A3D"] },
+  { id: "azure", name: "Azure", swatch: ["#F5F9FF", "#1D4ED8", "#1E2A4A"] },
+  { id: "mist", name: "Mist", swatch: ["#F7F9FA", "#5B8DB8", "#1E2E3D"] },
+  { id: "steel", name: "Steel", swatch: ["#F4F6F8", "#5B7FA6", "#1F2A36"] },
+  { id: "seafoam", name: "Seafoam", swatch: ["#F7FDFB", "#0D9488", "#07332D"] },
+  { id: "lagoon", name: "Lagoon", swatch: ["#EFFDFB", "#06B6D4", "#083344"] },
+  { id: "jade", name: "Jade", swatch: ["#F5FBF8", "#059669", "#07352A"] },
+  { id: "mint-chip", name: "Mint Chip", swatch: ["#F7FEFA", "#10B981", "#0B2E22"] },
+  { id: "celadon", name: "Celadon", swatch: ["#F7FBF7", "#4FA383", "#1E332A"] },
+  { id: "matcha", name: "Matcha", swatch: ["#F9FDF5", "#4D7C0F", "#1C2E06"] },
+  { id: "meadow", name: "Meadow", swatch: ["#F6FBF4", "#16A34A", "#0F2E1A"] },
+  { id: "kelp", name: "Kelp", swatch: ["#F5F9F3", "#3F6212", "#1E2E0C"] },
+  { id: "pistachio", name: "Pistachio", swatch: ["#F8FBF3", "#6C9A0F", "#24330A"] },
+  { id: "pine", name: "Pine", swatch: ["#F4F8F5", "#15803D", "#0C2B18"] },
+  { id: "moss", name: "Moss", swatch: ["#F6F8F2", "#65A30D", "#232D0C"] },
+  { id: "chartreuse", name: "Chartreuse", swatch: ["#FBFDF0", "#8AA30F", "#2E330A"] },
+  { id: "lemon", name: "Lemon", swatch: ["#FFFDF5", "#CA8A04", "#3A2703"] },
+  { id: "honey", name: "Honey", swatch: ["#FDFBF3", "#B45309", "#3A2403"] },
+  { id: "butter", name: "Butter", swatch: ["#FFFDF0", "#B98A0B", "#3A2E02"] },
+  { id: "vanilla", name: "Vanilla", swatch: ["#FDFBF7", "#A16207", "#2E1F04"] },
+  { id: "dune", name: "Dune", swatch: ["#FAF6EF", "#92400E", "#33200A"] },
+  { id: "sandstone", name: "Sandstone", swatch: ["#F8F4EC", "#A8845A", "#33291A"] },
+  { id: "coral", name: "Coral", swatch: ["#FFFBF7", "#EA580C", "#3D1A06"] },
+  { id: "apricot", name: "Apricot", swatch: ["#FEF6EF", "#EE7E22", "#3A2008"] },
+  { id: "clay", name: "Clay", swatch: ["#FAF5F1", "#C2703D", "#2E1C0E"] },
+  { id: "cherry", name: "Cherry", swatch: ["#FDF5F6", "#DC2626", "#3A0D0D"] },
+  { id: "brick", name: "Brick", swatch: ["#FAF5F3", "#B91C1C", "#331212"] },
+  { id: "blossom", name: "Blossom", swatch: ["#FFFBF5", "#EC4899", "#3A0F24"] },
+  { id: "petal", name: "Petal", swatch: ["#FEF5F7", "#DB2777", "#3A0B1E"] },
+  { id: "raspberry", name: "Raspberry", swatch: ["#FDF5F8", "#BE185D", "#330A1D"] },
+  { id: "periwinkle", name: "Periwinkle", swatch: ["#F7F8FE", "#6366F1", "#1F1F3D"] },
+  { id: "wisteria", name: "Wisteria", swatch: ["#F9F6FE", "#A78BFA", "#2A2140"] },
+  { id: "iris", name: "Iris", swatch: ["#F6F4FD", "#7C3AED", "#221342"] },
+  { id: "orchid", name: "Orchid", swatch: ["#FBF4FC", "#C026D3", "#330A2E"] },
+  { id: "lilac-mist", name: "Lilac Mist", swatch: ["#F5F0FE", "#8B5CF6", "#241B3D"] },
+  { id: "cotton", name: "Cotton", swatch: ["#FDFDFD", "#64748B", "#2A3442"] },
+  { id: "fog", name: "Fog", swatch: ["#F5F7FA", "#7C8DA6", "#232D3A"] },
+  { id: "stone", name: "Stone", swatch: ["#FAFAF9", "#78716C", "#292524"] },
+  { id: "paper", name: "Paper", swatch: ["#FDFCF8", "#8A7E6B", "#2B2620"] },
+  { id: "linen", name: "Linen", swatch: ["#FDFBF6", "#9A8C6E", "#2E2A22"] },
+  { id: "alabaster", name: "Alabaster", swatch: ["#FCFCFA", "#8C8C94", "#26262B"] },
+  { id: "eucalyptus", name: "Eucalyptus", swatch: ["#F4F9F6", "#5B9A8B", "#1E332C"] },
+  { id: "marigold", name: "Marigold", swatch: ["#FFFBEB", "#C77E0A", "#3A2803"] },
+  { id: "thistle", name: "Thistle", swatch: ["#FAF5FA", "#B794C7", "#2E2133"] },
+  { id: "denim", name: "Denim", swatch: ["#F5F7FA", "#3B5BFD", "#1B2450"] },
+  { id: "verdigris", name: "Verdigris", swatch: ["#F2FAF7", "#43B3A2", "#0E2E28"] },
+  { id: "trench", name: "Trench", swatch: ["#020A12", "#22D3EE", "#072A33"] },
+  { id: "nebula", name: "Nebula", swatch: ["#0A0A1A", "#818CF8", "#1A1A2E"] },
+  { id: "sapphire", name: "Sapphire", swatch: ["#060B16", "#3B82F6", "#0D1B33"] },
+  { id: "cobalt", name: "Cobalt", swatch: ["#080D18", "#60A5FA", "#12233D"] },
+  { id: "twilight", name: "Twilight", swatch: ["#0D0D1A", "#6366F1", "#1C1C33"] },
+  { id: "midnight-blue", name: "Midnight Blue", swatch: ["#060816", "#4F46E5", "#101230"] },
+  { id: "tokyo", name: "Tokyo Night", swatch: ["#0A0A12", "#7AA2F7", "#14141F"] },
+  { id: "night-owl", name: "Night Owl", swatch: ["#060814", "#82AAFF", "#0D1226"] },
+  { id: "github-dark", name: "GitHub Dark", swatch: ["#0A0C10", "#58A6FF", "#12161C"] },
+  { id: "one-dark", name: "One Dark", swatch: ["#0B0D12", "#61AFEF", "#12151C"] },
+  { id: "glacier-night", name: "Glacier Night", swatch: ["#04101A", "#38BDF8", "#0B2233"] },
+  { id: "frost-night", name: "Frost Night", swatch: ["#060E14", "#7DD3FC", "#10222E"] },
+  { id: "lagoon-night", name: "Lagoon Night", swatch: ["#03120F", "#2DD4BF", "#0A2926"] },
+  { id: "abyssal", name: "Abyssal", swatch: ["#02100E", "#14B8A6", "#072A26"] },
+  { id: "solarized", name: "Solarized Dark", swatch: ["#001A1E", "#2AA198", "#07333A"] },
+  { id: "nord", name: "Nord", swatch: ["#0B0E14", "#88C0D0", "#11161D"] },
+  { id: "toxic", name: "Toxic", swatch: ["#0A0F04", "#A3E635", "#1E2A0C"] },
+  { id: "jungle", name: "Jungle", swatch: ["#04120A", "#4ADE80", "#0D2B1A"] },
+  { id: "moss-night", name: "Moss Night", swatch: ["#0A0F08", "#84CC16", "#1E2A10"] },
+  { id: "monokai", name: "Monokai", swatch: ["#0A0A08", "#A6E22E", "#1A1A12"] },
+  { id: "everforest", name: "Everforest", swatch: ["#0C0E0C", "#A7C080", "#161816"] },
+  { id: "forest-deep", name: "Forest Deep", swatch: ["#030B06", "#34D399", "#0A241A"] },
+  { id: "carbon", name: "Carbon", swatch: ["#0B0B0C", "#8E8E96", "#17171A"] },
+  { id: "aubergine", name: "Aubergine", swatch: ["#0E0810", "#9D4EDD", "#200F2E"] },
+  { id: "deep-space", name: "Deep Space", swatch: ["#04060E", "#00D4FF", "#0A1A2E"] },
+  { id: "gold-night", name: "Gold Night", swatch: ["#100C04", "#FBBF24", "#2A2008"] },
+  { id: "brass", name: "Brass", swatch: ["#0E0B05", "#D4A017", "#26200A"] },
+  { id: "gruvbox", name: "Gruvbox", swatch: ["#0D0C0A", "#FABD2F", "#1D1A14"] },
+  { id: "forge", name: "Forge", swatch: ["#100802", "#FB923C", "#2E1C0A"] },
+  { id: "inferno", name: "Inferno", swatch: ["#120603", "#F97316", "#331505"] },
+  { id: "blood", name: "Blood", swatch: ["#100505", "#EF4444", "#2E0E0E"] },
+  { id: "maroon", name: "Maroon", swatch: ["#0E0608", "#F43F5E", "#2A0F16"] },
+  { id: "ruby", name: "Ruby", swatch: ["#120609", "#FB7185", "#331019"] },
+  { id: "synthwave", name: "Synthwave", swatch: ["#0F0520", "#FB7185", "#2A0A25"] },
+  { id: "magenta", name: "Magenta", swatch: ["#10060E", "#F0ABFC", "#2E1030"] },
+  { id: "plum-dark", name: "Plum Dark", swatch: ["#0D0810", "#E879F9", "#220F26"] },
+  { id: "cyberpunk", name: "Cyberpunk", swatch: ["#0A0118", "#E879F9", "#1E0A33"] },
+  { id: "ultraviolet", name: "Ultraviolet", swatch: ["#0C0716", "#A855F7", "#1E0F33"] },
+  { id: "amethyst", name: "Amethyst", swatch: ["#0E0A14", "#C084FC", "#241A33"] },
+  { id: "dracula", name: "Dracula", swatch: ["#0B0B12", "#BD93F9", "#1A1A26"] },
+  { id: "catppuccin", name: "Catppuccin", swatch: ["#0B0B14", "#CBA6F7", "#15151F"] },
+  { id: "palenight", name: "Pale Night", swatch: ["#0A0A12", "#C792EA", "#16161F"] },
+  { id: "rose-pine", name: "Rosé Pine", swatch: ["#0E0C12", "#EBBCBA", "#1C1820"] },
+  { id: "void", name: "Void", swatch: ["#050508", "#8A8AB8", "#14141C"] },
+  { id: "kanagawa", name: "Kanagawa", swatch: ["#0A0A0E", "#7E9CD8", "#121218"] },
+  { id: "obsidian", name: "Obsidian", swatch: ["#0A0A0B", "#71717A", "#18181B"] },
+  { id: "charcoal", name: "Charcoal", swatch: ["#0C0C0D", "#A1A1AA", "#1C1C1F"] },
+  { id: "onyx", name: "Onyx", swatch: ["#08080A", "#52525B", "#131316"] },
+  { id: "espresso", name: "Espresso", swatch: ["#0C0906", "#A0785A", "#1E150E"] },
+  { id: "slate-night", name: "Slate Night", swatch: ["#0A0E14", "#7C8DA6", "#141C28"] },
+  { id: "ink", name: "Ink", swatch: ["#07090C", "#94A3B8", "#11161D"] },
 ];
 var THEME_IDS = THEMES.map(function (t) { return t.id; });
 function storedTheme() {
@@ -4833,10 +4933,18 @@ async function renderSettings(view) {
   ap.appendChild(el("h2", null, "Appearance"));
   ap.appendChild(el("p", "muted small",
     "Pick a theme. \"System\" follows your device's light/dark setting."));
+  var themeSearch = el("input", "input theme-search");
+  themeSearch.type = "search";
+  themeSearch.placeholder = "Search " + THEMES.length + " themes…";
+  themeSearch.setAttribute("aria-label", "Search themes");
+  ap.appendChild(themeSearch);
+  var themeCount = el("p", "muted small theme-count");
+  ap.appendChild(themeCount);
   var grid = el("div", "theme-grid");
   function paintThemes() {
     grid.innerHTML = "";
     var cur = storedTheme();
+    var q = (themeSearch.value || "").trim().toLowerCase();
     function swatchBtn(id, label, colors, gradient) {
       var b = el("button", "theme-swatch" + (cur === id ? " selected" : ""));
       b.type = "button";
@@ -4865,9 +4973,21 @@ async function renderSettings(view) {
       };
       return b;
     }
-    THEMES.forEach(function (t) { grid.appendChild(swatchBtn(t.id, t.name, t.swatch, t.preview)); });
-    grid.appendChild(swatchBtn("system", "System", ["#FFFFFF", "#0E1013", "#888888"]));
+    var shown = 0;
+    function maybeAdd(t) {
+      if (q && (t.name || "").toLowerCase().indexOf(q) === -1 &&
+          (t.id || "").toLowerCase().indexOf(q) === -1) return;
+      grid.appendChild(swatchBtn(t.id, t.name, t.swatch, t.preview));
+      shown++;
+    }
+    THEMES.forEach(maybeAdd);
+    if (!q || "system".indexOf(q) !== -1) {
+      grid.appendChild(swatchBtn("system", "System", ["#FFFFFF", "#0E1013", "#888888"]));
+      shown++;
+    }
+    themeCount.textContent = q ? (shown + " of " + (THEMES.length + 1) + " themes") : "";
   }
+  themeSearch.addEventListener("input", paintThemes);
   paintThemes();
   ap.appendChild(grid);
   view.appendChild(ap);
