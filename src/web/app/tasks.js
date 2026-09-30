@@ -127,30 +127,23 @@
     } catch (e) {}
   }
 
+  /**
+   * The notification popup is gone: the bell now navigates to a dedicated
+   * full-page Notifications screen (route "notifications"), so nothing
+   * overlaps other UI anymore. These helpers are kept as safe no-ops for
+   * any legacy callers.
+   */
   function closePanel() {
     var p = document.getElementById("notif-panel");
     if (p) p.classList.add("hidden");
-    var b = document.getElementById("notif-bell");
-    if (b) b.setAttribute("aria-expanded", "false");
   }
 
   function paintPanel() {
-    var p = document.getElementById("notif-panel");
-    if (!p) return;
-    p.innerHTML = "";
-    var head = el("div", "notif-head");
-    head.appendChild(el("strong", null, "Notifications"));
-    var acts = el("div", "notif-acts");
-    var all = el("button", "linklike small", "Mark all read");
-    all.type = "button";
-    all.onclick = function () { UI.notifMarkAllRead(notifItems); saveNotifState(); updateBadge(); paintPanel(); };
-    var clr = el("button", "linklike small", "Clear");
-    clr.type = "button";
-    clr.onclick = function () { notifItems = []; saveNotifState(); updateBadge(); paintPanel(); };
-    acts.appendChild(all);
-    acts.appendChild(clr);
-    head.appendChild(acts);
-    p.appendChild(head);
+    /* No-op: notifications live on their own screen now. */
+  }
+
+  /** Notification-type preference checkboxes (shared by the full page). */
+  function buildPrefsRow() {
     var prefRow = el("div", "notif-prefs");
     prefRow.setAttribute("aria-label", "Notification preferences");
     UI.NOTIF_TYPES.forEach(function (t) {
@@ -164,11 +157,16 @@
       lab.appendChild(document.createTextNode(UI.NOTIF_TYPE_LABELS[t] || t));
       prefRow.appendChild(lab);
     });
-    p.appendChild(prefRow);
+    return prefRow;
+  }
+
+  /** The notification list (shared by the full page). */
+  function buildNotifList() {
     var list = el("div", "notif-list");
     if (!notifItems.length) {
       list.appendChild(el("p", "muted small notif-empty",
         "No notifications yet. Real events — agent runs, test results, room activity, task changes — will appear here."));
+      return list;
     }
     notifItems.forEach(function (n) {
       var it = el("button", "notif-item" + (n.read ? "" : " unread"));
@@ -184,39 +182,62 @@
         UI.notifMarkRead(notifItems, n.id);
         saveNotifState();
         updateBadge();
-        closePanel();
         if (n.link) location.hash = n.link;
+        else renderNotificationsInto();
       };
       list.appendChild(it);
     });
-    p.appendChild(list);
+    return list;
+  }
+
+  var notifViewRoot = null;
+
+  /** Re-render the notifications page in place (after read/clear). */
+  function renderNotificationsInto() {
+    if (!notifViewRoot || !notifViewRoot.isConnected) return;
+    notifViewRoot.innerHTML = "";
+    paintNotificationsPage(notifViewRoot);
+  }
+
+  function paintNotificationsPage(view) {
+    loadNotifState();
+    view.appendChild(el("h1", null, "Notifications"));
+    var unread = UI.notifUnreadCount(notifItems);
+    view.appendChild(el("p", "muted small",
+      unread > 0 ? unread + " unread." : "You're all caught up."));
+    var acts = el("div", "notif-page-acts");
+    var all = el("button", "btn", "Mark all read");
+    all.type = "button";
+    all.onclick = function () {
+      UI.notifMarkAllRead(notifItems); saveNotifState(); updateBadge();
+      renderNotificationsInto();
+    };
+    var clr = el("button", "btn ghost", "Clear all");
+    clr.type = "button";
+    clr.onclick = function () {
+      notifItems = []; saveNotifState(); updateBadge();
+      renderNotificationsInto();
+    };
+    acts.appendChild(all);
+    acts.appendChild(clr);
+    view.appendChild(acts);
+    view.appendChild(buildNotifList());
+    var prefHead = el("h2", "notif-prefs-head", "What notifies you");
+    view.appendChild(prefHead);
+    view.appendChild(el("p", "muted small",
+      "Uncheck a type to stop those notifications. Changes save automatically."));
+    view.appendChild(buildPrefsRow());
+  }
+
+  /** Route renderer: #/notifications — the dedicated notifications screen. */
+  function renderNotifications(view) {
+    notifViewRoot = view;
+    paintNotificationsPage(view);
   }
 
   function initBell() {
-    var bell = document.getElementById("notif-bell");
-    if (!bell || bell.__wired) return;
-    bell.__wired = true;
-    bell.onclick = function (ev) {
-      ev.stopPropagation();
-      var p = document.getElementById("notif-panel");
-      if (!p) return;
-      var opening = p.classList.contains("hidden");
-      closePanel();
-      if (opening) {
-        loadNotifState();
-        paintPanel();
-        p.classList.remove("hidden");
-        bell.setAttribute("aria-expanded", "true");
-      }
-    };
-    document.addEventListener("click", function (ev) {
-      var p = document.getElementById("notif-panel");
-      if (p && !p.classList.contains("hidden") &&
-          !p.contains(ev.target) && !bell.contains(ev.target)) closePanel();
-    });
-    document.addEventListener("keydown", function (ev) {
-      if (ev.key === "Escape") closePanel();
-    });
+    /* The bell is now a plain link to #/notifications — no popup wiring.
+       Just keep the unread badge fresh (notify() already calls updateBadge). */
     updateBadge();
   }
 
@@ -686,6 +707,7 @@
   window.NeutronTasks = {
     renderTasks: renderTasks,
     renderTimeline: renderTimeline,
+    renderNotifications: renderNotifications,
     openTaskDialog: openTaskDialog,
     logRoomActivity: logRoomActivity,
     notify: notify,

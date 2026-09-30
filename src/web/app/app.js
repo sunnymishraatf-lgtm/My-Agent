@@ -570,6 +570,7 @@ var ROUTES = {
   security: function (view) { return window.NeutronInsights.renderSecurity(view); },
   deps: function (view) { return window.NeutronInsights.renderDeps(view); },
   health: function (view) { return window.NeutronInsights.renderHealth(view); },
+  notifications: function (view) { return window.NeutronTasks.renderNotifications(view); },
   settings: renderSettings,
   usage: renderUsage,
 };

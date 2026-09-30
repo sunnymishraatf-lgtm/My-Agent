@@ -4020,6 +4020,13 @@ label.fld-label { display: block; font-size: 12px; font-weight: 600; color: var(
 .notif-item.unread { border-left: 3px solid var(--primary); background: var(--panel-2, var(--panel)); }
 .notif-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 .notif-title { font-weight: 600; font-size: 13px; }
+/* Dedicated notifications screen (#/notifications): the popup is gone. */
+.notif-page-acts { display: flex; gap: 10px; margin: 12px 0 16px; flex-wrap: wrap; }
+.notif-prefs-head { margin: 28px 0 4px; font-size: 1.05em; }
+.notif-list { display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 640px) {
+  .notif-page-acts .btn { flex: 1; }
+}
 
 /* --- task board --- */
 .task-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
