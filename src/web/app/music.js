@@ -30,12 +30,13 @@
   ];
 
   /* Public Piped/Invidious instances for best-effort search (no key needed).
-     Tried in order with a short timeout; all failing just disables search. */
+     Tried in order with a short timeout; all failing just disables search.
+     Verified live 2026-09-30: the previous four instances were dead
+     (kavin.rocks 526, adminforge 301, nadeko 403, nerdvpn 401). */
   var SEARCH_ENDPOINTS = [
-    "https://pipedapi.kavin.rocks/search?q={q}&filter=videos",
-    "https://pipedapi.adminforge.de/search?q={q}&filter=videos",
-    "https://inv.nadeko.net/api/v1/search?q={q}&type=video",
-    "https://invidious.nerdvpn.de/api/v1/search?q={q}&type=video"
+    "https://api.piped.private.coffee/search?q={q}&filter=videos",
+    "https://pipedapi.ducks.party/search?q={q}&filter=videos",
+    "https://invidious.f5.si/api/v1/search?q={q}&type=video"
   ];
 
   /* ---------------- small helpers ---------------- */
