@@ -48,10 +48,19 @@ public class UpdateManager {
 
     /** Fire-and-forget: runs the check on a background thread. */
     public void checkForUpdates() {
+        checkForUpdates(false);
+    }
+
+    /**
+     * Fire-and-forget: runs the check on a background thread.
+     * @param force when true, bypasses the once-a-day throttle
+     *              (used when the user taps the update notification).
+     */
+    public void checkForUpdates(boolean force) {
         SharedPreferences prefs =
                 activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         long last = prefs.getLong(KEY_LAST_CHECK, 0);
-        if (System.currentTimeMillis() - last < CHECK_INTERVAL_MS) return;
+        if (!force && System.currentTimeMillis() - last < CHECK_INTERVAL_MS) return;
 
         new Thread(() -> {
             // Keep the backend URL fresh: newest successful deployment wins.
@@ -59,34 +68,51 @@ public class UpdateManager {
             if (backend != null) {
                 prefs.edit().putString(KEY_BACKEND_URL, backend).apply();
             }
-            try {
-                HttpURLConnection c =
-                        (HttpURLConnection) new URL(RELEASES_URL).openConnection();
-                c.setConnectTimeout(10000);
-                c.setReadTimeout(10000);
-                c.setRequestProperty("Accept", "application/vnd.github+json");
-                c.setRequestProperty("User-Agent", "NEUTRON-app");
-                if (c.getResponseCode() != 200) return;
-
-                JSONObject rel = new JSONObject(readAll(c.getInputStream()));
-                int latest = parseVersion(rel.optString("tag_name", ""));
-                if (latest <= currentVersionCode()) {
-                    markChecked(prefs);
-                    return;
-                }
-                String apkUrl = findApkAsset(rel.optJSONArray("assets"));
-                if (apkUrl == null) {
-                    markChecked(prefs);
-                    return;
-                }
-                markChecked(prefs);
-                final String tag = rel.optString("tag_name", "");
-                final String url = apkUrl;
-                activity.runOnUiThread(() -> promptUpdate(tag, url));
-            } catch (Exception ignored) {
-                // No network or API hiccup: stay silent, retry next launch.
-            }
+            UpdateInfo info = checkNow(activity);
+            markChecked(prefs);
+            if (info == null) return;
+            final String tag = info.tag;
+            final String url = info.apkUrl;
+            activity.runOnUiThread(() -> promptUpdate(tag, url));
         }).start();
+    }
+
+    /** A newer release with a downloadable APK, or null when up to date. */
+    public static class UpdateInfo {
+        public final String tag;
+        public final String apkUrl;
+
+        UpdateInfo(String tag, String apkUrl) {
+            this.tag = tag;
+            this.apkUrl = apkUrl;
+        }
+    }
+
+    /**
+     * Synchronous GitHub release check. Safe to call from any background
+     * thread — used by the activity flow and by the periodic background
+     * receiver that posts the update notification.
+     */
+    public static UpdateInfo checkNow(Context ctx) {
+        try {
+            HttpURLConnection c =
+                    (HttpURLConnection) new URL(RELEASES_URL).openConnection();
+            c.setConnectTimeout(10000);
+            c.setReadTimeout(10000);
+            c.setRequestProperty("Accept", "application/vnd.github+json");
+            c.setRequestProperty("User-Agent", "NEUTRON-app");
+            if (c.getResponseCode() != 200) return null;
+
+            JSONObject rel = new JSONObject(readAllStatic(c.getInputStream()));
+            int latest = parseVersionStatic(rel.optString("tag_name", ""));
+            if (latest <= currentVersionCodeStatic(ctx)) return null;
+            String apkUrl = findApkAssetStatic(rel.optJSONArray("assets"));
+            if (apkUrl == null) return null;
+            return new UpdateInfo(rel.optString("tag_name", ""), apkUrl);
+        } catch (Exception ignored) {
+            // No network or API hiccup: stay silent, retry next time.
+            return null;
+        }
     }
 
     private void markChecked(SharedPreferences prefs) {
@@ -94,6 +120,10 @@ public class UpdateManager {
     }
 
     private int parseVersion(String tag) {
+        return parseVersionStatic(tag);
+    }
+
+    private static int parseVersionStatic(String tag) {
         try {
             return Integer.parseInt(tag.replaceAll("[^0-9]", ""));
         } catch (NumberFormatException e) {
@@ -102,15 +132,19 @@ public class UpdateManager {
     }
 
     private int currentVersionCode() {
+        return currentVersionCodeStatic(activity);
+    }
+
+    private static int currentVersionCodeStatic(Context ctx) {
         try {
             if (Build.VERSION.SDK_INT >= 28) {
-                return (int) activity.getPackageManager()
-                        .getPackageInfo(activity.getPackageName(), 0)
+                return (int) ctx.getPackageManager()
+                        .getPackageInfo(ctx.getPackageName(), 0)
                         .getLongVersionCode();
             }
             @SuppressWarnings("deprecation")
-            int v = activity.getPackageManager()
-                    .getPackageInfo(activity.getPackageName(), 0).versionCode;
+            int v = ctx.getPackageManager()
+                    .getPackageInfo(ctx.getPackageName(), 0).versionCode;
             return v;
         } catch (PackageManager.NameNotFoundException e) {
             return 0;
@@ -118,6 +152,10 @@ public class UpdateManager {
     }
 
     private String findApkAsset(JSONArray assets) {
+        return findApkAssetStatic(assets);
+    }
+
+    private static String findApkAssetStatic(JSONArray assets) {
         if (assets == null) return null;
         for (int i = 0; i < assets.length(); i++) {
             JSONObject a = assets.optJSONObject(i);
@@ -129,6 +167,10 @@ public class UpdateManager {
     }
 
     private String readAll(InputStream in) throws Exception {
+        return readAllStatic(in);
+    }
+
+    private static String readAllStatic(InputStream in) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] buf = new byte[8192];
         int n;

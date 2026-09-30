@@ -156,6 +156,7 @@
   var barTitleEl = null;
   var barThumbEl = null;
   var playPauseBtn = null;
+  var expandBtn = null;
   var sectionEls = [];   // live section roots to refresh on state change
 
   function ensureApi() {
@@ -201,6 +202,10 @@
     var sub = el("div", "music-sub muted small", "YouTube · free");
     meta.appendChild(barTitleEl);
     meta.appendChild(sub);
+    /* Tap the title area to open the video view. */
+    meta.style.cursor = "pointer";
+    meta.title = "Show video";
+    meta.onclick = function () { setVideoOpen(true); };
     barEl.appendChild(meta);
 
     var ctrls = el("div", "music-ctrls");
@@ -213,14 +218,35 @@
     var next = el("button", "icon-btn", "⏭");
     next.setAttribute("aria-label", "Next");
     next.onclick = function () { step(1); };
+    expandBtn = el("button", "icon-btn", "⛶");
+    expandBtn.setAttribute("aria-label", "Show video");
+    expandBtn.title = "Show video";
+    expandBtn.onclick = function (ev) {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      setVideoOpen(!barEl.classList.contains("video-open"));
+    };
     var close = el("button", "icon-btn", "✕");
     close.setAttribute("aria-label", "Stop and close player");
     close.onclick = stopAll;
     ctrls.appendChild(prev);
     ctrls.appendChild(playPauseBtn);
     ctrls.appendChild(next);
+    ctrls.appendChild(expandBtn);
     ctrls.appendChild(close);
     barEl.appendChild(ctrls);
+
+    /* Tapping the dark backdrop around the video collapses it. */
+    barEl.addEventListener("click", function (ev) {
+      if (barEl.classList.contains("video-open") && ev.target === barEl) {
+        setVideoOpen(false);
+      }
+    });
+    /* Keep the video sized on rotation / resize. */
+    if (root.addEventListener) {
+      root.addEventListener("resize", function () {
+        if (barEl && barEl.classList.contains("video-open")) sizePlayer(true);
+      });
+    }
 
     document.body.appendChild(barEl);
     return barEl;
@@ -271,8 +297,59 @@
     var YTNS = root.YT;
     if (!YTNS) return;
     if (ev.data === YTNS.PlayerState.ENDED) step(1);
-    else if (ev.data === YTNS.PlayerState.PLAYING) setPlayIcon(true);
-    else if (ev.data === YTNS.PlayerState.PAUSED) setPlayIcon(false);
+    else if (ev.data === YTNS.PlayerState.PLAYING) {
+      setPlayIcon(true);
+      nativeMusic("playing");
+    } else if (ev.data === YTNS.PlayerState.PAUSED) {
+      setPlayIcon(false);
+      nativeMusic("paused");
+    }
+  }
+
+  /**
+   * Tells the native shell about playback state so it can keep the music
+   * alive in the background (foreground service + media notification).
+   * No-op on plain browsers.
+   */
+  function nativeMusic(state) {
+    try {
+      var bridge = root.NeutronApp;
+      if (!bridge) return;
+      if (state === "playing" && typeof bridge.onMusicPlaying === "function") {
+        var c = current();
+        bridge.onMusicPlaying(c && c.title ? c.title : "NEUTRON Music");
+      } else if (state === "paused" && typeof bridge.onMusicPaused === "function") {
+        bridge.onMusicPaused();
+      } else if (state === "stopped" && typeof bridge.onMusicStopped === "function") {
+        bridge.onMusicStopped();
+      }
+    } catch (e) { /* bridge unavailable — ignore */ }
+  }
+
+  /** Expand the mini-player into a large video view (tap ⛶ or the bar). */
+  function setVideoOpen(open) {
+    ensureBar();
+    var isOpen = barEl.classList.contains("video-open");
+    if (open === isOpen) return;
+    barEl.classList.toggle("video-open", open);
+    if (expandBtn) {
+      expandBtn.textContent = open ? "🗗" : "⛶";
+      expandBtn.setAttribute("aria-label", open ? "Collapse video" : "Show video");
+    }
+    sizePlayer(open);
+  }
+
+  /** Resize the YouTube iframe: large in video view, tiny in the mini bar. */
+  function sizePlayer(large) {
+    if (!player || !player.setSize) return;
+    try {
+      if (large) {
+        var w = Math.min(Math.max(document.documentElement.clientWidth - 48, 300), 960);
+        player.setSize(Math.round(w), Math.round(w * 9 / 16));
+      } else {
+        player.setSize(96, 54);
+      }
+    } catch (e) { /* player not ready — ignore */ }
   }
 
   function setPlayIcon(playing) {
@@ -347,9 +424,13 @@
   function stopAll() {
     try { if (player && player.stopVideo) player.stopVideo(); } catch (e) {}
     queue = []; qi = -1; pendingPlay = null;
-    if (barEl) barEl.classList.add("hidden");
+    if (barEl) {
+      barEl.classList.add("hidden");
+      barEl.classList.remove("video-open");
+    }
     document.body.classList.remove("has-musicbar");
     setPlayIcon(false);
+    nativeMusic("stopped");
     refreshSections();
   }
 

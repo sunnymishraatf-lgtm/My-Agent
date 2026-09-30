@@ -1316,13 +1316,22 @@
    * WebRTC audio over the encrypted MQTT relay: presence advertises who is
    * in the call, SDP/ICE are exchanged as sealed relay messages, and audio
    * flows peer-to-peer (mesh). No server, no accounts.
-   * Honest limits: STUN only (no TURN) — most home/office networks and
-   * hotspots connect fine, but symmetric NATs may fail. Best effort. */
+   * NAT traversal: public STUN plus a free TURN fallback, so calls connect
+   * on most networks including symmetric NATs. */
 
   var RV_STUN = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
   ];
+
+  /** Relay-voice ICE servers: STUN plus the free TURN fallback (symmetric
+      NATs can't connect on STUN alone). */
+  function rvIceServers() {
+    var cfg = RV_STUN.slice();
+    var UI_ = (typeof window !== "undefined" && window.NeutronUI) || {};
+    if (UI_.DEFAULT_TURN && UI_.DEFAULT_TURN.urls) cfg.push(UI_.DEFAULT_TURN);
+    return cfg;
+  }
 
   function rvInit() {
     if (!S.rvoice) {
@@ -1493,7 +1502,7 @@
     if (!st.inVoice || st.pcs[peerId] || !S.relay) return;
     var pc;
     try {
-      pc = new RTCPeerConnection({ iceServers: RV_STUN });
+      pc = new RTCPeerConnection({ iceServers: rvIceServers() });
     } catch (e) { return; }
     st.pcs[peerId] = { pc: pc, audio: null };
     rvWirePc(peerId, pc);
@@ -1517,7 +1526,7 @@
         if (entry) rvDropPeer(from);
         var pc;
         try {
-          pc = new RTCPeerConnection({ iceServers: RV_STUN });
+          pc = new RTCPeerConnection({ iceServers: rvIceServers() });
         } catch (e) { return; }
         st.pcs[from] = { pc: pc, audio: null };
         rvWirePc(from, pc);
@@ -2847,6 +2856,9 @@
   function voiceIceConfig() {
     var cfg = [{ urls: (UI.DEFAULT_STUN_URLS || []).slice() }];
     voiceTurnServers().forEach(function (s) { cfg.push(s); });
+    /* Built-in free TURN fallback so calls connect even behind symmetric
+       NATs, where STUN alone fails. Server-advertised TURN (above) wins. */
+    if (UI.DEFAULT_TURN && UI.DEFAULT_TURN.urls) cfg.push(UI.DEFAULT_TURN);
     return cfg;
   }
 

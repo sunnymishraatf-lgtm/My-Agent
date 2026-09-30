@@ -4569,6 +4569,25 @@ label.fld-label { display: block; font-size: 12px; font-weight: 600; color: var(
 .music-title { font-weight: 700; font-size: 0.88em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .music-ctrls { display: flex; gap: 2px; flex: none; }
 body.has-musicbar .view { padding-bottom: 84px; }
+/* Expanded video view: the mini bar becomes a full-screen overlay showing
+   the song's video large. Tap ⛶ / the title to open, 🗗 / backdrop to close. */
+.music-bar.video-open {
+  position: fixed; inset: 0; z-index: 950;
+  flex-direction: column; justify-content: center; align-items: stretch;
+  gap: 14px; padding: 28px 20px;
+  background: rgba(8, 8, 10, 0.96);
+  border-top: none;
+}
+.music-bar.video-open .music-player-slot {
+  width: 100%; max-width: 960px; height: auto; aspect-ratio: 16 / 9;
+  margin: 0 auto; border-radius: 10px; flex: none;
+}
+.music-bar.video-open .music-thumb { display: none; }
+.music-bar.video-open .music-meta { text-align: center; cursor: default; }
+.music-bar.video-open .music-title { font-size: 1.05em; white-space: normal; }
+.music-bar.video-open .music-sub { display: none; }
+.music-bar.video-open .music-ctrls { justify-content: center; gap: 8px; }
+.music-bar.video-open .music-ctrls .icon-btn { font-size: 1.25em; padding: 6px 10px; }
 @media (max-width: 640px) {
   .music-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
   .music-player-slot { width: 72px; height: 41px; }

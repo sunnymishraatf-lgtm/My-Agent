@@ -1366,6 +1366,19 @@
   /** Public STUN servers tried by every client (server may advertise more). */
   var DEFAULT_STUN_URLS = ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"];
 
+  /** Free public TURN fallback (OpenRelay by Metered.ca — public credentials,
+      meant for open-source apps). Used only when STUN can't punch through
+      (e.g. symmetric NATs); without TURN those calls fail to connect. */
+  var DEFAULT_TURN = {
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turns:openrelay.metered.ca:443",
+    ],
+    username: "openrelay",
+    credential: "openrelay",
+  };
+
   /**
    * Deterministic offerer rule for the voice mesh: the member with the
    * lexicographically smaller id creates the offer. Both sides compute the
@@ -3570,6 +3583,7 @@
     /* voice calls (Phase 3) */
     MAX_VOICE_PARTICIPANTS: MAX_VOICE_PARTICIPANTS,
     DEFAULT_STUN_URLS: DEFAULT_STUN_URLS,
+    DEFAULT_TURN: DEFAULT_TURN,
     VOICE_SPEAK_THRESHOLD: VOICE_SPEAK_THRESHOLD,
     shouldInitiateVoiceOffer: shouldInitiateVoiceOffer,
     voicePeerUiState: voicePeerUiState,

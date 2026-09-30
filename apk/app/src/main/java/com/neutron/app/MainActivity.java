@@ -2,6 +2,10 @@ package com.neutron.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -27,6 +31,27 @@ public class MainActivity extends Activity {
     /** WebView permission request held while we ask Android for the matching
         runtime permission; completed in onRequestPermissionsResult. */
     private PermissionRequest pendingWebRequest;
+
+    /** Relays notification/lock-screen music buttons into the web player. */
+    private final BroadcastReceiver musicCmdReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context ctx, Intent intent) {
+            if (web == null || intent == null) return;
+            String cmd = intent.getStringExtra(MusicService.EXTRA_CMD);
+            String js = null;
+            if (MusicService.CMD_TOGGLE.equals(cmd)) {
+                js = "(window.NeutronMusic && NeutronMusic.toggle())";
+            } else if (MusicService.CMD_NEXT.equals(cmd)) {
+                js = "(window.NeutronMusic && NeutronMusic.next())";
+            } else if (MusicService.CMD_STOP.equals(cmd)) {
+                js = "(window.NeutronMusic && NeutronMusic.stop())";
+            }
+            if (js != null) {
+                try { web.evaluateJavascript(js, null); } catch (Exception ignored) {}
+            }
+        }
+    };
+    private boolean musicReceiverRegistered = false;
 
     /** Backend URL: last resolved deployment, or the baked-in fallback. */
     private String homeUrl() {
@@ -148,6 +173,37 @@ public class MainActivity extends Activity {
         // Self-updater: silently checks GitHub releases for a newer build.
         updater = new UpdateManager(this);
         updater.checkForUpdates();
+        // Background update check: posts a system notification when a new
+        // release is published, even if the app hasn't been opened.
+        UpdateScheduler.schedule(this);
+        // Tapped the update notification: jump straight to the update dialog.
+        handleUpdateIntent(getIntent());
+
+        // Notification/lock-screen music controls -> web player.
+        IntentFilter musicFilter = new IntentFilter(MusicService.ACTION_CMD);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(musicCmdReceiver, musicFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(musicCmdReceiver, musicFilter);
+        }
+        musicReceiverRegistered = true;
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleUpdateIntent(intent);
+    }
+
+    /** Opens the update dialog when launched from the update notification. */
+    private void handleUpdateIntent(Intent intent) {
+        if (intent != null
+                && intent.getBooleanExtra("neutron_force_update_check", false)
+                && updater != null) {
+            intent.removeExtra("neutron_force_update_check");
+            updater.checkForUpdates(true);
+        }
     }
 
     @Override
@@ -170,6 +226,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (musicReceiverRegistered) {
+            try { unregisterReceiver(musicCmdReceiver); } catch (Exception ignored) {}
+            musicReceiverRegistered = false;
+        }
         if (updater != null) updater.onDestroy();
         super.onDestroy();
     }
@@ -215,6 +275,40 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return 0;
             }
+        }
+
+        /** Music started playing (or the track changed) — keep it alive
+            in the background with a media notification. */
+        @JavascriptInterface
+        public void onMusicPlaying(final String title) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MusicService.update(MainActivity.this, title, true);
+                }
+            });
+        }
+
+        /** Music paused — keep the notification, show the paused state. */
+        @JavascriptInterface
+        public void onMusicPaused() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MusicService.update(MainActivity.this, null, false);
+                }
+            });
+        }
+
+        /** Music stopped entirely — dismiss the notification, release locks. */
+        @JavascriptInterface
+        public void onMusicStopped() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MusicService.stop(MainActivity.this);
+                }
+            });
         }
     }
 }

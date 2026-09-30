@@ -13,6 +13,12 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Background music playback: foreground service + locks. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Re-arm the periodic update check after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Declared non-required: the app works without a camera/mic. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -31,6 +37,26 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Background music: keeps audio alive + media notification. -->
+        <service
+            android:name=".MusicService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <!-- Periodic update check: notifies when a new release is out. -->
+        <receiver
+            android:name=".UpdateCheckReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.neutron.app.action.CHECK_UPDATES" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
