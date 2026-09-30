@@ -19,6 +19,40 @@
    ========================================================================== */
 "use strict";
 
+/* Persistent storage mirror (Android APK only).
+   Every localStorage write is mirrored to the native SharedPreferences
+   bridge, and reads prefer the native copy. SharedPreferences survives
+   even if the WebView's own storage is wiped, so user data (history,
+   playlists, theme, keys, friends) is never lost on restart. No-op on
+   plain browsers. Patched on the localStorage instance only — never the
+   Storage prototype — so sessionStorage keeps its session-only semantics. */
+(function () {
+  try {
+    var bridge = window.NeutronApp;
+    var ls = window.localStorage;
+    if (!bridge || typeof bridge.nativeSave !== "function" || !ls || ls.__neutronMirrored) return;
+    ls.__neutronMirrored = true;
+    var rawSet = ls.setItem.bind(ls);
+    var rawGet = ls.getItem.bind(ls);
+    var rawRemove = ls.removeItem.bind(ls);
+    ls.setItem = function (k, v) {
+      try { bridge.nativeSave(String(k), String(v)); } catch (e) { /* ignore */ }
+      return rawSet(k, v);
+    };
+    ls.getItem = function (k) {
+      try {
+        var nv = bridge.nativeLoad(String(k));
+        if (nv !== null && nv !== undefined) return nv;
+      } catch (e) { /* ignore */ }
+      return rawGet(k);
+    };
+    ls.removeItem = function (k) {
+      try { bridge.nativeRemove(String(k)); } catch (e) { /* ignore */ }
+      return rawRemove(k);
+    };
+  } catch (e) { /* storage unavailable — app continues on localStorage */ }
+})();
+
 /* ---------- helpers ---------- */
 
 function el(tag, cls, text) {
@@ -671,6 +705,7 @@ var ROUTES = {
   deps: function (view) { return window.NeutronInsights.renderDeps(view); },
   health: function (view) { return window.NeutronInsights.renderHealth(view); },
   notifications: function (view) { return window.NeutronTasks.renderNotifications(view); },
+  friends: function (view) { return window.NeutronFriends.renderFriends(view); },
   settings: renderSettings,
   usage: renderUsage,
 };

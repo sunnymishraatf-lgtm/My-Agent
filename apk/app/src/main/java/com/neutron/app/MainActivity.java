@@ -313,5 +313,53 @@ public class MainActivity extends Activity {
                 }
             });
         }
+
+        /* ----- Persistent data (SharedPreferences) -----
+           The web app mirrors localStorage here, so user data (history,
+           playlists, theme, API keys, friends) survives even if the
+           WebView's own storage is ever wiped. Synchronous and fast
+           (SharedPreferences is in-memory after first load). */
+        @JavascriptInterface
+        public void nativeSave(String key, String value) {
+            try {
+                getSharedPreferences("neutron_data", MODE_PRIVATE)
+                        .edit().putString(key, value).apply();
+            } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public String nativeLoad(String key) {
+            try {
+                return getSharedPreferences("neutron_data", MODE_PRIVATE)
+                        .getString(key, null);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        @JavascriptInterface
+        public void nativeRemove(String key) {
+            try {
+                getSharedPreferences("neutron_data", MODE_PRIVATE)
+                        .edit().remove(key).apply();
+            } catch (Exception ignored) {}
+        }
+
+        /** Open the Android share sheet (used for room invites). */
+        @JavascriptInterface
+        public void shareText(final String title, final String text) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Intent share = new Intent(Intent.ACTION_SEND);
+                    share.setType("text/plain");
+                    share.putExtra(Intent.EXTRA_TEXT, text);
+                    try {
+                        startActivity(Intent.createChooser(
+                                share, title != null ? title : "Share"));
+                    } catch (Exception ignored) {}
+                }
+            });
+        }
     }
 }

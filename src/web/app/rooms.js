@@ -111,6 +111,21 @@
     saveKnownRooms(arr);
   }
 
+  /** Programmatic room creation (used by Friends "Call"). Returns the code or null. */
+  function createRelayRoom(name) {
+    if (!window.NeutronRelay || typeof window.NeutronRelay.generateCode !== "function") return null;
+    var code = window.NeutronRelay.generateCode();
+    upsertKnownRoom({
+      code: code,
+      name: name || "Untitled room",
+      ownerToken: null,
+      displayName: storedDisplayName(code),
+      lastSeen: Date.now(),
+      relay: true,
+    });
+    return code;
+  }
+
   function knownRoom(code) {
     var arr = loadKnownRooms();
     for (var i = 0; i < arr.length; i++) if (arr[i].code === code) return arr[i];
@@ -3412,5 +3427,9 @@
     renderRooms: renderRooms,
     teardown: teardown,
     listKnownRooms: loadKnownRooms,
+    createRelayRoom: createRelayRoom,
+    openRelayRoom: openRelayWorkspace,
+    inviteLink: inviteLink,
+    joinVoice: joinVoice,
   };
 })();

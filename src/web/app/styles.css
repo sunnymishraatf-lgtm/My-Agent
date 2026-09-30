@@ -6865,6 +6865,15 @@ body.chat-full .view {
 .theme-search { margin: 10px 0 4px; max-width: 320px; }
 .theme-count { margin: 0 0 8px; min-height: 18px; }
 
+/* friends */
+.friend-add { display: flex; gap: 8px; }
+.friend-add .input { flex: 1; }
+.friend-list { display: grid; gap: 10px; }
+.friend-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.friend-info { min-width: 0; }
+.friend-name { font-weight: 700; font-size: 15px; }
+.friend-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* relay mode (serverless): simplified chat + members + activity layout */
 .rm-relay-body { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
 .rm-relay-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
