@@ -532,6 +532,7 @@ var ROUTES = {
   timeline: function (view) { return window.NeutronTasks.renderTimeline(view); },
   rooms: function (view) { return window.NeutronRooms.renderRooms(view); },
   games: function (view) { return window.NeutronGames.renderGames(view); },
+  music: function (view) { return window.NeutronMusic.renderSection(view); },
   skills: function (view) { return window.NeutronSkills.renderSkills(view); },
   agent: function (view) { return window.NeutronAgent.renderAgent(view); },
   terminal: function (view) { return window.NeutronTerminal.renderTerminal(view); },
