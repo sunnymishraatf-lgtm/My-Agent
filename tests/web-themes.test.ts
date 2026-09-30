@@ -22,9 +22,9 @@ function themeIds(): string[] {
 }
 
 describe("theme registration", () => {
-  it("registers 18 named themes plus System", () => {
+  it("registers 48 named themes plus System", () => {
     const ids = themeIds();
-    expect(ids.length).toBe(18);
+    expect(ids.length).toBe(48);
     expect(new Set(ids).size).toBe(ids.length); // no duplicate ids
   });
 

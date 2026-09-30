@@ -191,7 +191,7 @@ function isVerbose() {
 function setVerbose(on) {
   try { localStorage.setItem(VERBOSE_STORAGE, on ? "1" : "0"); } catch (e) { /* private mode */ }
 }
-/* ----- Theme (Appearance): 18 named themes + System. Stored as the theme
+/* ----- Theme (Appearance): 48 named themes + System. Stored as the theme
    name or "system"; applied via the data-theme attribute. ----- */
 var THEME_STORAGE = "neutron_theme";
 var THEMES = [
@@ -221,6 +221,36 @@ var THEMES = [
   { id: "glass-rose", name: "Glass Rose",
     swatch: ["#20060F", "#F472B6", "#5E1636"],
     preview: "linear-gradient(135deg,#20060F 0%,#3D0E22 52%,#5E1636 100%)" },
+  { id: "sky", name: "Sky Blue", swatch: ["#F5FAFD", "#0284C7", "#012538"] },
+  { id: "teal", name: "Teal Wave", swatch: ["#F5FBFA", "#0D9488", "#042926"] },
+  { id: "lime", name: "Lime Pop", swatch: ["#F9FBF5", "#65A30D", "#1C2E04"] },
+  { id: "peach", name: "Peach Sorbet", swatch: ["#FEF8F5", "#EA580C", "#421903"] },
+  { id: "blush", name: "Blush", swatch: ["#FEF6FA", "#DB2777", "#3D0B21"] },
+  { id: "indigo", name: "Indigo Ink", swatch: ["#F8F8FE", "#4F46E5", "#161440"] },
+  { id: "sand", name: "Desert Sand", swatch: ["#FBF7F5", "#92400E", "#291204"] },
+  { id: "cyan", name: "Cyan Breeze", swatch: ["#F5FCFD", "#06B6D4", "#02333B"] },
+  { id: "berry", name: "Berry", swatch: ["#FBF6F8", "#9D174D", "#2C0616"] },
+  { id: "gold", name: "Golden Hour", swatch: ["#FCF8F5", "#B45309", "#321703"] },
+  { id: "lilac", name: "Lilac Dream", swatch: ["#FAF7FE", "#7C3AED", "#231042"] },
+  { id: "cream", name: "Cream", swatch: ["#FBF9F5", "#A16207", "#2D1B02"] },
+  { id: "ice", name: "Ice Blue", swatch: ["#F6F9FE", "#2563EB", "#0A1C42"] },
+  { id: "mauve", name: "Mauve", swatch: ["#FBF7FE", "#9333EA", "#290E42"] },
+  { id: "olive", name: "Olive Grove", swatch: ["#F8FAF5", "#4D7C0F", "#162304"] },
+  { id: "abyss", name: "Abyss", swatch: ["#020F11", "#22D3EE", "#072A30"] },
+  { id: "ember", name: "Ember", swatch: ["#110802", "#F97316", "#321704"] },
+  { id: "venom", name: "Venom", swatch: ["#0B1004", "#A3E635", "#212E0B"] },
+  { id: "phantom", name: "Phantom", swatch: ["#100811", "#E879F9", "#2E1832"] },
+  { id: "storm", name: "Storm", swatch: ["#070C12", "#60A5FA", "#132132"] },
+  { id: "evergreen", name: "Evergreen", swatch: ["#040F0B", "#34D399", "#0A2A1F"] },
+  { id: "wine", name: "Wine Cellar", swatch: ["#120809", "#FB7185", "#32171B"] },
+  { id: "copper", name: "Copper", swatch: ["#100601", "#EA580C", "#2F1202"] },
+  { id: "frost", name: "Frost", swatch: ["#090F12", "#7DD3FC", "#192A32"] },
+  { id: "violet-night", name: "Violet Night", swatch: ["#0C0A12", "#A78BFA", "#211C32"] },
+  { id: "magma", name: "Magma", swatch: ["#110505", "#EF4444", "#300E0E"] },
+  { id: "deep-teal", name: "Deep Teal", swatch: ["#030F0D", "#2DD4BF", "#092A26"] },
+  { id: "ghost", name: "Ghost", swatch: ["#0E0F10", "#CBD5E1", "#292B2D"] },
+  { id: "plum-night", name: "Plum Night", swatch: ["#0D0912", "#C084FC", "#261A32"] },
+  { id: "forest-night", name: "Forest Night", swatch: ["#051009", "#4ADE80", "#0F2C1A"] },
 ];
 var THEME_IDS = THEMES.map(function (t) { return t.id; });
 function storedTheme() {
