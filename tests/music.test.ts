@@ -120,3 +120,104 @@ describe("music server-first search", () => {
     expect(items).toEqual([]);
   });
 });
+
+describe("music history + playlists (device-local)", () => {
+  type Hist = { id: string; title: string; ts: number };
+  type Store = {
+    readHistory: () => Hist[];
+    saveHistory: (l: Hist[]) => void;
+    pushHistory: (l: Hist[], item: Hist) => Hist[];
+    readPlaylists: () => Record<string, Hist[]>;
+    savePlaylists: (p: Record<string, Hist[]>) => void;
+    addToPlaylist: (name: string, id: string, title: string) => void;
+    removeFromPlaylist: (name: string, id: string) => void;
+    deletePlaylist: (name: string) => void;
+    HISTORY_CAP: number;
+  };
+
+  function loadWithStorage() {
+    const src = readFileSync(join(root, "src", "web", "app", "music.js"), "utf8");
+    const sandbox: Record<string, unknown> = {};
+    vm.createContext(sandbox);
+    sandbox.window = {};
+    // In-memory localStorage stand-in.
+    const bag = new Map<string, string>();
+    sandbox.localStorage = {
+      getItem: (k: string) => (bag.has(k) ? bag.get(k)! : null),
+      setItem: (k: string, v: string) => { bag.set(k, String(v)); },
+      removeItem: (k: string) => { bag.delete(k); },
+    };
+    // note() targets #music-note; keep it a silent no-op.
+    sandbox.document = { getElementById: () => null };
+    vm.runInContext(src, sandbox, { filename: "music.js" });
+    const M = (sandbox.window as Record<string, unknown>).NeutronMusic as {
+      historyStore: Store;
+    };
+    expect(M.historyStore, "historyStore should be exported for tests").toBeTruthy();
+    return M.historyStore;
+  }
+
+  it("pushHistory dedupes by id, puts newest first, and caps the list", () => {
+    const S = loadWithStorage();
+    const a = { id: "a", title: "A", ts: 1 };
+    const b = { id: "b", title: "B", ts: 2 };
+    let list = S.pushHistory([], a);
+    list = S.pushHistory(list, b);
+    expect(list.map((h) => h.id)).toEqual(["b", "a"]);
+    // Re-playing "a" moves it to the front without duplicating.
+    list = S.pushHistory(list, { id: "a", title: "A", ts: 3 });
+    expect(list.map((h) => h.id)).toEqual(["a", "b"]);
+    // Cap.
+    let big: Hist[] = [];
+    for (let i = 0; i < S.HISTORY_CAP + 10; i++) {
+      big = S.pushHistory(big, { id: "id" + i, title: "T" + i, ts: i });
+    }
+    expect(big.length).toBe(S.HISTORY_CAP);
+    expect(big[0].id).toBe("id" + (S.HISTORY_CAP + 9));
+  });
+
+  it("history round-trips through storage and drops invalid entries", () => {
+    const S = loadWithStorage();
+    S.saveHistory([
+      { id: "x", title: "X", ts: 1 },
+      { id: "", title: "bad", ts: 2 } as unknown as Hist,
+      null as unknown as Hist,
+    ]);
+    expect(S.readHistory().map((h) => h.id)).toEqual(["x"]);
+  });
+
+  it("playlists: create via add, dedupe tracks, remove, delete", () => {
+    const S = loadWithStorage();
+    expect(S.readPlaylists()).toEqual({});
+    S.addToPlaylist("Focus", "v1", "Song One");
+    S.addToPlaylist("Focus", "v1", "Song One"); // duplicate ignored
+    S.addToPlaylist("Focus", "v2", "Song Two");
+    S.addToPlaylist("Gym", "v3", "Song Three");
+    let pls = S.readPlaylists();
+    expect(Object.keys(pls).sort()).toEqual(["Focus", "Gym"]);
+    expect(pls["Focus"].map((t) => t.id)).toEqual(["v1", "v2"]);
+    S.removeFromPlaylist("Focus", "v1");
+    expect(S.readPlaylists()["Focus"].map((t) => t.id)).toEqual(["v2"]);
+    S.deletePlaylist("Gym");
+    expect(Object.keys(S.readPlaylists())).toEqual(["Focus"]);
+  });
+
+  it("corrupt storage degrades to empty state instead of throwing", () => {
+    const src = readFileSync(join(root, "src", "web", "app", "music.js"), "utf8");
+    const sandbox: Record<string, unknown> = {};
+    vm.createContext(sandbox);
+    sandbox.window = {};
+    sandbox.localStorage = {
+      getItem: () => "{not json",
+      setItem: () => {},
+      removeItem: () => {},
+    };
+    sandbox.document = { getElementById: () => null };
+    vm.runInContext(src, sandbox, { filename: "music.js" });
+    const S = (sandbox.window as Record<string, unknown>).NeutronMusic as {
+      historyStore: Store;
+    };
+    expect(S.historyStore.readHistory()).toEqual([]);
+    expect(S.historyStore.readPlaylists()).toEqual({});
+  });
+});

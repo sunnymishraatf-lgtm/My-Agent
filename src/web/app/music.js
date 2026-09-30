@@ -300,10 +300,180 @@
     else if (ev.data === YTNS.PlayerState.PLAYING) {
       setPlayIcon(true);
       nativeMusic("playing");
+      recordHistory(); /* genuine playback start — not just a click */
     } else if (ev.data === YTNS.PlayerState.PAUSED) {
       setPlayIcon(false);
       nativeMusic("paused");
     }
+  }
+
+  /* ---------------- play history + playlists (device-local) ---------------- */
+
+  var HISTORY_KEY = "neutron_music_history";
+  var PLAYLISTS_KEY = "neutron_music_playlists";
+  var HISTORY_CAP = 100;
+
+  function readHistory() {
+    try {
+      var raw = localStorage.getItem(HISTORY_KEY);
+      if (!raw) return [];
+      var arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr.filter(function (h) { return h && h.id; }) : [];
+    } catch (e) { return []; }
+  }
+
+  function saveHistory(list) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_CAP))); }
+    catch (e) { /* storage full/blocked — history is best effort */ }
+  }
+
+  /** Pure helper: newest-first, de-duplicated by id, capped. */
+  function pushHistory(list, item) {
+    var out = (list || []).filter(function (h) { return h && h.id !== item.id; });
+    out.unshift(item);
+    return out.slice(0, HISTORY_CAP);
+  }
+
+  /** Newest first, de-duplicated by video id, capped. */
+  function recordHistory() {
+    var c = current();
+    if (!c || !c.id) return;
+    saveHistory(pushHistory(readHistory(),
+      { id: c.id, title: c.title || "YouTube video", ts: Date.now() }));
+    refreshSections();
+  }
+
+  function readPlaylists() {
+    try {
+      var raw = localStorage.getItem(PLAYLISTS_KEY);
+      if (!raw) return {};
+      var obj = JSON.parse(raw);
+      return obj && typeof obj === "object" ? obj : {};
+    } catch (e) { return {}; }
+  }
+
+  function savePlaylists(pls) {
+    try { localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(pls)); }
+    catch (e) { /* best effort */ }
+  }
+
+  function addToPlaylist(name, id, title) {
+    var pls = readPlaylists();
+    var list = Array.isArray(pls[name]) ? pls[name] : [];
+    if (!list.some(function (t) { return t.id === id; })) {
+      list.push({ id: id, title: title || "YouTube video" });
+    }
+    pls[name] = list;
+    savePlaylists(pls);
+    note("Saved to \u201c" + name + "\u201d.");
+    refreshSections();
+  }
+
+  function removeFromPlaylist(name, id) {
+    var pls = readPlaylists();
+    if (!Array.isArray(pls[name])) return;
+    pls[name] = pls[name].filter(function (t) { return t.id !== id; });
+    savePlaylists(pls);
+    refreshSections();
+  }
+
+  function deletePlaylist(name) {
+    var pls = readPlaylists();
+    delete pls[name];
+    savePlaylists(pls);
+    note("Deleted playlist \u201c" + name + "\u201d.");
+    refreshSections();
+  }
+
+  /** Inline playlist picker: choose an existing playlist or name a new one. */
+  function savePicker(id, title) {
+    var wrap = el("div", "music-savepicker");
+    var sel = el("select", "input sm");
+    sel.setAttribute("aria-label", "Choose playlist");
+    var pls = readPlaylists();
+    var names = Object.keys(pls);
+    var opt0 = document.createElement("option");
+    opt0.value = "";
+    opt0.textContent = names.length ? "Choose a playlist\u2026" : "No playlists yet \u2014 name one";
+    sel.appendChild(opt0);
+    names.forEach(function (nm) {
+      var o = document.createElement("option");
+      o.value = nm;
+      o.textContent = nm + " (" + pls[nm].length + ")";
+      sel.appendChild(o);
+    });
+    var inp = el("input", "input sm");
+    inp.placeholder = "Or new playlist name\u2026";
+    inp.setAttribute("aria-label", "New playlist name");
+    var ok = el("button", "btn primary sm", "Save");
+    ok.type = "button";
+    ok.onclick = function () {
+      var name = inp.value.trim() || sel.value;
+      if (!name) { note("Pick a playlist or type a new name."); return; }
+      addToPlaylist(name, id, title);
+      wrap.remove();
+    };
+    var cancel = el("button", "btn ghost sm", "Cancel");
+    cancel.type = "button";
+    cancel.onclick = function () { wrap.remove(); };
+    wrap.appendChild(sel);
+    wrap.appendChild(inp);
+    wrap.appendChild(ok);
+    wrap.appendChild(cancel);
+    return wrap;
+  }
+
+  /** Toggle the save picker right below a track row. */
+  function toggleSavePicker(row, id, title) {
+    var parent = row.parentNode;
+    if (!parent) return;
+    var old = parent.querySelector(".music-savepicker");
+    if (old) old.remove();
+    parent.insertBefore(savePicker(id, title), row.nextSibling);
+  }
+
+  /**
+   * A track row: thumbnail + title, Play / + Queue / Save, plus an optional
+   * remove action (history entry or playlist track).
+   */
+  function trackRow(t, actions) {
+    var row = el("div", "music-track");
+    var img = el("img", "music-result-thumb");
+    img.src = thumb(t.id);
+    img.alt = "";
+    img.loading = "lazy";
+    row.appendChild(img);
+    var tcol = el("div", "music-result-text");
+    tcol.appendChild(el("div", "music-result-title", t.title || "YouTube video"));
+    if (t.ts) {
+      var d = new Date(t.ts);
+      tcol.appendChild(el("div", "muted small",
+        d.toLocaleDateString() + " " +
+        d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
+    }
+    row.appendChild(tcol);
+    var play = el("button", "btn primary sm", "Play");
+    play.type = "button";
+    play.setAttribute("aria-label", "Play " + (t.title || "track"));
+    play.onclick = function () { playId(t.id, t.title); };
+    row.appendChild(play);
+    var q = el("button", "btn ghost sm", "+ Queue");
+    q.type = "button";
+    q.onclick = function () { enqueue(t.id, t.title); };
+    row.appendChild(q);
+    var save = el("button", "btn ghost sm", "Save");
+    save.type = "button";
+    save.setAttribute("aria-label", "Save to playlist: " + (t.title || "track"));
+    save.onclick = function () { toggleSavePicker(row, t.id, t.title); };
+    row.appendChild(save);
+    if (actions && typeof actions.onRemove === "function") {
+      var rm = el("button", "btn ghost sm", actions.removeLabel || "\u2715");
+      rm.type = "button";
+      rm.setAttribute("aria-label", "Remove " + (t.title || "track"));
+      rm.onclick = function () { actions.onRemove(t); };
+      row.appendChild(rm);
+    }
+    return row;
   }
 
   /**
@@ -497,12 +667,19 @@
     play.onclick = function () { playId(r.id, r.title); };
     var add = el("button", "btn ghost sm", "+ Queue");
     add.onclick = function () { enqueue(r.id, r.title); };
+    var save = el("button", "btn ghost sm", "Save");
+    save.setAttribute("aria-label", "Save to playlist: " + r.title);
+    save.onclick = function () { toggleSavePicker(row, r.id, r.title); };
     row.appendChild(play);
     row.appendChild(add);
+    row.appendChild(save);
     return row;
   }
 
   function renderSection(view) {
+    /* Fresh view: drop stale repaint callbacks from any previous render. */
+    sectionEls.length = 0;
+
     view.appendChild(el("h1", null, "Music"));
     view.appendChild(el("p", "muted",
       "A free coding soundtrack. Playback is via YouTube embeds — free, but needs internet. " +
@@ -573,6 +750,126 @@
     qp.appendChild(res);
     view.appendChild(qp);
 
+    /* Recently played (device-local history) */
+    var hp = el("section", "panel");
+    var hhead = el("div", "music-sec-head");
+    hhead.appendChild(el("h2", null, "Recently played"));
+    var hclear = el("button", "btn ghost sm", "Clear");
+    hclear.type = "button";
+    hclear.setAttribute("aria-label", "Clear play history");
+    hclear.onclick = function () {
+      saveHistory([]);
+      note("Play history cleared.");
+      refreshSections();
+    };
+    hhead.appendChild(hclear);
+    hp.appendChild(hhead);
+    var hlist = el("div", "music-history");
+    function paintHistory() {
+      hlist.innerHTML = "";
+      var hist = readHistory();
+      if (!hist.length) {
+        hlist.appendChild(el("p", "muted small",
+          "Nothing here yet — songs you actually play will show up here."));
+        return;
+      }
+      hist.forEach(function (t) {
+        hlist.appendChild(trackRow(t, {
+          removeLabel: "\u2715",
+          onRemove: function (item) {
+            saveHistory(readHistory().filter(function (h) { return h.id !== item.id; }));
+            refreshSections();
+          }
+        }));
+      });
+    }
+    sectionEls.push(paintHistory);
+    paintHistory();
+    hp.appendChild(hlist);
+    view.appendChild(hp);
+
+    /* Playlists — save songs for later (device-local) */
+    var pp = el("section", "panel");
+    pp.appendChild(el("h2", null, "My playlists"));
+    var crow = el("div", "row");
+    var cinp = el("input", "input");
+    cinp.placeholder = "New playlist name\u2026";
+    cinp.setAttribute("aria-label", "New playlist name");
+    var cbtn = el("button", "btn", "Create");
+    cbtn.type = "button";
+    function createPlaylist() {
+      var name = cinp.value.trim();
+      if (!name) { note("Name your playlist first."); return; }
+      var pls = readPlaylists();
+      if (!pls[name]) pls[name] = [];
+      savePlaylists(pls);
+      cinp.value = "";
+      note("Playlist \u201c" + name + "\u201d ready — use Save on any song to add to it.");
+      refreshSections();
+    }
+    cbtn.onclick = createPlaylist;
+    cinp.addEventListener("keydown", function (ev) { if (ev.key === "Enter") createPlaylist(); });
+    crow.appendChild(cinp);
+    crow.appendChild(cbtn);
+    pp.appendChild(crow);
+    var plist = el("div", "music-playlists");
+    function paintPlaylists() {
+      plist.innerHTML = "";
+      var pls = readPlaylists();
+      var names = Object.keys(pls);
+      if (!names.length) {
+        plist.appendChild(el("p", "muted small",
+          "No playlists yet — tap Save on any song to start a collection."));
+        return;
+      }
+      names.forEach(function (name) {
+        var tracks = Array.isArray(pls[name]) ? pls[name] : [];
+        var card = el("div", "music-plcard");
+        var head = el("div", "music-plhead");
+        head.appendChild(el("strong", null, name));
+        head.appendChild(el("span", "muted small",
+          tracks.length + " track" + (tracks.length === 1 ? "" : "s")));
+        var pacts = el("div", "music-placts");
+        var playAll = el("button", "btn primary sm", "Play all");
+        playAll.type = "button";
+        playAll.onclick = function () {
+          var ts = readPlaylists()[name] || [];
+          if (!ts.length) { note("\u201c" + name + "\u201d is empty."); return; }
+          queue = ts.map(function (t) { return { id: t.id, title: t.title }; });
+          playAt(0);
+        };
+        var queueAll = el("button", "btn ghost sm", "+ Queue all");
+        queueAll.type = "button";
+        queueAll.onclick = function () {
+          var ts = readPlaylists()[name] || [];
+          ts.forEach(function (t) { queue.push({ id: t.id, title: t.title }); });
+          if (qi === -1 && queue.length) playAt(0);
+          else refreshSections();
+          note("Queued " + ts.length + " from \u201c" + name + "\u201d.");
+        };
+        var del = el("button", "btn ghost sm", "Delete");
+        del.type = "button";
+        del.setAttribute("aria-label", "Delete playlist " + name);
+        del.onclick = function () { deletePlaylist(name); };
+        pacts.appendChild(playAll);
+        pacts.appendChild(queueAll);
+        pacts.appendChild(del);
+        head.appendChild(pacts);
+        card.appendChild(head);
+        tracks.forEach(function (t) {
+          card.appendChild(trackRow(t, {
+            removeLabel: "\u2715",
+            onRemove: function (item) { removeFromPlaylist(name, item.id); }
+          }));
+        });
+        plist.appendChild(card);
+      });
+    }
+    sectionEls.push(paintPlaylists);
+    paintPlaylists();
+    pp.appendChild(plist);
+    view.appendChild(pp);
+
     /* Queue */
     var up = el("section", "panel");
     up.appendChild(el("h2", null, "Up next"));
@@ -616,7 +913,19 @@
     /* Exposed for tests: server-first search + payload normalizers. */
     searchMusic: searchMusic,
     normalizeResults: normalizeResults,
-    normalizeServerResults: normalizeServerResults
+    normalizeServerResults: normalizeServerResults,
+    /* Exposed for tests: history + playlist storage helpers. */
+    historyStore: {
+      readHistory: readHistory,
+      saveHistory: saveHistory,
+      pushHistory: pushHistory,
+      readPlaylists: readPlaylists,
+      savePlaylists: savePlaylists,
+      addToPlaylist: addToPlaylist,
+      removeFromPlaylist: removeFromPlaylist,
+      deletePlaylist: deletePlaylist,
+      HISTORY_CAP: HISTORY_CAP
+    }
   };
   root.NeutronMusic = exp;
 })(typeof window !== "undefined" ? window : this);
