@@ -18,10 +18,13 @@
 
   /* ---------------- data ---------------- */
 
+  /* Station IDs verified playable in a real browser on 2026-09-30.
+     Livestreams die when the stream ends, so dead IDs get replaced here;
+     the player also auto-skips any video that fails at play time. */
   var STATIONS = [
-    { id: "jfKfPfyJRdk", title: "Lofi Girl — lofi hip hop radio", sub: "beats to relax/study to · 24/7 live" },
+    { id: "rFZHOHl-L8A", title: "Lofi Girl — lofi hip hop radio", sub: "beats to relax/study to · 24/7 live" },
     { id: "4xDzrJKXOOY", title: "Lofi Girl — synthwave radio", sub: "beats to chill/game to · 24/7 live" },
-    { id: "lP26UCnoH9s", title: "Coffee Shop Radio", sub: "24/7 lofi & jazzy hip-hop beats" },
+    { id: "CBSlu_VMS9U", title: "Lofi Girl — jazz lofi mix", sub: "3 hours relaxing cafe jazz" },
     { id: "sjkrrmBnpGE", title: "Ambient Study Music", sub: "4 hours for concentration · Quiet Quest" },
     { id: "eKFTSSKCzWA", title: "Forest & Waterfall Sounds", sub: "nature ambience for deep focus" }
   ];
@@ -187,9 +190,12 @@
     document.body.classList.add("has-musicbar");
   }
 
+  var consecFails = 0;   /* dead-video guard: stop auto-skipping after 3 in a row */
+
   function createPlayer(videoId) {
     ensureBar();
     showBar();
+    paintBar(); /* clear any "(loading…)" suffix from the pending state */
     if (player && player.loadVideoById) {
       player.loadVideoById(videoId);
       return;
@@ -201,8 +207,17 @@
         videoId: videoId,
         playerVars: { autoplay: 1, rel: 0, playsinline: 1 },
         events: {
-          onStateChange: onPlayerState,
-          onError: function () { note("That video can't be embedded — try another."); }
+          onStateChange: function (ev) { consecFails = 0; onPlayerState(ev); },
+          onError: function () {
+            consecFails++;
+            if (consecFails < 3 && queue.length > 1) {
+              note("That video is unavailable — skipping to the next one.");
+              step(1);
+            } else {
+              note("That video can't be played — try another station or link.");
+              setPlayIcon(false);
+            }
+          }
         }
       });
     } catch (e) {
