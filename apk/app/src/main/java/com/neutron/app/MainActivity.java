@@ -26,7 +26,7 @@ public class MainActivity extends Activity {
 
     private static final int REQ_APP_PERMISSIONS = 1001;
 
-    private WebView web;
+    private NeutronWebView web;
     private UpdateManager updater;
     /** WebView permission request held while we ask Android for the matching
         runtime permission; completed in onRequestPermissionsResult. */
@@ -129,7 +129,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        web = new WebView(this);
+        web = new NeutronWebView(this);
         setContentView(web);
 
         WebSettings s = web.getSettings();
@@ -284,6 +284,7 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    if (web != null) web.setKeepVisible(true);
                     MusicService.update(MainActivity.this, title, true);
                 }
             });
@@ -295,6 +296,7 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    if (web != null) web.setKeepVisible(false);
                     MusicService.update(MainActivity.this, null, false);
                 }
             });
@@ -306,6 +308,7 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    if (web != null) web.setKeepVisible(false);
                     MusicService.stop(MainActivity.this);
                 }
             });
