@@ -3361,6 +3361,12 @@ async function renderChat(view) {
   backBtn.setAttribute("aria-label", "Back to dashboard");
   backBtn.title = "Back to dashboard";
   backBtn.onclick = function () { location.hash = "#/dashboard"; };
+  var histBtn = el("button", "icon-btn hist-toggle", "\u2630");
+  histBtn.setAttribute("aria-label", "Toggle conversation history");
+  histBtn.setAttribute("aria-expanded", "false");
+  histBtn.title = "Conversation history (Ctrl+K to search)";
+  histBtn.onclick = function () { setHistOpen(!histOpen); if (histOpen) paintHistory(); };
+  try { histBtn.setAttribute("aria-expanded", histOpen ? "true" : "false"); } catch (e) {}
   head.appendChild(backBtn);
   head.appendChild(histBtn);
   var chatTitleEl = el("div", "chat-title", "Chat");
@@ -3435,6 +3441,10 @@ async function renderChat(view) {
     modelSel.value = defs.indexOf(cur) !== -1 || (cur && defs.indexOf(cur) === -1) ? cur : "";
     if (!cur) modelSel.value = "";
   }
+  /* Provider details panel (declared early: paintPanel() runs during the
+     initial picker sync below, before the panel is attached to the layout). */
+  var panel = el("div", "prov-panel hidden");
+
   syncPickersFromConv();
 
   provSel.onchange = function () {
@@ -3452,6 +3462,11 @@ async function renderChat(view) {
     clearError();
     saveConvStore();
   };
+
+  /* Model router status bar (declared early: paintRouterBar(null) runs during
+     initial render, before the bar is attached to the layout). */
+  var routerBar = el("div", "router-bar");
+  routerBar.setAttribute("aria-live", "polite");
 
   /* ---------- model router (Phase 21) ---------- */
   function paintRouterBar(info) {
@@ -3526,12 +3541,6 @@ async function renderChat(view) {
 
   var detailsBtn = el("button", "btn ghost sm", "Provider info");
   var voiceBtn = el("button", "btn ghost sm", voiceSpeakEnabled() ? "Voice: on" : "Voice: off");
-  var histBtn = el("button", "icon-btn hist-toggle", "\u2630");
-  histBtn.setAttribute("aria-label", "Toggle conversation history");
-  histBtn.setAttribute("aria-expanded", "false");
-  histBtn.title = "Conversation history (Ctrl+K to search)";
-  histBtn.onclick = function () { setHistOpen(!histOpen); if (histOpen) paintHistory(); };
-  try { histBtn.setAttribute("aria-expanded", histOpen ? "true" : "false"); } catch (e) {}
   var newBtn = el("button", "btn ghost sm", "+ New");
   newBtn.setAttribute("aria-label", "Start a new task");
   newBtn.title = "Start a new task (Ctrl+Shift+N)";
@@ -3655,12 +3664,9 @@ async function renderChat(view) {
   }
   main.appendChild(head);
   /* Model router status bar (Phase 21): visible routing reasoning. */
-  var routerBar = el("div", "router-bar");
-  routerBar.setAttribute("aria-live", "polite");
   main.appendChild(routerBar);
 
   /* ----- provider details panel ----- */
-  var panel = el("div", "prov-panel hidden");
   function kv(k, v) {
     var row = el("div", "kv");
     row.appendChild(el("span", "k", k));
