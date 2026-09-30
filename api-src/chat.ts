@@ -9,6 +9,11 @@
  *
  * Without any provider the error is honest ("No LLM provider configured"),
  * never a fabricated reply.
+ *
+ * Also serves the Music section's server-side search:
+ * Body: { action: "music-search", q: string } → { ok, results: [{id,title,artist?}] }
+ * Handled here instead of a new api/*.js to respect the Vercel Hobby
+ * 12-function limit.
  */
 import { ApiSystem } from "../src/api/api-manager";
 import {
@@ -20,6 +25,7 @@ import { applyAttachmentsToMessages, AttachmentError } from "../src/server/chat-
 import { extractArtifacts, ARTIFACT_SYSTEM_NUDGE } from "../src/server/chat-artifacts";
 import type { ChatMessage } from "../src/types";
 import { handleApiError, readJsonBody, requireMethod, sendJson, type VercelRequest, type VercelResponse, handlePreflight } from "./_lib";
+import { searchMusic } from "../src/server/music-search";
 
 const silentLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
@@ -34,6 +40,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   if (!requireMethod(req, res, "POST")) return;
   try {
     const body = readJsonBody(req);
+    /* Music search action: the Music section's server-side search
+       (YouTube direct + Piped fallback, no key needed). Handled on
+       /api/chat — not a new api/*.js file — to respect the Vercel Hobby
+       12-function limit (see tests/vercel-limits.test.ts). */
+    if (body.action === "music-search") {
+      const q = typeof body.q === "string" ? body.q : "";
+      try {
+        const results = await searchMusic(q);
+        sendJson(res, 200, { ok: true, results });
+      } catch (err) {
+        sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
     const fromBody = typeof body.apiKey === "string" ? body.apiKey : undefined;
     const apiKey = extractRequestKeyFromHeaders(req.headers) ?? fromBody;
     const providerId =

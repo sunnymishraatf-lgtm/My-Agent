@@ -6423,6 +6423,125 @@ function handleApiError(res, err) {
   sendJson(res, 500, { ok: false, error: "Internal server error" });
 }
 
+// src/server/music-search.ts
+var YOUTUBEI_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+var YOUTUBEI_URL = "https://www.youtube.com/youtubei/v1/search?key=" + YOUTUBEI_KEY + "&prettyPrint=false";
+var PIPED_FALLBACK = "https://api.piped.private.coffee/search?filter=videos&q=";
+var ID_RE = /^[A-Za-z0-9_-]{11}$/;
+var MAX_RESULTS = 12;
+function parseYoutubeiSearch(data) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  function textOf(col) {
+    try {
+      const c = col;
+      const runs = c.musicResponsiveListItemFlexColumnRenderer.text.runs;
+      const first = Array.isArray(runs) ? runs[0] : void 0;
+      if (first && typeof first.text === "string") {
+        return first.text;
+      }
+    } catch {
+    }
+    return null;
+  }
+  function artistsOf(col) {
+    try {
+      const c = col;
+      const runs = c.musicResponsiveListItemFlexColumnRenderer.text.runs;
+      if (!Array.isArray(runs) || runs.length < 2) return void 0;
+      const names = runs.slice(1).map((r) => typeof r.text === "string" ? r.text.trim() : "").filter((t) => t && t !== "\u2022" && t !== "," && t !== "&");
+      return names.length ? names.join(", ") : void 0;
+    } catch {
+      return void 0;
+    }
+  }
+  function walk(node) {
+    if (out.length >= MAX_RESULTS) return;
+    if (Array.isArray(node)) {
+      for (const v of node) walk(v);
+      return;
+    }
+    if (node && typeof node === "object") {
+      const rec = node;
+      const item = rec["musicResponsiveListItemRenderer"];
+      if (item && typeof item === "object") {
+        const vid = item.navigationEndpoint?.watchEndpoint?.videoId;
+        const cols = Array.isArray(item.flexColumns) ? item.flexColumns : [];
+        const title = cols.length ? textOf(cols[0]) : null;
+        if (typeof vid === "string" && ID_RE.test(vid) && title && !seen.has(vid)) {
+          seen.add(vid);
+          const artist = cols.length > 1 ? artistsOf(cols[1]) : void 0;
+          out.push(artist ? { id: vid, title, artist } : { id: vid, title });
+        }
+      }
+      for (const v of Object.values(rec)) walk(v);
+    }
+  }
+  walk(data);
+  return out;
+}
+function parsePipedSearch(data) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const items = data?.items;
+  if (!Array.isArray(items)) return out;
+  for (const it of items) {
+    if (out.length >= MAX_RESULTS) break;
+    const rec = it;
+    if (!rec || typeof rec !== "object") continue;
+    const m = typeof rec.url === "string" ? rec.url.match(/[?&]v=([A-Za-z0-9_-]{11})/) : null;
+    const vid = m ? m[1] : void 0;
+    const title = typeof rec.title === "string" ? rec.title.trim() : "";
+    if (vid && ID_RE.test(vid) && title && !seen.has(vid)) {
+      seen.add(vid);
+      out.push({ id: vid, title });
+    }
+  }
+  return out;
+}
+async function fetchJson(url, init, timeoutMs) {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error("upstream http " + res.status);
+  return res.json();
+}
+async function youtubeiSearch(q) {
+  const data = await fetchJson(
+    YOUTUBEI_URL,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+      },
+      body: JSON.stringify({
+        context: { client: { clientName: "WEB_REMIX", clientVersion: "1.20250924.03.00", hl: "en", gl: "US" } },
+        query: q
+      })
+    },
+    8e3
+  );
+  return parseYoutubeiSearch(data);
+}
+async function pipedSearch(q) {
+  const data = await fetchJson(
+    PIPED_FALLBACK + encodeURIComponent(q),
+    { headers: { "user-agent": "Mozilla/5.0" } },
+    8e3
+  );
+  return parsePipedSearch(data);
+}
+async function searchMusic(q) {
+  const query = q.trim().slice(0, 120);
+  if (!query) throw new Error("Empty query");
+  const [yt, piped] = await Promise.allSettled([youtubeiSearch(query), pipedSearch(query)]);
+  if (yt.status === "fulfilled" && yt.value.length) return yt.value;
+  if (piped.status === "fulfilled" && piped.value.length) return piped.value;
+  if (yt.status === "fulfilled") return yt.value;
+  throw new Error(
+    "Music search is unreachable right now \u2014 paste a YouTube link instead."
+  );
+}
+
 // api-src/chat.ts
 var silentLogger = { debug: () => {
 }, info: () => {
@@ -6437,6 +6556,16 @@ async function handler(req, res) {
   if (!requireMethod(req, res, "POST")) return;
   try {
     const body = readJsonBody(req);
+    if (body.action === "music-search") {
+      const q = typeof body.q === "string" ? body.q : "";
+      try {
+        const results = await searchMusic(q);
+        sendJson(res, 200, { ok: true, results });
+      } catch (err) {
+        sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
     const fromBody = typeof body.apiKey === "string" ? body.apiKey : void 0;
     const apiKey = extractRequestKeyFromHeaders(req.headers) ?? fromBody;
     const providerId = extractRequestProviderFromHeaders(req.headers) ?? (typeof body.provider === "string" ? body.provider.trim().toLowerCase() || void 0 : void 0);

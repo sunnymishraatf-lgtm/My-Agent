@@ -4,6 +4,13 @@
  * best-effort search, a queue, and a persistent mini-player that keeps
  * playing while you navigate the rest of the app.
  *
+ * Search works "directly inside the app": the query first goes to the
+ * app's own backend (POST /api/chat {action:"music-search"}), which asks
+ * YouTube's search API server-to-server — browsers can't call it directly
+ * (it 403s cross-origin requests), and public Piped/Invidious instances
+ * die regularly. If the backend is unreachable, the client falls back to
+ * those public instances in order.
+ *
  * What it is not: it is not the AirBeats native Android app (a Kotlin/Gradle
  * project cannot run inside this web app). Playback is via official YouTube
  * embeds, so it is free but needs internet; videos whose owners disabled
@@ -29,8 +36,8 @@
     { id: "eKFTSSKCzWA", title: "Forest & Waterfall Sounds", sub: "nature ambience for deep focus" }
   ];
 
-  /* Public Piped/Invidious instances for best-effort search (no key needed).
-     Tried in order with a short timeout; all failing just disables search.
+  /* Public Piped/Invidious instances: client-side fallback when the app's
+     own backend search is unreachable. Tried in order with a short timeout.
      Verified live 2026-09-30: the previous four instances were dead
      (kavin.rocks 526, adminforge 301, nadeko 403, nerdvpn 401). */
   var SEARCH_ENDPOINTS = [
@@ -65,13 +72,13 @@
     return m ? m[1] : null;
   }
 
-  function fetchTimeout(url, ms) {
+  function fetchTimeout(url, ms, opts) {
     return new Promise(function (resolve, reject) {
       var done = false;
       var timer = setTimeout(function () {
         if (!done) { done = true; reject(new Error("timeout")); }
       }, ms);
-      fetch(url).then(function (r) {
+      fetch(url, opts).then(function (r) {
         if (done) return; done = true; clearTimeout(timer);
         if (!r.ok) reject(new Error("http " + r.status));
         else resolve(r.json());
@@ -79,6 +86,40 @@
         if (!done) { done = true; clearTimeout(timer); reject(e); }
       });
     });
+  }
+
+  /* Backend base for the app's own server-side search. Mirrors app.js
+     backendBase(): the dev-mode override in localStorage, else same-origin
+     (which is the Vercel deployment for the phone app). */
+  function backendBase() {
+    try { return (localStorage.getItem("neutron_backend_url") || "").replace(/\/+$/, ""); }
+    catch (e) { return ""; }
+  }
+
+  /** Normalize the backend's {ok, results:[{id,title,artist?}]} payload. */
+  function normalizeServerResults(data) {
+    var out = [];
+    if (!data || data.ok !== true || !Array.isArray(data.results)) return out;
+    data.results.forEach(function (r) {
+      if (!r || !ID_RE.test(r.id || "") || !String(r.title || "").trim()) return;
+      var item = { id: r.id, title: String(r.title) };
+      if (String(r.artist || "").trim()) item.artist = String(r.artist);
+      out.push(item);
+    });
+    return out.slice(0, 12);
+  }
+
+  /** Server-side search via the app's own backend: YouTube queried directly
+      (server-to-server, no CORS/Origin block) with a Piped fallback.
+      No third-party instance in the critical path. */
+  async function searchViaServer(q) {
+    var data = await fetchTimeout(backendBase() + "/api/chat", 12000, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "music-search", q: q })
+    });
+    if (!data || data.ok !== true) throw new Error((data && data.error) || "server search failed");
+    return normalizeServerResults(data);
   }
 
   /** Normalize Piped ({items:[{url,title}]}) and Invidious ([{videoId,title}]). */
@@ -325,12 +366,19 @@
   /* ---------------- search ---------------- */
 
   async function searchMusic(q, onDone) {
+    /* 1) The app's own backend searches YouTube directly (server-to-server:
+       no CORS block, no volunteer instance to die). */
+    try {
+      var items = await searchViaServer(q);
+      if (items.length) { onDone(null, items); return; }
+    } catch (e) { /* fall through to the public-instance chain */ }
+    /* 2) Public Piped/Invidious instances, tried in order. */
     var query = encodeURIComponent(q);
     for (var i = 0; i < SEARCH_ENDPOINTS.length; i++) {
       try {
         var data = await fetchTimeout(SEARCH_ENDPOINTS[i].replace("{q}", query), 8000);
-        var items = normalizeResults(data);
-        if (items.length) { onDone(null, items); return; }
+        var items2 = normalizeResults(data);
+        if (items2.length) { onDone(null, items2); return; }
       } catch (e) { /* try next instance */ }
     }
     onDone(new Error("Search is unreachable right now — paste a YouTube link instead."), []);
@@ -360,7 +408,10 @@
     img.alt = "";
     img.loading = "lazy";
     row.appendChild(img);
-    row.appendChild(el("div", "music-result-title", r.title));
+    var tcol = el("div", "music-result-text");
+    tcol.appendChild(el("div", "music-result-title", r.title));
+    if (r.artist) tcol.appendChild(el("div", "music-result-artist muted small", r.artist));
+    row.appendChild(tcol);
     var play = el("button", "btn primary sm", "Play");
     play.onclick = function () { playId(r.id, r.title); };
     var add = el("button", "btn ghost sm", "+ Queue");
@@ -480,7 +531,11 @@
     prev: function () { step(-1); },
     stop: stopAll,
     parseVideoId: parseVideoId,
-    STATIONS: STATIONS
+    STATIONS: STATIONS,
+    /* Exposed for tests: server-first search + payload normalizers. */
+    searchMusic: searchMusic,
+    normalizeResults: normalizeResults,
+    normalizeServerResults: normalizeServerResults
   };
   root.NeutronMusic = exp;
 })(typeof window !== "undefined" ? window : this);

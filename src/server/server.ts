@@ -15,6 +15,7 @@ import type { RepoAnalysis, ImpactGraph, NeutronPlan, MaintenanceRequest } from 
 import type { ChatMessage } from "../types";
 import { extractRequestKey, extractRequestProvider, configForRequest } from "./byok";
 import { applyAttachmentsToMessages, AttachmentError } from "./chat-attachments";
+import { searchMusic } from "./music-search";
 import { extractArtifacts, ARTIFACT_SYSTEM_NUDGE } from "./chat-artifacts";
 import { listCatalog, defaultModelsFor } from "../providers/catalog";
 import { existsSync, readFileSync, createReadStream } from "node:fs";
@@ -1407,6 +1408,8 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
   if (req.method === "POST" && url.pathname === "/api/chat") {
     try {
       const body = (await readJsonBody(req)) as {
+        action?: unknown;
+        q?: unknown;
         messages?: Array<{ role?: string; content?: unknown }>;
         model?: string;
         provider?: string;
@@ -1415,6 +1418,18 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
         projectContext?: unknown;
         maxTokens?: unknown;
       };
+      /* Music search action: the Music section's server-side search.
+         Mirrors the Vercel api/chat behavior below; handled on /api/chat
+         (not a new route) for the same reason. */
+      if (body.action === "music-search") {
+        try {
+          const results = await searchMusic(typeof body.q === "string" ? body.q : "");
+          sendJson(res, 200, { ok: true, results });
+        } catch (err) {
+          sendJson(res, 502, { ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
+        return;
+      }
       const apiKey = extractRequestKey(req, body);
       const providerId = extractRequestProvider(req, body);
       const messages: ChatMessage[] = (Array.isArray(body.messages) ? body.messages : [])
