@@ -173,7 +173,7 @@ describe("music history + playlists (device-local)", () => {
       big = S.pushHistory(big, { id: "id" + i, title: "T" + i, ts: i });
     }
     expect(big.length).toBe(S.HISTORY_CAP);
-    expect(big[0].id).toBe("id" + (S.HISTORY_CAP + 9));
+    expect(big[0]?.id).toBe("id" + (S.HISTORY_CAP + 9));
   });
 
   it("history round-trips through storage and drops invalid entries", () => {
@@ -195,9 +195,9 @@ describe("music history + playlists (device-local)", () => {
     S.addToPlaylist("Gym", "v3", "Song Three");
     let pls = S.readPlaylists();
     expect(Object.keys(pls).sort()).toEqual(["Focus", "Gym"]);
-    expect(pls["Focus"].map((t) => t.id)).toEqual(["v1", "v2"]);
+    expect(pls["Focus"]?.map((t) => t.id)).toEqual(["v1", "v2"]);
     S.removeFromPlaylist("Focus", "v1");
-    expect(S.readPlaylists()["Focus"].map((t) => t.id)).toEqual(["v2"]);
+    expect(S.readPlaylists()["Focus"]?.map((t) => t.id)).toEqual(["v2"]);
     S.deletePlaylist("Gym");
     expect(Object.keys(S.readPlaylists())).toEqual(["Focus"]);
   });

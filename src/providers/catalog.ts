@@ -345,9 +345,18 @@ export function builtinCatalog(): ProviderCatalogEntry[] {
  * work with BYOK. The `nous` direct endpoint is OAuth-only (short-lived
  * JWTs minted from a Portal refresh token), so it carries no static
  * model defaults — a pasted key cannot authenticate there.
+ *
+ * Free models (":free" suffix) were verified live against the same
+ * endpoint on 2026-09-30. They cost nothing but OpenRouter rotates the
+ * free lineup — if one 404s, pick another from the live list or use the
+ * Custom model field.
  */
 const DEFAULT_MODELS: Record<string, string[]> = {
   openrouter: [
+    "qwen/qwen3.8-27b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-31b-it:free",
+    "cohere/north-mini-code:free",
     "nousresearch/hermes-4-405b",
     "nousresearch/hermes-3-llama-3.1-405b",
     "nousresearch/hermes-3-llama-3.1-70b",

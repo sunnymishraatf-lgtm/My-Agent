@@ -42,7 +42,16 @@
     p.appendChild(el("h2", null, title + " needs the Node server"));
     p.appendChild(el("p", "muted",
       what + " runs real processes, which serverless hosting can't do. " +
-      "Run the Node server and open this page there:"));
+      "Deploy NEUTRON's Node server free on Render, then point the app at it:"));
+    var steps = el("ol", "node-steps");
+    steps.appendChild(el("li", null, "Render dashboard → New → Blueprint → pick your My-Agent repo (render.yaml is included)."));
+    steps.appendChild(el("li", null, "Enter your AGENTROUTER_API_KEY when asked (get one free at agentrouter.org). Render generates the server password."));
+    steps.appendChild(el("li", null, "Wait for the deploy to go live, then copy your service URL (https://neutron-server-xxxx.onrender.com)."));
+    steps.appendChild(el("li", null, "In this app: Developer mode → backend URL override → paste the URL. Reopen this screen — the terminal will work."));
+    p.appendChild(steps);
+    p.appendChild(el("p", "muted",
+      "Free plan sleeps after ~15 min idle (first tap takes ~30s to wake). " +
+      "Or run it on your own machine:"));
     p.appendChild(el("code", "rm-cmd", "node dist/cli-entry.js web --no-open"));
     view.appendChild(p);
     return false;

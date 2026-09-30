@@ -3158,6 +3158,8 @@ body.chat-full .view {
   overflow-x: auto;
 }
 .rm-row { display: flex; gap: 8px; margin-top: 12px; }
+.node-steps { margin: 10px 0 4px; padding-left: 22px; display: grid; gap: 8px; font-size: 14px; line-height: 1.45; }
+.node-steps li::marker { color: var(--accent); font-weight: 700; }
 
 /* relay mode (serverless): simplified chat + members + activity layout */
 .rm-relay-body { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }

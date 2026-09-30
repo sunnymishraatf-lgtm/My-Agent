@@ -242,6 +242,13 @@ describe("NousResearch / Hermes catalog wiring", () => {
     expect(models).toContain("nousresearch/hermes-3-llama-3.1-405b");
     expect(models).toContain("nousresearch/hermes-3-llama-3.1-70b");
   });
+
+  it("suggests verified free OpenRouter models (zero-cost, :free suffix)", () => {
+    const models = defaultModelsFor("openrouter");
+    const free = models.filter((m) => m.endsWith(":free"));
+    expect(free.length).toBeGreaterThanOrEqual(3);
+    for (const m of free) expect(m).toMatch(/^[^/]+\/[^/]+:free$/);
+  });
 });
 
 describe("DemoManager never retains the request key", () => {
