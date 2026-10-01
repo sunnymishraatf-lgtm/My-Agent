@@ -582,7 +582,10 @@
 
     function refresh() {
       reqBox.innerHTML = ""; listBox.innerHTML = "";
+      reqBox.appendChild(el("p", "muted small", "Loading requests…"));
+      listBox.appendChild(el("p", "muted small", "Loading friends…"));
       apiAuth("GET", "/api/connections/requests").then(function (d) {
+        reqBox.innerHTML = "";
         var reqs = d.requests || [];
         if (reqs.length) {
           reqBox.appendChild(el("h3", null, "Requests (" + reqs.length + ")"));
@@ -608,9 +611,13 @@
             reqBox.appendChild(row);
           });
         }
-      }).catch(function () {});
+      }).catch(function (e) {
+        reqBox.innerHTML = "";
+        reqBox.appendChild(el("p", "auth-err small", "Couldn't load requests."));
+      });
 
       apiAuth("GET", "/api/connections").then(function (d) {
+        listBox.innerHTML = "";
         var conns = d.connections || [];
         listBox.appendChild(el("h3", null, "Friends (" + conns.length + ")"));
         if (!conns.length) {
@@ -654,7 +661,10 @@
           row.appendChild(acts);
           listBox.appendChild(row);
         });
-      }).catch(function () {});
+      }).catch(function () {
+        listBox.innerHTML = "";
+        listBox.appendChild(el("p", "auth-err small", "Couldn't load friends."));
+      });
     }
 
     // Find users by username, then send requests from results.
