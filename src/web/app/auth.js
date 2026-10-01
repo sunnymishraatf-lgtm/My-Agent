@@ -12,6 +12,10 @@
 
   var TOKEN_KEY = "neutron_auth_token";
   var ME_CACHE = null;
+  /* If the current backend has no auth (e.g. Vercel serverless), fall back
+     to the user's Node server so login works everywhere. */
+  var AUTH_FALLBACK_BASE = "https://neutron-server.onrender.com";
+  var authBase = null; // resolved working auth backend (string) or false
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -36,19 +40,41 @@
     ME_CACHE = null;
   }
 
+  function currentBackendBase() {
+    try {
+      if (window.NeutronUI && window.NeutronUI.backendBase) {
+        return window.NeutronUI.backendBase();
+      }
+      return (localStorage.getItem("neutron_backend_url") || "").trim();
+    } catch (e) { return ""; }
+  }
+
+  async function tryAuthBase(base) {
+    try {
+      var res = await fetch(base + "/api/auth/status", { method: "GET" });
+      if (!res.ok) return false;
+      var d = await res.json();
+      return !!(d && d.ok);
+    } catch (e) { return false; }
+  }
+
+  async function resolveAuthBase() {
+    if (authBase !== null) return authBase || "";
+    var primary = currentBackendBase();
+    if (await tryAuthBase(primary)) { authBase = primary; return authBase; }
+    if (primary !== AUTH_FALLBACK_BASE && await tryAuthBase(AUTH_FALLBACK_BASE)) {
+      authBase = AUTH_FALLBACK_BASE;
+      return authBase;
+    }
+    authBase = false;
+    return "";
+  }
+
   async function apiAuth(method, path, body) {
+    var base = await resolveAuthBase();
     var headers = { "content-type": "application/json" };
     var t = getToken();
     if (t) headers["authorization"] = "Bearer " + t;
-    var base = "";
-    try {
-      base = (window.NeutronUI && window.NeutronUI.backendBase)
-        ? window.NeutronUI.backendBase()
-        : (function () {
-            try { return (localStorage.getItem("neutron_backend_url") || "").trim(); }
-            catch (e) { return ""; }
-          })();
-    } catch (e) {}
     var res = await fetch(base + path, {
       method: method,
       headers: headers,
@@ -61,6 +87,8 @@
   }
 
   async function authStatus() {
+    var base = await resolveAuthBase();
+    if (!base) return null;
     try { return await apiAuth("GET", "/api/auth/status"); }
     catch (e) { return null; }
   }
@@ -160,11 +188,11 @@
     authStatus().then(function (st) {
       statusBox.innerHTML = "";
       if (!st) {
-        statusBox.appendChild(el("h2", null, "Accounts need the Node server"));
+        statusBox.appendChild(el("h2", null, "Accounts are unreachable"));
         statusBox.appendChild(el("p", "muted",
-          "Login, profiles, and connections need a user database, which serverless " +
-          "hosting doesn't have. Point the app at your Render Node server " +
-          "(Settings → Developer mode → backend URL) to use accounts."));
+          "Couldn't reach an account server on this backend or your Node server. " +
+          "Check your connection, or set the backend URL to your Render Node server " +
+          "in Settings → Developer mode."));
         var goBtn = el("button", "btn", "Open Settings");
         goBtn.onclick = function () { location.hash = "#/settings"; };
         statusBox.appendChild(goBtn);
@@ -194,6 +222,12 @@
     box.appendChild(el("h2", null, "Log in to NEUTRON"));
     box.appendChild(el("p", "muted small",
       "Your profile gets a unique @username you can share so friends can connect with you."));
+    resolveAuthBase().then(function (base) {
+      if (base === AUTH_FALLBACK_BASE) {
+        box.appendChild(el("p", "muted small",
+          "Using your Node server for accounts."));
+      }
+    });
 
     // Google
     if (st.google && st.googleClientId) {
