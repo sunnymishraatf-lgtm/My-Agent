@@ -4744,6 +4744,25 @@ async function renderSettings(view) {
   pp.appendChild(modelStatus);
   view.appendChild(pp);
 
+  /* ----- background playback (Android app only) ----- */
+  (function () {
+    var bridge = null;
+    try { bridge = window.NeutronApp; } catch (e) {}
+    if (!bridge || typeof bridge.requestBackgroundPermission !== "function") return;
+    var bp = el("section", "panel");
+    bp.appendChild(el("h2", null, "Background playback"));
+    bp.appendChild(el("p", "muted small",
+      "Let NEUTRON keep music playing with the screen off or the app in the background. " +
+      "Tap below if you were never asked, or tapped “Not now” earlier."));
+    var bBtn = el("button", "btn primary", "Allow background playback");
+    bBtn.onclick = function () {
+      try { bridge.requestBackgroundPermission(); }
+      catch (e) { toast("Couldn't open settings: " + String((e && e.message) || e)); }
+    };
+    bp.appendChild(bBtn);
+    view.appendChild(bp);
+  })();
+
   /* ----- Model router (Phase 21) ----- */
   var rp = el("section", "panel");
   rp.appendChild(el("h2", null, "Model router"));
