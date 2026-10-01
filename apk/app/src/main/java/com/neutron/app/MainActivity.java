@@ -9,6 +9,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -91,6 +92,65 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 23 && !hasAllPermissions()) {
             requestPermissions(wantedPermissions(), REQ_APP_PERMISSIONS);
         }
+    }
+
+    /** True when the app is already exempt from battery optimization. */
+    private boolean ignoringBatteryOptimizations() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        } catch (Exception e) {
+            return true; // assume fine if we can't check
+        }
+    }
+
+    /** First-time nudge: only ask once, the first time music plays. */
+    private void promptBatteryOptimizationOnce() {
+        try {
+            android.content.SharedPreferences prefs =
+                    getSharedPreferences("neutron_prefs", Context.MODE_PRIVATE);
+            if (prefs.getBoolean("battery_opt_asked", false)) return;
+            prefs.edit().putBoolean("battery_opt_asked", true).apply();
+        } catch (Exception ignored) {}
+        promptBatteryOptimization(false);
+    }
+
+    /**
+     * Ask the user to let NEUTRON run in the background (exempt from battery
+     * optimization). Without this, most phones kill background audio minutes
+     * after the screen turns off, foreground service or not.
+     */
+    private void promptBatteryOptimization(final boolean force) {
+        if (!force && ignoringBatteryOptimizations()) return;
+        if (force && ignoringBatteryOptimizations()) {
+            android.widget.Toast.makeText(this,
+                    "Background run is already allowed.", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Keep music playing in background?")
+                .setMessage("Your phone's battery saver can stop NEUTRON's music when the " +
+                        "screen is off. Allow background run so playback never cuts out.")
+                .setPositiveButton("Allow", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int which) {
+                        try {
+                            Intent i = new Intent(
+                                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    android.net.Uri.parse("package:" + getPackageName()));
+                            startActivity(i);
+                        } catch (Exception e) {
+                            // Fallback: open the app's battery settings page.
+                            try {
+                                Intent i = new Intent(
+                                        android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                                startActivity(i);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                })
+                .setNegativeButton("Not now", null)
+                .show();
     }
 
     private boolean hasWebResources(String[] resources) {
@@ -286,6 +346,23 @@ public class MainActivity extends Activity {
                 public void run() {
                     if (web != null) web.setKeepVisible(true);
                     MusicService.update(MainActivity.this, title, true);
+                    promptBatteryOptimizationOnce();
+                }
+            });
+        }
+
+        /**
+         * Ask the user to exempt NEUTRON from battery optimization, so music
+         * keeps playing with the screen off / app in background. Shown once,
+         * the first time music plays (when the reason is obvious). Also
+         * available on demand via {@link #requestBackgroundPermission}.
+         */
+        @JavascriptInterface
+        public void requestBackgroundPermission() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    promptBatteryOptimization(true);
                 }
             });
         }
