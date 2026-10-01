@@ -530,41 +530,63 @@ public class MainActivity extends Activity {
             try {
                 byte[] data = android.util.Base64.decode(base64Data,
                         android.util.Base64.DEFAULT);
-                java.io.File dir = android.os.Environment.getExternalStoragePublicDirectory(
-                        android.os.Environment.DIRECTORY_DOWNLOADS);
-                if (!dir.exists()) dir.mkdirs();
                 // Sanitize filename.
                 String safe = filename.replaceAll("[^a-zA-Z0-9._-]", "_");
                 if (safe.isEmpty()) safe = "download";
-                java.io.File out = new java.io.File(dir, safe);
-                // Avoid overwriting: append (1), (2), ...
-                int n = 1;
-                while (out.exists()) {
-                    int dot = safe.lastIndexOf('.');
-                    String base = dot > 0 ? safe.substring(0, dot) : safe;
-                    String ext = dot > 0 ? safe.substring(dot) : "";
-                    out = new java.io.File(dir, base + " (" + n + ")" + ext);
-                    n++;
+                final String savedName;
+                String resultPath;
+
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    // Scoped storage: use MediaStore.
+                    android.content.ContentValues values = new android.content.ContentValues();
+                    values.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, safe);
+                    values.put(android.provider.MediaStore.Downloads.MIME_TYPE,
+                            mimeType != null ? mimeType : "application/octet-stream");
+                    values.put(android.provider.MediaStore.Downloads.RELATIVE_PATH,
+                            android.os.Environment.DIRECTORY_DOWNLOADS);
+                    android.net.Uri uri = getContentResolver().insert(
+                            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                    if (uri == null) return "ERR:couldn't create file";
+                    java.io.OutputStream os = getContentResolver().openOutputStream(uri);
+                    if (os == null) return "ERR:couldn't open file";
+                    os.write(data);
+                    os.close();
+                    savedName = safe;
+                    resultPath = uri.toString();
+                } else {
+                    // Legacy: direct file access.
+                    java.io.File dir = android.os.Environment.getExternalStoragePublicDirectory(
+                            android.os.Environment.DIRECTORY_DOWNLOADS);
+                    if (!dir.exists()) dir.mkdirs();
+                    java.io.File out = new java.io.File(dir, safe);
+                    int n = 1;
+                    while (out.exists()) {
+                        int dot = safe.lastIndexOf('.');
+                        String base = dot > 0 ? safe.substring(0, dot) : safe;
+                        String ext = dot > 0 ? safe.substring(dot) : "";
+                        out = new java.io.File(dir, base + " (" + n + ")" + ext);
+                        n++;
+                    }
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+                    fos.write(data);
+                    fos.close();
+                    try {
+                        android.media.MediaScannerConnection.scanFile(
+                                MainActivity.this,
+                                new String[]{out.getAbsolutePath()}, null, null);
+                    } catch (Exception ignored) {}
+                    savedName = out.getName();
+                    resultPath = out.getAbsolutePath();
                 }
-                java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
-                fos.write(data);
-                fos.close();
-                // Make it visible to the media scanner / Files app.
-                try {
-                    android.media.MediaScannerConnection.scanFile(
-                            MainActivity.this,
-                            new String[]{out.getAbsolutePath()}, null, null);
-                } catch (Exception ignored) {}
-                final String path = out.getAbsolutePath();
-                final String savedName = out.getName();
+                final String toastName = savedName;
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
                         android.widget.Toast.makeText(MainActivity.this,
-                                "Saved to Downloads: " + savedName,
+                                "Saved to Downloads: " + toastName,
                                 android.widget.Toast.LENGTH_LONG).show();
                     }
                 });
-                return path;
+                return resultPath;
             } catch (Exception e) {
                 return "ERR:" + e.getMessage();
             }
