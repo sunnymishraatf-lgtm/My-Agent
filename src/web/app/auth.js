@@ -478,7 +478,8 @@
       var overlay = el("div", "auth-overlay");
       var card = el("div", "panel auth-profile-card");
       var close = el("button", "btn sm ghost auth-close", "✕");
-      close.onclick = function () { document.body.removeChild(overlay); };
+      close.setAttribute("aria-label", "Close profile");
+      close.onclick = function () { closeOverlay(); };
       card.appendChild(close);
       var head = el("div", "auth-head");
       head.appendChild(el("div", "auth-avatar", (p.displayName || p.username || "?").slice(0, 1).toUpperCase()));
@@ -498,8 +499,16 @@
       };
       card.appendChild(conn);
       overlay.appendChild(card);
+      var closeOverlay = function () {
+        try { document.body.removeChild(overlay); } catch (e) {}
+        document.removeEventListener("keydown", onKey);
+      };
+      var onKey = function (ev) {
+        if (ev.key === "Escape") closeOverlay();
+      };
+      document.addEventListener("keydown", onKey);
       overlay.onclick = function (ev) {
-        if (ev.target === overlay) document.body.removeChild(overlay);
+        if (ev.target === overlay) closeOverlay();
       };
       document.body.appendChild(overlay);
     }).catch(function (e) { toast(String((e && e.message) || e)); });
