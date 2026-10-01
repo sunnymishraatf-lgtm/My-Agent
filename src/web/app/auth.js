@@ -225,11 +225,33 @@
     // Google
     if (st.google && st.googleClientId) {
       var gbox = el("div", "auth-block");
-      renderGoogleButton(gbox, st.googleClientId, function (idToken) {
+      var googleLogin = function (idToken) {
         apiAuth("POST", "/api/auth/google", { idToken: idToken }).then(function (d) {
           loginDone(d.user, d.token);
         }).catch(function (e) { toast(String((e && e.message) || e)); });
-      });
+      };
+      // Called by the native shell after system-browser OAuth completes.
+      window.NeutronAuth.nativeGoogleToken = function (idToken) {
+        if (idToken) googleLogin(idToken);
+        else toast("Google sign-in was cancelled.");
+      };
+      // In the Android app, use the native flow: system browser shows the
+      // device's Gmail accounts (account picker) instead of a typed login.
+      var bridge = null;
+      try { bridge = window.NeutronApp; } catch (e) {}
+      if (bridge && typeof bridge.googleSignIn === "function") {
+        var nBtn = el("button", "btn primary auth-google-native", "Continue with Google");
+        nBtn.onclick = function () {
+          toast("Opening Google sign-in…");
+          try { bridge.googleSignIn(); } catch (e) {
+            toast("Couldn't open Google sign-in.");
+          }
+        };
+        gbox.appendChild(nBtn);
+        gbox.appendChild(el("p", "muted small", "Sign in with your phone's Google account."));
+      } else {
+        renderGoogleButton(gbox, st.googleClientId, googleLogin);
+      }
       box.appendChild(gbox);
     } else {
       box.appendChild(el("p", "muted small",

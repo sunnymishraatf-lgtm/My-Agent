@@ -27,6 +27,10 @@ public class MainActivity extends Activity {
 
     private static final int REQ_APP_PERMISSIONS = 1001;
 
+    /** Google OAuth client (same as the web app). */
+    private static final String GOOGLE_CLIENT_ID =
+            "485781555196-n5bv0ftsuoivr71u6to7net5lkg2qoth.apps.googleusercontent.com";
+
     private NeutronWebView web;
     private UpdateManager updater;
     /** WebView permission request held while we ask Android for the matching
@@ -285,6 +289,57 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleUpdateIntent(intent);
+        handleOAuthRedirect(intent);
+    }
+
+    /**
+     * Captures the Google OAuth redirect (com.neutron.app:/oauth2redirect),
+     * extracts the ID token, and hands it to the web app for verification.
+     */
+    private void handleOAuthRedirect(Intent intent) {
+        if (intent == null || intent.getData() == null) return;
+        android.net.Uri uri = intent.getData();
+        if (!"com.neutron.app".equals(uri.getScheme())) return;
+        if (!"/oauth2redirect".equals(uri.getPath())) return;
+        // Implicit flow returns the token in the URL fragment.
+        String frag = uri.getFragment();
+        String idToken = null;
+        if (frag != null) {
+            for (String kv : frag.split("&")) {
+                int eq = kv.indexOf('=');
+                if (eq > 0 && "id_token".equals(kv.substring(0, eq))) {
+                    try {
+                        idToken = java.net.URLDecoder.decode(
+                                kv.substring(eq + 1), "UTF-8");
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+        if (idToken == null || idToken.isEmpty()) {
+            String err = uri.getQueryParameter("error");
+            final String msg = err != null ? err : "no token returned";
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    android.widget.Toast.makeText(MainActivity.this,
+                            "Google sign-in failed: " + msg,
+                            android.widget.Toast.LENGTH_LONG).show();
+                }
+            });
+            return;
+        }
+        final String token = idToken;
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    String js = "(function(){try{"
+                            + "if(window.NeutronAuth&&NeutronAuth.nativeGoogleToken)"
+                            + "NeutronAuth.nativeGoogleToken("
+                            + org.json.JSONObject.quote(token) + ");"
+                            + "}catch(e){}})()";
+                    if (web != null) web.evaluateJavascript(js, null);
+                } catch (Exception ignored) {}
+            }
+        });
     }
 
     /** Opens the update dialog when launched from the update notification. */
@@ -366,6 +421,39 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return 0;
             }
+        }
+
+        /**
+         * Native Google sign-in: opens the OAuth flow in the system browser
+         * (where the user's Gmail accounts are already signed in, so they
+         * get the account picker instead of typing their email). Google
+         * returns the ID token to com.neutron.app:/oauth2redirect, which
+         * onNewIntent captures and hands to the WebView.
+         */
+        @JavascriptInterface
+        public void googleSignIn() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        String nonce = java.util.UUID.randomUUID().toString();
+                        String url = "https://accounts.google.com/o/oauth2/v2/auth"
+                                + "?client_id=" + android.net.Uri.encode(GOOGLE_CLIENT_ID)
+                                + "&redirect_uri=" + android.net.Uri.encode("com.neutron.app:/oauth2redirect")
+                                + "&response_type=id_token"
+                                + "&scope=" + android.net.Uri.encode("openid email profile")
+                                + "&nonce=" + android.net.Uri.encode(nonce);
+                        Intent i = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url));
+                        // Prefer a real browser over the app itself for the OAuth page.
+                        i.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
+                        startActivity(i);
+                    } catch (Exception e) {
+                        android.widget.Toast.makeText(MainActivity.this,
+                                "Couldn't open browser for Google sign-in.",
+                                android.widget.Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
         }
 
         /** Music started playing (or the track changed) — keep it alive
