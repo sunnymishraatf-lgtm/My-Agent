@@ -2954,6 +2954,35 @@ function fmtSize(n) {
 }
 
 function downloadBlob(blob, name) {
+  // In the Android app, WebView ignores <a download> — use the native saver.
+  try {
+    var bridge = window.NeutronApp;
+    if (bridge && typeof bridge.saveFile === "function") {
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          var b64 = String(reader.result).split(",")[1] || "";
+          var res = bridge.saveFile(b64, name || "download", blob.type || "application/octet-stream");
+          if (res && res.indexOf("ERR:") === 0) {
+            if (window.NeutronUI && window.NeutronUI.toast) {
+              window.NeutronUI.toast("Save failed: " + res.slice(4));
+            }
+          }
+        } catch (e) {
+          if (window.NeutronUI && window.NeutronUI.toast) {
+            window.NeutronUI.toast("Save failed.");
+          }
+        }
+      };
+      reader.onerror = function () {
+        if (window.NeutronUI && window.NeutronUI.toast) {
+          window.NeutronUI.toast("Couldn't read file for download.");
+        }
+      };
+      reader.readAsDataURL(blob);
+      return;
+    }
+  } catch (e) { /* fall through to anchor download */ }
   var url = URL.createObjectURL(blob);
   var a = document.createElement("a");
   a.href = url;

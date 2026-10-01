@@ -205,6 +205,40 @@ public class MainActivity extends Activity {
         // Allow popups (e.g. Google sign-in) — handled in onCreateWindow below.
         s.setSupportMultipleWindows(true);
 
+        /* Downloads: WebView ignores <a download> clicks, so handle them
+           natively — save to the public Downloads folder and notify. */
+        web.setDownloadListener(new android.webkit.DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String userAgent,
+                                        String contentDisposition, String mimeType,
+                                        long contentLength) {
+                try {
+                    android.app.DownloadManager dm = (android.app.DownloadManager)
+                            getSystemService(DOWNLOAD_SERVICE);
+                    android.app.DownloadManager.Request req =
+                            new android.app.DownloadManager.Request(
+                                    android.net.Uri.parse(url));
+                    String name = android.webkit.URLUtil.guessFileName(
+                            url, contentDisposition, mimeType);
+                    req.setTitle(name);
+                    req.setDescription("Downloading from NEUTRON");
+                    req.setNotificationVisibility(
+                            android.app.DownloadManager.Request
+                                    .VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    req.setDestinationInExternalPublicDir(
+                            android.os.Environment.DIRECTORY_DOWNLOADS, name);
+                    if (dm != null) dm.enqueue(req);
+                    android.widget.Toast.makeText(MainActivity.this,
+                            "Downloading " + name + "…",
+                            android.widget.Toast.LENGTH_SHORT).show();
+                } catch (Exception e) {
+                    android.widget.Toast.makeText(MainActivity.this,
+                            "Download failed.",
+                            android.widget.Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+
         web.setWebViewClient(new WebViewClient());
         /* Bridge page mic/camera requests (e.g. voice-call getUserMedia)
            to Android runtime permissions. Without this, WebView silently
@@ -431,8 +465,7 @@ public class MainActivity extends Activity {
          * onNewIntent captures and hands to the WebView.
          */
         @JavascriptInterface
-        public void googleSignIn() {
-            runOnUiThread(new Runnable() {
+        public void googleSignIn() {            runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
                     try {
@@ -484,6 +517,57 @@ public class MainActivity extends Activity {
                     promptBatteryOptimization(true);
                 }
             });
+        }
+
+        /**
+         * Save a base64-encoded file to Downloads. Used for blob downloads
+         * (e.g. generated zips) which WebView can't handle natively.
+         * Returns the saved file path, or an error string prefixed with "ERR:".
+         */
+        @JavascriptInterface
+        public String saveFile(final String base64Data, final String filename,
+                               final String mimeType) {
+            try {
+                byte[] data = android.util.Base64.decode(base64Data,
+                        android.util.Base64.DEFAULT);
+                java.io.File dir = android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS);
+                if (!dir.exists()) dir.mkdirs();
+                // Sanitize filename.
+                String safe = filename.replaceAll("[^a-zA-Z0-9._-]", "_");
+                if (safe.isEmpty()) safe = "download";
+                java.io.File out = new java.io.File(dir, safe);
+                // Avoid overwriting: append (1), (2), ...
+                int n = 1;
+                while (out.exists()) {
+                    int dot = safe.lastIndexOf('.');
+                    String base = dot > 0 ? safe.substring(0, dot) : safe;
+                    String ext = dot > 0 ? safe.substring(dot) : "";
+                    out = new java.io.File(dir, base + " (" + n + ")" + ext);
+                    n++;
+                }
+                java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+                fos.write(data);
+                fos.close();
+                // Make it visible to the media scanner / Files app.
+                try {
+                    android.media.MediaScannerConnection.scanFile(
+                            MainActivity.this,
+                            new String[]{out.getAbsolutePath()}, null, null);
+                } catch (Exception ignored) {}
+                final String path = out.getAbsolutePath();
+                final String savedName = out.getName();
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        android.widget.Toast.makeText(MainActivity.this,
+                                "Saved to Downloads: " + savedName,
+                                android.widget.Toast.LENGTH_LONG).show();
+                    }
+                });
+                return path;
+            } catch (Exception e) {
+                return "ERR:" + e.getMessage();
+            }
         }
 
         /** Music paused — keep the notification, show the paused state. */
