@@ -1,6 +1,6 @@
 {
   "name": "neutron-agent",
-  "version": "0.1.0",
+  "version": "1.7.0",
   "description": "NEUTRON — Autonomous Software Maintenance Intelligence. Give it a maintenance request; a team of specialised AI agents analyses impact, plans, implements, tests, security-reviews and code-reviews the change behind human approval gates.",
   "type": "module",
   "bin": {
