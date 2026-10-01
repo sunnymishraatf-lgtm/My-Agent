@@ -326,6 +326,7 @@
     var idbox = el("div");
     idbox.appendChild(el("div", "auth-display", user.displayName || user.username));
     idbox.appendChild(el("div", "auth-username", "@" + user.username));
+    if (user.bio) idbox.appendChild(el("div", "auth-bio", user.bio));
     idbox.appendChild(el("span", "auth-provider", user.provider === "google" ? "Google"
       : user.provider === "email" ? "Email" : "Guest"));
     head.appendChild(idbox);
@@ -364,6 +365,82 @@
     connBox.appendChild(el("h2", null, "Connections"));
     view.appendChild(connBox);
     renderConnections(connBox, user);
+
+    // Who viewed my profile
+    var viewsBox = el("div", "panel");
+    viewsBox.appendChild(el("h2", null, "Who viewed your profile"));
+    view.appendChild(viewsBox);
+    renderProfileViews(viewsBox);
+  }
+
+  /** Show another user's public profile; records the view. */
+  function viewUserProfile(username) {
+    apiAuth("GET", "/api/auth/profile?u=" + encodeURIComponent(username)).then(function (d) {
+      var p = d.profile;
+      if (!p) { toast("User not found."); return; }
+      // Record the view (fire and forget).
+      apiAuth("POST", "/api/auth/profile/view", { username: p.username }).catch(function () {});
+      var overlay = el("div", "auth-overlay");
+      var card = el("div", "panel auth-profile-card");
+      var close = el("button", "btn sm ghost auth-close", "✕");
+      close.onclick = function () { document.body.removeChild(overlay); };
+      card.appendChild(close);
+      var head = el("div", "auth-head");
+      head.appendChild(el("div", "auth-avatar", (p.displayName || p.username || "?").slice(0, 1).toUpperCase()));
+      var idbox = el("div");
+      idbox.appendChild(el("div", "auth-display", p.displayName || p.username));
+      idbox.appendChild(el("div", "auth-username", "@" + p.username));
+      if (p.bio) idbox.appendChild(el("div", "auth-bio", p.bio));
+      head.appendChild(idbox);
+      card.appendChild(head);
+      var conn = el("button", "btn primary sm", "Send friend request");
+      conn.onclick = function () {
+        apiAuth("POST", "/api/connections/request", { username: p.username }).then(function () {
+          toast("Request sent to @" + p.username + ".");
+          conn.disabled = true;
+          conn.textContent = "Sent";
+        }).catch(function (e) { toast(String((e && e.message) || e)); });
+      };
+      card.appendChild(conn);
+      overlay.appendChild(card);
+      overlay.onclick = function (ev) {
+        if (ev.target === overlay) document.body.removeChild(overlay);
+      };
+      document.body.appendChild(overlay);
+    }).catch(function (e) { toast(String((e && e.message) || e)); });
+  }
+
+  function timeAgo(ts) {    var s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+
+  function renderProfileViews(box) {
+    box.appendChild(el("p", "muted small", "Loading…"));
+    apiAuth("GET", "/api/auth/profile/views").then(function (d) {
+      box.innerHTML = "";
+      box.appendChild(el("h2", null, "Who viewed your profile"));
+      var views = d.views || [];
+      if (!views.length) {
+        box.appendChild(el("p", "muted small",
+          "No views yet. Share your @username so people can find you."));
+        return;
+      }
+      views.forEach(function (v) {
+        var row = el("div", "friend-row");
+        var info = el("div", "friend-info");
+        info.appendChild(el("div", "friend-name", v.viewer.displayName || v.viewer.username));
+        info.appendChild(el("div", "muted small", "@" + v.viewer.username + " · " + timeAgo(v.viewedAt)));
+        row.appendChild(info);
+        box.appendChild(row);
+      });
+    }).catch(function () {
+      box.innerHTML = "";
+      box.appendChild(el("h2", null, "Who viewed your profile"));
+      box.appendChild(el("p", "muted small", "Couldn't load views."));
+    });
   }
 
   function renderEditProfile(view, user) {
@@ -375,13 +452,18 @@
     nameI.placeholder = "Display name"; nameI.setAttribute("aria-label", "Display name");
     var userI = el("input", "input"); userI.value = user.username || "";
     userI.placeholder = "Username"; userI.setAttribute("aria-label", "Username");
-    box.appendChild(nameI); box.appendChild(userI);
+    var bioI = document.createElement("textarea");
+    bioI.className = "input"; bioI.value = user.bio || "";
+    bioI.placeholder = "Bio — tell people who you are (160 chars)";
+    bioI.setAttribute("aria-label", "Bio"); bioI.rows = 3; bioI.maxLength = 160;
+    box.appendChild(nameI); box.appendChild(userI); box.appendChild(bioI);
     var err = el("p", "auth-err hidden"); box.appendChild(err);
     var save = el("button", "btn primary", "Save");
     save.onclick = function () {
       err.classList.add("hidden");
       apiAuth("POST", "/api/auth/me/update", {
         displayName: nameI.value.trim(), username: userI.value.trim(),
+        bio: bioI.value.trim(),
       }).then(function (d) {
         ME_CACHE = d.user;
         toast("Profile updated.");
@@ -511,8 +593,12 @@
         users.forEach(function (u) {
           var row = el("div", "friend-row");
           var info = el("div", "friend-info");
-          info.appendChild(el("div", "friend-name", u.displayName || u.username));
+          var nameEl = el("div", "friend-name auth-link", u.displayName || u.username);
+          nameEl.style.cursor = "pointer";
+          nameEl.onclick = function () { viewUserProfile(u.username); };
+          info.appendChild(nameEl);
           info.appendChild(el("div", "muted small", "@" + u.username));
+          if (u.bio) info.appendChild(el("div", "muted small auth-bio-sm", u.bio));
           row.appendChild(info);
           var add = el("button", "btn primary sm", "Connect");
           add.onclick = function () {

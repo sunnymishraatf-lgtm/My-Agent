@@ -18,6 +18,7 @@ export interface User {
   id: string;
   username: string; // unique, case-insensitive; 3-24 chars [a-z0-9_.]
   displayName: string;
+  bio?: string; // short profile bio, max 160 chars
   provider: "google" | "email" | "guest";
   email?: string;
   passwordHash?: string; // scrypt, email provider only
@@ -41,6 +42,11 @@ export interface Connection {
   createdAt: number;
 }
 
+export interface ProfileView {
+  viewerId: string;
+  viewedAt: number;
+}
+
 interface DbShape {
   users: Record<string, User>;
   usernames: Record<string, string>; // lower(username) -> userId
@@ -48,10 +54,12 @@ interface DbShape {
   googleSubs: Record<string, string>; // sub -> userId
   sessions: Record<string, Session>;
   connections: Record<string, Connection>;
+  profileViews: Record<string, ProfileView[]>; // viewedUserId -> views (newest first)
 }
 
 const EMPTY: DbShape = {
   users: {}, usernames: {}, emails: {}, googleSubs: {}, sessions: {}, connections: {},
+  profileViews: {},
 };
 
 function redisCfg(): { url: string; token: string } | null {
@@ -175,7 +183,7 @@ export class AuthStore {
     return user;
   }
 
-  async updateUser(id: string, patch: Partial<Pick<User, "displayName" | "avatarUrl" | "username">>): Promise<User | null> {
+  async updateUser(id: string, patch: Partial<Pick<User, "displayName" | "avatarUrl" | "username" | "bio">>): Promise<User | null> {
     const db = await this.load();
     const user = db.users[id];
     if (!user) return null;
@@ -188,8 +196,36 @@ export class AuthStore {
     }
     if (patch.displayName !== undefined) user.displayName = patch.displayName;
     if (patch.avatarUrl !== undefined) user.avatarUrl = patch.avatarUrl;
+    if (patch.bio !== undefined) user.bio = patch.bio.slice(0, 160);
     await this.save(db);
     return user;
+  }
+
+  /** Record that viewerId viewed targetUserId's profile. */
+  async recordProfileView(viewerId: string, targetUsername: string): Promise<void> {
+    const db = await this.load();
+    const target = db.users[db.usernames[targetUsername.toLowerCase()] || ""];
+    if (!target || target.id === viewerId) return; // no self-views
+    const views = (db.profileViews[target.id] = db.profileViews[target.id] || []);
+    // Move existing view to front (dedupe), or add new.
+    const existing = views.findIndex((v) => v.viewerId === viewerId);
+    if (existing >= 0) views.splice(existing, 1);
+    views.unshift({ viewerId, viewedAt: Date.now() });
+    // Keep last 50 views.
+    if (views.length > 50) views.length = 50;
+    await this.save(db);
+  }
+
+  /** Who viewed my profile (newest first), with safe user fields. */
+  async getProfileViews(userId: string): Promise<{ viewer: Pick<User, "username" | "displayName" | "avatarUrl">; viewedAt: number }[]> {
+    const db = await this.load();
+    const views = db.profileViews[userId] || [];
+    const out: { viewer: Pick<User, "username" | "displayName" | "avatarUrl">; viewedAt: number }[] = [];
+    for (const v of views) {
+      const u = db.users[v.viewerId];
+      if (u) out.push({ viewer: { username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl }, viewedAt: v.viewedAt });
+    }
+    return out;
   }
 
   // ----- sessions -----
@@ -287,22 +323,22 @@ export class AuthStore {
   }
 
   /** Public profile lookup by username (safe fields only). */
-  async publicProfile(username: string): Promise<Pick<User, "id" | "username" | "displayName" | "avatarUrl" | "provider" | "createdAt"> | null> {
+  async publicProfile(username: string): Promise<Pick<User, "id" | "username" | "displayName" | "bio" | "avatarUrl" | "provider" | "createdAt"> | null> {
     const u = await this.findByUsername(username);
     if (!u) return null;
-    return { id: u.id, username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl, provider: u.provider, createdAt: u.createdAt };
+    return { id: u.id, username: u.username, displayName: u.displayName, bio: u.bio, avatarUrl: u.avatarUrl, provider: u.provider, createdAt: u.createdAt };
   }
 
   /** Search users by username (partial, case-insensitive). Safe fields only. */
-  async searchUsers(query: string, excludeUserId?: string, limit = 10): Promise<Pick<User, "username" | "displayName" | "avatarUrl" | "provider">[]> {
+  async searchUsers(query: string, excludeUserId?: string, limit = 10): Promise<Pick<User, "username" | "displayName" | "bio" | "avatarUrl" | "provider">[]> {
     const db = await this.load();
     const q = query.toLowerCase().trim();
     if (q.length < 2) return [];
-    const out: Pick<User, "username" | "displayName" | "avatarUrl" | "provider">[] = [];
+    const out: Pick<User, "username" | "displayName" | "bio" | "avatarUrl" | "provider">[] = [];
     for (const u of Object.values(db.users)) {
       if (excludeUserId && u.id === excludeUserId) continue;
       if (u.username.toLowerCase().includes(q) || (u.displayName || "").toLowerCase().includes(q)) {
-        out.push({ username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl, provider: u.provider });
+        out.push({ username: u.username, displayName: u.displayName, bio: u.bio, avatarUrl: u.avatarUrl, provider: u.provider });
         if (out.length >= limit) break;
       }
     }

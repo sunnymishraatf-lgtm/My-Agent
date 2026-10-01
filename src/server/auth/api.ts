@@ -251,6 +251,22 @@ export async function handleAuthApi(
       return;
     }
 
+    /* POST /api/auth/profile/view { username } — record a profile view */
+    if (req.method === "POST" && seg.length === 2 && seg[0] === "profile" && seg[1] === "view") {
+      const body = await readJsonBody(req);
+      const username = str(body.username).trim();
+      if (username) await st.recordProfileView(auth.user.id, username);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    /* GET /api/auth/profile/views — who viewed my profile */
+    if (req.method === "GET" && seg.length === 2 && seg[0] === "profile" && seg[1] === "views") {
+      const views = await st.getProfileViews(auth.user.id);
+      sendJson(res, 200, { ok: true, views });
+      return;
+    }
+
     /* GET /api/auth/me */
     if (req.method === "GET" && seg.length === 1 && seg[0] === "me") {
       sendJson(res, 200, { ok: true, user: safeUser(auth.user), persistent: st.persistent });
@@ -264,12 +280,13 @@ export async function handleAuthApi(
       return;
     }
 
-    /* PATCH /api/auth/me { displayName?, username?, avatarUrl? } */
+    /* PATCH /api/auth/me { displayName?, username?, avatarUrl?, bio? } */
     if ((req.method === "PATCH" || req.method === "POST") && seg.length === 2 && seg[0] === "me" && seg[1] === "update") {
       const body = await readJsonBody(req);
       const patch: Record<string, string> = {};
       if (body.displayName !== undefined) patch.displayName = str(body.displayName).slice(0, 40);
       if (body.avatarUrl !== undefined) patch.avatarUrl = str(body.avatarUrl).slice(0, 500);
+      if (body.bio !== undefined) patch.bio = str(body.bio).slice(0, 160);
       if (body.username !== undefined) {
         const u = str(body.username).trim();
         if (!validUsername(u)) throw new AuthHttpError(400, "Username: 3-24 chars, letters/numbers/_/.");

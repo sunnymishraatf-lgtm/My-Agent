@@ -155,3 +155,26 @@ describe("AuthStore search", () => {
     expect(await st.searchUsers("s", me.id)).toEqual([]); // too short
   });
 });
+
+describe("AuthStore bio + profile views", () => {
+  it("stores and updates bio (160 char cap)", async () => {
+    const st = freshStore();
+    const u = await st.createUser({ username: "amy", displayName: "Amy", provider: "guest", bio: "Hello!" });
+    expect(u.bio).toBe("Hello!");
+    const updated = await st.updateUser(u.id, { bio: "x".repeat(200) });
+    expect(updated!.bio!.length).toBe(160);
+  });
+
+  it("records views and lists who viewed me (no self-views, deduped)", async () => {
+    const st = freshStore();
+    const a = await st.createUser({ username: "alice", displayName: "Alice", provider: "guest" });
+    const b = await st.createUser({ username: "bob", displayName: "Bob", provider: "guest" });
+    await st.recordProfileView(a.id, "bob");
+    await st.recordProfileView(a.id, "bob"); // duplicate -> moved to front, not doubled
+    await st.recordProfileView(b.id, "bob"); // self-view ignored
+    const views = await st.getProfileViews(b.id);
+    expect(views.length).toBe(1);
+    expect(views[0]!.viewer.username).toBe("alice");
+    expect(await st.getProfileViews(a.id)).toEqual([]);
+  });
+});

@@ -6891,6 +6891,13 @@ body.chat-full .view {
 .auth-display { font-size: 18px; font-weight: 700; }
 .auth-username { color: var(--muted, #888); font-size: 14px; }
 .auth-provider { display: inline-block; margin-top: 4px; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--chip, #2a2a2a); color: var(--muted, #aaa); }
+.auth-bio { font-size: 14px; color: var(--text, #ddd); margin: 6px 0; line-height: 1.4; }
+.auth-bio-sm { font-size: 12px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.auth-link:hover { text-decoration: underline; }
+.auth-search-results { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.auth-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+.auth-profile-card { position: relative; max-width: 420px; width: 100%; }
+.auth-close { position: absolute; top: 8px; right: 8px; }
 .auth-head + .btn, .panel > .btn { margin: 4px 8px 4px 0; }
 
 /* relay mode (serverless): simplified chat + members + activity layout */
