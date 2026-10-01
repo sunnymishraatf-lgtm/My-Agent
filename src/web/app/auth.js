@@ -145,41 +145,34 @@
   }
 
   function renderGoogleButton(box, clientId, onToken) {
-    var btn = el("button", "btn auth-google", "Continue with Google");
-    btn.onclick = function () {
-      btn.disabled = true;
-      btn.textContent = "Opening Google…";
-      loadGis().then(function () {
-        window.google.accounts.id.initialize({
-          client_id: clientId,
-          callback: function (resp) {
-            if (resp && resp.credential) onToken(resp.credential);
-            else { btn.disabled = false; btn.textContent = "Continue with Google"; }
-          },
-          auto_select: false,
-        });
-        // Use the OAuth popup flow via a temporary button render.
-        window.google.accounts.id.prompt(function (n) {
-          if (n.isNotDisplayed() || n.isSkippedMoment()) {
-            // Fallback: render an official button in a popup-friendly way.
-            btn.disabled = false;
-            btn.textContent = "Continue with Google";
-            toast("Google sign-in was dismissed. Tap again to retry.");
-          }
-        });
-      }).catch(function (e) {
-        btn.disabled = false;
-        btn.textContent = "Continue with Google";
-        toast(String((e && e.message) || e));
-      });
-    };
-    box.appendChild(btn);
+    var wrap = el("div", "auth-google-wrap");
+    box.appendChild(wrap);
     box.appendChild(el("p", "muted small", "Google verifies your identity; NEUTRON never sees your password."));
+    loadGis().then(function () {
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: function (resp) {
+          if (resp && resp.credential) onToken(resp.credential);
+          else toast("Google sign-in was cancelled.");
+        },
+        auto_select: false,
+      });
+      // Official Google button — opens the proper OAuth popup.
+      window.google.accounts.id.renderButton(wrap, {
+        theme: "outline",
+        size: "large",
+        text: "continue_with",
+        width: 280,
+      });
+    }).catch(function () {
+      wrap.appendChild(el("p", "auth-err", "Couldn't load Google sign-in. Check your connection."));
+    });
   }
 
   /* ---------- screens ---------- */
 
   function renderAccount(view) {
+    view.innerHTML = "";
     view.appendChild(el("h1", null, "Account"));
     var statusBox = el("div", "panel");
     statusBox.appendChild(el("p", "muted", "Checking account server…"));
