@@ -480,29 +480,96 @@
       }).catch(function () {});
     }
 
-    // Add by username
-    var addRow = el("div", "friend-add");
-    var uInput = el("input", "input");
-    uInput.placeholder = "@username to connect with";
-    uInput.setAttribute("aria-label", "Username");
-    addRow.appendChild(uInput);
-    var addBtn = el("button", "btn primary sm", "Send request");
-    addRow.appendChild(addBtn);
-    var doReq = function () {
-      var u = uInput.value.trim().replace(/^@/, "");
-      if (!u) { toast("Enter a username."); return; }
-      apiAuth("POST", "/api/connections/request", { username: u }).then(function () {
-        uInput.value = "";
-        toast("Request sent to @" + u + ".");
-        refresh();
-      }).catch(function (e) { toast(String((e && e.message) || e)); });
+    // Find users by username, then send requests from results.
+    var searchBox = el("div", "panel");
+    searchBox.appendChild(el("h3", null, "Find people"));
+    var searchRow = el("div", "friend-add");
+    var sInput = el("input", "input");
+    sInput.placeholder = "Search by username or name…";
+    sInput.setAttribute("aria-label", "Search users");
+    searchRow.appendChild(sInput);
+    var sBtn = el("button", "btn primary sm", "Search");
+    searchRow.appendChild(sBtn);
+    searchBox.appendChild(searchRow);
+    var sResults = el("div", "auth-search-results");
+    searchBox.appendChild(sResults);
+    var doSearch = function () {
+      var q = sInput.value.trim();
+      sResults.innerHTML = "";
+      if (q.length < 2) {
+        sResults.appendChild(el("p", "muted small", "Type at least 2 characters."));
+        return;
+      }
+      sResults.appendChild(el("p", "muted small", "Searching…"));
+      apiAuth("GET", "/api/auth/search?q=" + encodeURIComponent(q)).then(function (d) {
+        sResults.innerHTML = "";
+        var users = d.users || [];
+        if (!users.length) {
+          sResults.appendChild(el("p", "muted small", "No users found for \"" + q + "\"."));
+          return;
+        }
+        users.forEach(function (u) {
+          var row = el("div", "friend-row");
+          var info = el("div", "friend-info");
+          info.appendChild(el("div", "friend-name", u.displayName || u.username));
+          info.appendChild(el("div", "muted small", "@" + u.username));
+          row.appendChild(info);
+          var add = el("button", "btn primary sm", "Connect");
+          add.onclick = function () {
+            add.disabled = true;
+            apiAuth("POST", "/api/connections/request", { username: u.username }).then(function () {
+              toast("Request sent to @" + u.username + ".");
+              add.textContent = "Sent";
+            }).catch(function (e) {
+              add.disabled = false;
+              toast(String((e && e.message) || e));
+            });
+          };
+          row.appendChild(add);
+          sResults.appendChild(row);
+        });
+      }).catch(function (e) {
+        sResults.innerHTML = "";
+        sResults.appendChild(el("p", "auth-err", String((e && e.message) || e)));
+      });
     };
-    addBtn.onclick = doReq;
-    uInput.addEventListener("keydown", function (ev) {
-      if (ev.key === "Enter") { ev.preventDefault(); doReq(); }
+    sBtn.onclick = doSearch;
+    sInput.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); doSearch(); }
     });
-    box.appendChild(addRow);
+    // Live search as you type (debounced).
+    var sTimer = null;
+    sInput.addEventListener("input", function () {
+      if (sTimer) clearTimeout(sTimer);
+      sTimer = setTimeout(doSearch, 400);
+    });
+    box.appendChild(searchBox);
     refresh();
+
+    // Poll for new incoming requests; toast when one arrives.
+    if (window.NeutronAuth._reqPoll) clearInterval(window.NeutronAuth._reqPoll);
+    var knownReqs = null;
+    window.NeutronAuth._reqPoll = setInterval(function () {
+      if (!getToken()) return;
+      apiAuth("GET", "/api/connections/requests").then(function (d) {
+        var ids = {};
+        (d.requests || []).forEach(function (r) { ids[r.id] = r.from.username; });
+        if (knownReqs !== null) {
+          Object.keys(ids).forEach(function (id) {
+            if (!knownReqs[id]) {
+              toast("New friend request from @" + ids[id] + ".");
+              try {
+                if (window.NeutronUI && window.NeutronUI.notify) {
+                  window.NeutronUI.notify("Friend request", "@" + ids[id] + " wants to connect.");
+                }
+              } catch (e) {}
+              refresh();
+            }
+          });
+        }
+        knownReqs = ids;
+      }).catch(function () {});
+    }, 30000);
   }
 
   function teardown() { /* stateless */ }

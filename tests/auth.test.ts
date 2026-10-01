@@ -140,3 +140,18 @@ describe("AuthStore persistence flag", () => {
     expect(st.persistent).toBe(false);
   });
 });
+
+describe("AuthStore search", () => {
+  it("finds users by partial username, excludes self", async () => {
+    const st = freshStore();
+    const me = await st.createUser({ username: "sunny", displayName: "Sunny", provider: "guest" });
+    await st.createUser({ username: "sunnyfan", displayName: "Fan", provider: "guest" });
+    await st.createUser({ username: "bob", displayName: "Bobby", provider: "guest" });
+    const r1 = await st.searchUsers("sun", me.id);
+    expect(r1.map((u) => u.username)).toEqual(["sunnyfan"]);
+    const r2 = await st.searchUsers("bob", me.id);
+    expect(r2.map((u) => u.username)).toEqual(["bob"]);
+    expect(await st.searchUsers("x", me.id)).toEqual([]);
+    expect(await st.searchUsers("s", me.id)).toEqual([]); // too short
+  });
+});

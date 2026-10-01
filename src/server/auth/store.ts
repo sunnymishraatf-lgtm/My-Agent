@@ -292,6 +292,22 @@ export class AuthStore {
     if (!u) return null;
     return { id: u.id, username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl, provider: u.provider, createdAt: u.createdAt };
   }
+
+  /** Search users by username (partial, case-insensitive). Safe fields only. */
+  async searchUsers(query: string, excludeUserId?: string, limit = 10): Promise<Pick<User, "username" | "displayName" | "avatarUrl" | "provider">[]> {
+    const db = await this.load();
+    const q = query.toLowerCase().trim();
+    if (q.length < 2) return [];
+    const out: Pick<User, "username" | "displayName" | "avatarUrl" | "provider">[] = [];
+    for (const u of Object.values(db.users)) {
+      if (excludeUserId && u.id === excludeUserId) continue;
+      if (u.username.toLowerCase().includes(q) || (u.displayName || "").toLowerCase().includes(q)) {
+        out.push({ username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl, provider: u.provider });
+        if (out.length >= limit) break;
+      }
+    }
+    return out;
+  }
 }
 
 /** Validate a username: 3-24 chars, letters/numbers/underscore/dot. */

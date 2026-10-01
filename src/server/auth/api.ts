@@ -243,6 +243,14 @@ export async function handleAuthApi(
     const auth = token ? await st.getSession(token) : null;
     if (!auth) { sendJson(res, 401, { ok: false, error: "Not logged in." }); return; }
 
+    /* GET /api/auth/search?q=xxx — find users by username (authenticated) */
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "search") {
+      const q = (url.searchParams.get("q") || "").trim();
+      const results = await st.searchUsers(q, auth.user.id);
+      sendJson(res, 200, { ok: true, users: results });
+      return;
+    }
+
     /* GET /api/auth/me */
     if (req.method === "GET" && seg.length === 1 && seg[0] === "me") {
       sendJson(res, 200, { ok: true, user: safeUser(auth.user), persistent: st.persistent });
