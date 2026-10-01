@@ -198,6 +198,8 @@ public class MainActivity extends Activity {
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
         s.setMediaPlaybackRequiresUserGesture(false);
+        // Allow popups (e.g. Google sign-in) — handled in onCreateWindow below.
+        s.setSupportMultipleWindows(true);
 
         web.setWebViewClient(new WebViewClient());
         /* Bridge page mic/camera requests (e.g. voice-call getUserMedia)
@@ -218,6 +220,35 @@ public class MainActivity extends Activity {
             @Override
             public void onPermissionRequestCanceled(PermissionRequest request) {
                 if (request == pendingWebRequest) pendingWebRequest = null;
+            }
+
+            /* Popup windows (e.g. Google sign-in OAuth). Show in a dialog
+               WebView; Google closes it via window.close() when done. */
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog,
+                                          boolean isUserGesture, android.os.Message resultMsg) {
+                final android.app.Dialog dialog = new android.app.Dialog(MainActivity.this);
+                final WebView popup = new WebView(MainActivity.this);
+                popup.getSettings().setJavaScriptEnabled(true);
+                popup.getSettings().setDomStorageEnabled(true);
+                popup.setWebViewClient(new WebViewClient());
+                popup.setWebChromeClient(new WebChromeClient() {
+                    @Override
+                    public void onCloseWindow(WebView w) {
+                        try { dialog.dismiss(); } catch (Exception ignored) {}
+                    }
+                });
+                dialog.setContentView(popup);
+                try {
+                    dialog.show();
+                } catch (Exception e) {
+                    return false;
+                }
+                WebView.WebViewTransport transport =
+                        (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(popup);
+                resultMsg.sendToTarget();
+                return true;
             }
         });
         web.addJavascriptInterface(new AppBridge(), "NeutronApp");
