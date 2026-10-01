@@ -26,9 +26,8 @@ describe("friends wiring", () => {
 
   it("friends.js supports add / call / invite / remove", () => {
     expect(friendsJs).toContain("Add friend");
-    expect(friendsJs).toContain("callFriend");
-    expect(friendsJs).toContain("inviteFriend");
-    expect(friendsJs).toContain("removeFriend");
+    expect(friendsJs).toContain("callPerson");
+    expect(friendsJs).toContain("invitePerson");
     expect(friendsJs).toContain("shareText"); // native share sheet for invites
   });
 

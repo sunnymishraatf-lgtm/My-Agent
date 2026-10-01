@@ -451,12 +451,9 @@
       var go = el("button", "btn primary", "Go to Account");
       go.onclick = function () { location.hash = "#/account"; };
       box.appendChild(go);
-      // Refresh local session if logged in as this user.
+      // Refresh the cached user so the ✓ badge appears without a reload.
       try {
-        var cur = window.NeutronAuth && window.NeutronAuth.getUser && window.NeutronAuth.getUser();
-        if (cur && cur.id === d.user.id && window.NeutronAuth.setUser) {
-          window.NeutronAuth.setUser(d.user);
-        }
+        if (ME_CACHE && ME_CACHE.id === d.user.id) ME_CACHE = d.user;
       } catch (e) {}
     }).catch(function (e) {
       box.innerHTML = "";
