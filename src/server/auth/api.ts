@@ -12,6 +12,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { AuthStore, validUsername, safeUser } from "./store";
 import { hashPassword, verifyPassword, verifyGoogleIdToken } from "./crypto";
+import { sendVerificationEmail } from "./mailer";
 
 let store: AuthStore | null = null;
 
@@ -163,12 +164,19 @@ export async function handleAuthApi(
         displayName: str(body.displayName).slice(0, 40) || username,
         provider: "email",
         email,
+        emailVerified: false,
         passwordHash: await hashPassword(password),
       }).catch((e: Error) => {
         throw new AuthHttpError(e.message.includes("username") ? 409 : 400, e.message);
       });
+      // Send verification email (best effort — account is created regardless).
+      const vToken = await st.createEmailVerification(user.id);
+      const mailed = await sendVerificationEmail(email, user.displayName, vToken);
       const session = await st.createSession(user.id);
-      sendJson(res, 200, { ok: true, user: safeUser(user), token: session.token });
+      sendJson(res, 200, {
+        ok: true, user: safeUser(user), token: session.token,
+        needsVerification: true, mailSent: mailed,
+      });
       return;
     }
 
@@ -185,8 +193,38 @@ export async function handleAuthApi(
       if (!(await verifyPassword(password, user.passwordHash))) {
         throw new AuthHttpError(401, "Invalid credentials.");
       }
+      if (!user.emailVerified) {
+        throw new AuthHttpError(403, "Please verify your email first — check your inbox for the verification link.");
+      }
       const session = await st.createSession(user.id);
       sendJson(res, 200, { ok: true, user: safeUser(user), token: session.token });
+      return;
+    }
+
+    /* GET /api/auth/verify?token=xxx — verify an email address */
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "verify") {
+      const token = (url.searchParams.get("token") || "").trim();
+      const user = await st.verifyEmailToken(token);
+      if (!user) {
+        sendJson(res, 400, { ok: false, error: "Invalid or expired verification link." });
+        return;
+      }
+      sendJson(res, 200, { ok: true, user: safeUser(user) });
+      return;
+    }
+
+    /* POST /api/auth/resend-verification { email } — resend the verify email */
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "resend-verification") {
+      if (rateLimited(ip, 30)) { sendJson(res, 429, { ok: false, error: "Too many requests. Slow down." }); return; }
+      const body = await readJsonBody(req);
+      const email = str(body.email).trim().toLowerCase();
+      const user = await st.findByEmail(email);
+      // Always return ok (don't leak which emails are registered).
+      if (user && user.provider === "email" && !user.emailVerified && user.email) {
+        const vToken = await st.createEmailVerification(user.id);
+        await sendVerificationEmail(user.email, user.displayName, vToken);
+      }
+      sendJson(res, 200, { ok: true });
       return;
     }
 

@@ -156,8 +156,7 @@ describe("AuthStore search", () => {
   });
 });
 
-describe("AuthStore bio + profile views", () => {
-  it("stores and updates bio (160 char cap)", async () => {
+describe("AuthStore bio + profile views", () => {  it("stores and updates bio (160 char cap)", async () => {
     const st = freshStore();
     const u = await st.createUser({ username: "amy", displayName: "Amy", provider: "guest", bio: "Hello!" });
     expect(u.bio).toBe("Hello!");
@@ -176,5 +175,29 @@ describe("AuthStore bio + profile views", () => {
     expect(views.length).toBe(1);
     expect(views[0]!.viewer.username).toBe("alice");
     expect(await st.getProfileViews(a.id)).toEqual([]);
+  });
+});
+
+describe("AuthStore email verification", () => {
+  it("creates, verifies, and expires tokens", async () => {
+    const st = freshStore();
+    const u = await st.createUser({ username: "vera", displayName: "Vera", provider: "email", email: "v@test.com" });
+    expect(u.emailVerified).toBeFalsy();
+    const tok = await st.createEmailVerification(u.id);
+    expect(tok.startsWith("ev_")).toBe(true);
+    const verified = await st.verifyEmailToken(tok);
+    expect(verified!.emailVerified).toBe(true);
+    // Token is single-use.
+    expect(await st.verifyEmailToken(tok)).toBeNull();
+    expect(await st.verifyEmailToken("ev_nonexistent")).toBeNull();
+  });
+
+  it("replaces old tokens when creating a new one", async () => {
+    const st = freshStore();
+    const u = await st.createUser({ username: "vera2", displayName: "V", provider: "email", email: "v2@test.com" });
+    const t1 = await st.createEmailVerification(u.id);
+    const t2 = await st.createEmailVerification(u.id);
+    expect(await st.verifyEmailToken(t1)).toBeNull();
+    expect((await st.verifyEmailToken(t2))!.emailVerified).toBe(true);
   });
 });

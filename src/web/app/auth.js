@@ -299,8 +299,16 @@
           apiAuth("POST", "/api/auth/register", {
             email: emailI.value.trim(), password: passI.value,
             username: userI.value.trim(), displayName: nameI.value.trim(),
-          }).then(function (d) { done(); loginDone(d.user, d.token); })
-            .catch(function (e) { done(); fail(String((e && e.message) || e)); });
+          }).then(function (d) {
+            done();
+            loginDone(d.user, d.token);
+            // Prompt to verify the email address.
+            setTimeout(function () {
+              toast(d.mailSent
+                ? "Account created! Check your inbox to verify your email."
+                : "Account created! Email verification is pending — check Account for status.");
+            }, 400);
+          }).catch(function (e) { done(); fail(String((e && e.message) || e)); });
         } else {
           apiAuth("POST", "/api/auth/login", {
             login: emailI.value.trim(), password: passI.value,
@@ -351,6 +359,28 @@
     if (user.bio) idbox.appendChild(el("div", "auth-bio", user.bio));
     idbox.appendChild(el("span", "auth-provider", user.provider === "google" ? "Google"
       : user.provider === "email" ? "Email" : "Guest"));
+    // Email verification status.
+    if (user.provider === "email") {
+      if (user.emailVerified) {
+        var vb = el("span", "auth-verified", "✓ Verified");
+        vb.style.marginLeft = "6px";
+        idbox.appendChild(vb);
+      } else {
+        var vw = el("div", "auth-unverified");
+        vw.appendChild(el("span", null, "⚠ Email not verified — "));
+        var rsBtn = el("button", "btn sm linklike", "resend link");
+        rsBtn.onclick = function () {
+          rsBtn.disabled = true;
+          // The resend endpoint takes the email; use the stored user email.
+          apiAuth("POST", "/api/auth/resend-verification", { email: user.email || "" })
+            .then(function () { toast("Verification email sent — check your inbox."); })
+            .catch(function (e) { toast(String((e && e.message) || e)); })
+            .finally(function () { rsBtn.disabled = false; });
+        };
+        vw.appendChild(rsBtn);
+        idbox.appendChild(vw);
+      }
+    }
     head.appendChild(idbox);
     box.appendChild(head);
 
@@ -401,6 +431,39 @@
     renderProfileViews(viewsBox);
   }
 
+  /** #/verify?token=xxx — email verification landing page. */
+  function renderVerify(view) {
+    view.innerHTML = "";
+    view.appendChild(el("h1", null, "Verify email"));
+    var box = el("div", "panel");
+    box.appendChild(el("p", "muted", "Checking your verification link…"));
+    view.appendChild(box);
+    var m = (location.hash.match(/token=([^&]+)/) || [])[1];
+    var token = m ? decodeURIComponent(m) : "";
+    if (!token) {
+      box.innerHTML = "";
+      box.appendChild(el("p", "auth-err", "No verification token in the link."));
+      return;
+    }
+    apiAuth("GET", "/api/auth/verify?token=" + encodeURIComponent(token)).then(function (d) {
+      box.innerHTML = "";
+      box.appendChild(el("p", null, "✓ Your email is verified, " + (d.user.displayName || d.user.username) + "!"));
+      var go = el("button", "btn primary", "Go to Account");
+      go.onclick = function () { location.hash = "#/account"; };
+      box.appendChild(go);
+      // Refresh local session if logged in as this user.
+      try {
+        var cur = window.NeutronAuth && window.NeutronAuth.getUser && window.NeutronAuth.getUser();
+        if (cur && cur.id === d.user.id && window.NeutronAuth.setUser) {
+          window.NeutronAuth.setUser(d.user);
+        }
+      } catch (e) {}
+    }).catch(function (e) {
+      box.innerHTML = "";
+      box.appendChild(el("p", "auth-err", String((e && e.message) || e)));
+      box.appendChild(el("p", "muted small", "The link may have expired — request a new one from Account."));
+    });
+  }
   /** Show another user's public profile; records the view. */
   function viewUserProfile(username) {
     apiAuth("GET", "/api/auth/profile?u=" + encodeURIComponent(username)).then(function (d) {
@@ -690,6 +753,7 @@
 
   window.NeutronAuth = {
     renderAccount: renderAccount,
+    renderVerify: renderVerify,
     teardown: teardown,
     me: me,
     getToken: getToken,

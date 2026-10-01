@@ -13,6 +13,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 export interface User {
   id: string;
@@ -21,6 +22,7 @@ export interface User {
   bio?: string; // short profile bio, max 160 chars
   provider: "google" | "email" | "guest";
   email?: string;
+  emailVerified?: boolean; // email provider: true after clicking the verify link
   passwordHash?: string; // scrypt, email provider only
   googleSub?: string; // google provider only
   avatarUrl?: string;
@@ -47,6 +49,12 @@ export interface ProfileView {
   viewedAt: number;
 }
 
+export interface EmailVerification {
+  token: string;
+  userId: string;
+  createdAt: number;
+}
+
 interface DbShape {
   users: Record<string, User>;
   usernames: Record<string, string>; // lower(username) -> userId
@@ -55,11 +63,12 @@ interface DbShape {
   sessions: Record<string, Session>;
   connections: Record<string, Connection>;
   profileViews: Record<string, ProfileView[]>; // viewedUserId -> views (newest first)
+  verifications: Record<string, EmailVerification>; // token -> verification
 }
 
 const EMPTY: DbShape = {
   users: {}, usernames: {}, emails: {}, googleSubs: {}, sessions: {}, connections: {},
-  profileViews: {},
+  profileViews: {}, verifications: {},
 };
 
 function redisCfg(): { url: string; token: string } | null {
@@ -226,6 +235,42 @@ export class AuthStore {
       if (u) out.push({ viewer: { username: u.username, displayName: u.displayName, avatarUrl: u.avatarUrl }, viewedAt: v.viewedAt });
     }
     return out;
+  }
+
+  /** Create (or replace) an email verification token for a user. */
+  async createEmailVerification(userId: string): Promise<string> {
+    const db = await this.load();
+    // Remove any existing tokens for this user.
+    for (const [tok, v] of Object.entries(db.verifications)) {
+      if (v.userId === userId) delete db.verifications[tok];
+    }
+    const token = "ev_" + randomBytes(24).toString("hex");
+    db.verifications[token] = { token, userId, createdAt: Date.now() };
+    await this.save(db);
+    return token;
+  }
+
+  /** Verify an email token. Returns the user if valid, null if not. */
+  async verifyEmailToken(token: string): Promise<User | null> {
+    const db = await this.load();
+    const v = db.verifications[token];
+    if (!v) return null;
+    // Tokens expire after 24 hours.
+    if (Date.now() - v.createdAt > 24 * 60 * 60 * 1000) {
+      delete db.verifications[token];
+      await this.save(db);
+      return null;
+    }
+    const user = db.users[v.userId];
+    if (!user) {
+      delete db.verifications[token];
+      await this.save(db);
+      return null;
+    }
+    user.emailVerified = true;
+    delete db.verifications[token];
+    await this.save(db);
+    return user;
   }
 
   // ----- sessions -----

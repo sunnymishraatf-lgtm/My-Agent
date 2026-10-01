@@ -1,11 +1,10 @@
 /* ==========================================================================
-   NEUTRON Friends — add friends, invite them to rooms, call them to
-   collaborate on the same project.
+   NEUTRON Friends — your real connections, unified.
 
-   Friends are a local contact list (no account system — rooms are joined
-   by code). "Call" creates a voice-ready room and opens it; "Invite"
-   shares the room's link through the Android share sheet (or clipboard).
-   Voice itself runs in the room via the existing relay WebRTC stack.
+   When logged in, shows your accepted account connections (real users)
+   with Call / Invite / Remove. When logged out, falls back to the local
+   contact list. "Call" creates a voice-ready room; "Invite" shares the
+   room link through the Android share sheet (or clipboard).
    ========================================================================== */
 (function () {
   "use strict";
@@ -19,7 +18,13 @@
     return e;
   }
 
-  function loadFriends() {
+  function toast(msg) {
+    if (window.NeutronUI && window.NeutronUI.toast) window.NeutronUI.toast(msg);
+  }
+
+  /* ---------- local fallback list (logged out) ---------- */
+
+  function loadLocalFriends() {
     try {
       var raw = localStorage.getItem(FRIENDS_KEY);
       var arr = raw ? JSON.parse(raw) : [];
@@ -27,112 +32,156 @@
     } catch (e) { return []; }
   }
 
-  function saveFriends(arr) {
+  function saveLocalFriends(arr) {
     try { localStorage.setItem(FRIENDS_KEY, JSON.stringify(arr.slice(0, 200))); }
-    catch (e) { /* private mode / quota — best effort */ }
-  }
-
-  function addFriend(name) {
-    var arr = loadFriends();
-    arr.unshift({
-      id: "f" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
-      name: name,
-      addedAt: Date.now(),
-    });
-    saveFriends(arr);
-  }
-
-  function removeFriend(id) {
-    saveFriends(loadFriends().filter(function (f) { return f.id !== id; }));
-  }
-
-  function shareInvite(text) {
+    catch (e) { /* best effort */ }
+    // Mirror to native storage so it survives reinstalls.
     try {
-      var bridge = window.NeutronApp;
-      if (bridge && typeof bridge.shareText === "function") {
-        bridge.shareText("Invite to NEUTRON", text);
-        return true;
+      var b = window.NeutronApp;
+      if (b && typeof b.nativeSave === "function") {
+        b.nativeSave(FRIENDS_KEY, JSON.stringify(arr.slice(0, 200)));
       }
-    } catch (e) { /* fall through to clipboard */ }
-    return false;
+    } catch (e2) {}
   }
 
-  function copyText(text, msg) {
-    function done() { if (window.NeutronUI && window.NeutronUI.toast) window.NeutronUI.toast(msg || "Copied."); }
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, function () { fallback(); });
-        return;
-      }
-    } catch (e) { /* fall through */ }
-    function fallback() {
-      var ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed"; ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      try { ta.select(); document.execCommand("copy"); } catch (e2) {}
-      document.body.removeChild(ta);
-      done();
-    }
-    fallback();
-  }
+  /* ---------- rooms: call + invite ---------- */
 
-  function toast(msg) {
-    if (window.NeutronUI && window.NeutronUI.toast) window.NeutronUI.toast(msg);
-  }
-
-  /** Create a room for calling a friend and open it. */
-  function callFriend(friend) {
+  /** Create a room for calling someone and open it. */
+  function callPerson(displayName) {
     var R = window.NeutronRooms;
     if (!R || typeof R.createRelayRoom !== "function") {
       toast("Rooms unavailable.");
       return;
     }
-    var code = R.createRelayRoom("Call with " + friend.name);
+    var code = R.createRelayRoom("Call with " + displayName);
     if (!code) { toast("Couldn't create a room."); return; }
-    // Remember who this call is for (shown in the room UI via the name).
-    try {
-      var known = R.listKnownRooms ? R.listKnownRooms() : [];
-      for (var i = 0; i < known.length; i++) {
-        if (known[i].code === code) { known[i].callWith = friend.name; break; }
-      }
-      localStorage.setItem("neutron_rooms_v1", JSON.stringify(known.slice(0, 50)));
-    } catch (e) { /* best effort */ }
     R.openRelayRoom(code);
-    // Switch to the rooms route so the workspace renders.
     if (location.hash !== "#/rooms") location.hash = "#/rooms";
-    else if (R.renderRooms) { /* already there — room opened above */ }
-    toast("Room created. Tap the phone icon for voice, then Invite " + friend.name + ".");
-    // Offer the invite link immediately.
-    setTimeout(function () { inviteFriend(friend, code); }, 600);
+    toast("Room created. Tap the phone icon for voice, then Invite " + displayName + ".");
+    setTimeout(function () { invitePerson(displayName, code); }, 600);
   }
 
-  /** Share a room invite for a friend (creates a room if none given). */
-  function inviteFriend(friend, code) {
+  /** Share a room invite (creates a room if none given). */
+  function invitePerson(displayName, code) {
     var R = window.NeutronRooms;
     if (!R || typeof R.inviteLink !== "function") { toast("Rooms unavailable."); return; }
     if (!code) {
-      code = R.createRelayRoom ? R.createRelayRoom("Room with " + friend.name) : null;
+      code = R.createRelayRoom ? R.createRelayRoom("Room with " + displayName) : null;
       if (!code) { toast("Couldn't create a room."); return; }
     }
     var link = R.inviteLink(code);
-    var text = "Join me on NEUTRON (" + friend.name + "): " + link + " — code " + code;
-    if (!shareInvite(text)) {
-      copyText(link, "Invite link copied — send it to " + friend.name + ".");
+    var text = "Join me on NEUTRON (" + displayName + "): " + link + " — code " + code;
+    var shared = false;
+    try {
+      var bridge = window.NeutronApp;
+      if (bridge && typeof bridge.shareText === "function") {
+        bridge.shareText("Invite to NEUTRON", text);
+        toast("Opening share…");
+        shared = true;
+      }
+    } catch (e) {}
+    if (!shared) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(link).then(function () {
+            toast("Invite link copied — send it to " + displayName + ".");
+          }).catch(function () { toast(text); });
+        } else toast(text);
+      } catch (e2) { toast(text); }
     }
   }
 
+  /* ---------- render ---------- */
+
+  function personRow(displayName, sub, onCall, onRemove, removeLabel) {
+    var row = el("div", "panel friend-row");
+    var info = el("div", "friend-info");
+    info.appendChild(el("div", "friend-name", displayName));
+    if (sub) info.appendChild(el("div", "muted small", sub));
+    row.appendChild(info);
+    var actions = el("div", "friend-actions");
+    var callBtn = el("button", "btn primary sm", "☎ Call");
+    callBtn.setAttribute("aria-label", "Call " + displayName);
+    callBtn.onclick = onCall;
+    actions.appendChild(callBtn);
+    var inviteBtn = el("button", "btn sm", "Invite");
+    inviteBtn.setAttribute("aria-label", "Invite " + displayName);
+    inviteBtn.onclick = function () { invitePerson(displayName); };
+    actions.appendChild(inviteBtn);
+    if (onRemove) {
+      var delBtn = el("button", "btn ghost sm", removeLabel || "Remove");
+      delBtn.setAttribute("aria-label", (removeLabel || "Remove") + " " + displayName);
+      delBtn.onclick = onRemove;
+      actions.appendChild(delBtn);
+    }
+    row.appendChild(actions);
+    return row;
+  }
+
   function renderFriends(view) {
-    // Teardown rooms rendering if we came from there.
     try {
       if (window.NeutronRooms && window.NeutronRooms.teardown) window.NeutronRooms.teardown();
     } catch (e) {}
-    // Teardown friends from other modules is not needed (stateless render).
+    view.innerHTML = "";
 
     view.appendChild(el("h1", null, "Friends"));
     view.appendChild(el("p", "muted",
-      "Your collaborators. Call a friend to open a voice room you can both join, " +
-      "or send them an invite link to work on the same project."));
+      "People you're connected with. Call to open a voice room, or send an invite link."));
+
+    var auth = window.NeutronAuth;
+    var loggedIn = auth && typeof auth.getToken === "function" && auth.getToken();
+
+    if (loggedIn && auth.apiAuth) {
+      renderConnectedFriends(view, auth);
+    } else {
+      renderLocalFriends(view);
+    }
+  }
+
+  /** Logged in: show real account connections. */
+  function renderConnectedFriends(view, auth) {
+    var list = el("div", "friend-list");
+    list.appendChild(el("p", "muted small", "Loading your connections…"));
+    view.appendChild(list);
+
+    auth.apiAuth("GET", "/api/connections").then(function (d) {
+      list.innerHTML = "";
+      var conns = (d.connections || []).filter(function (c) { return c.status === "accepted"; });
+      if (!conns.length) {
+        var empty = el("div", "panel");
+        empty.appendChild(el("p", "muted",
+          "No connections yet. Go to Account → Find people, search for a username, " +
+          "and send a friend request."));
+        var goBtn = el("button", "btn primary sm", "Go to Account");
+        goBtn.onclick = function () { location.hash = "#/account"; };
+        empty.appendChild(goBtn);
+        list.appendChild(empty);
+        return;
+      }
+      conns.forEach(function (c) {
+        var u = c.user || {};
+        var name = u.displayName || u.username || "Unknown";
+        var sub = "@" + (u.username || "?");
+        list.appendChild(personRow(name, sub,
+          function () { callPerson(name); },
+          function () {
+            if (!window.confirm || confirm("Remove @" + u.username + " from friends?")) {
+              auth.apiAuth("POST", "/api/connections/remove", { connectionId: c.id })
+                .then(function () { toast("Removed."); renderFriends(view); })
+                .catch(function (e) { toast(String((e && e.message) || e)); });
+            }
+          }));
+      });
+    }).catch(function () {
+      list.innerHTML = "";
+      list.appendChild(el("p", "auth-err", "Couldn't load connections."));
+    });
+  }
+
+  /** Logged out: local contact list fallback. */
+  function renderLocalFriends(view) {
+    view.appendChild(el("p", "muted small",
+      "Log in (Account) to see your real connections here. Below is your on-device list."));
 
     var addRow = el("div", "panel friend-add");
     var nameInput = el("input", "input");
@@ -145,8 +194,9 @@
     var doAdd = function () {
       var n = nameInput.value.trim();
       if (!n) { toast("Enter a name first."); return; }
-      addFriend(n);
-      nameInput.value = "";
+      var arr = loadLocalFriends();
+      arr.unshift({ id: "f" + Date.now().toString(36), name: n, addedAt: Date.now() });
+      saveLocalFriends(arr);
       renderFriends(view);
       toast("Friend added.");
     };
@@ -156,51 +206,33 @@
     });
     view.appendChild(addRow);
 
-    var list = loadFriends();
+    var list = loadLocalFriends();
     if (!list.length) {
       var empty = el("div", "panel");
-      empty.appendChild(el("p", "muted",
-        "No friends yet. Add someone above, then call or invite them to collaborate."));
+      empty.appendChild(el("p", "muted", "No local friends yet."));
       view.appendChild(empty);
       return;
     }
     var ul = el("div", "friend-list");
     list.forEach(function (f) {
-      var row = el("div", "panel friend-row");
-      var info = el("div", "friend-info");
-      info.appendChild(el("div", "friend-name", f.name));
-      var meta = el("div", "muted small", "Added " + new Date(f.addedAt).toLocaleDateString());
-      info.appendChild(meta);
-      row.appendChild(info);
-      var actions = el("div", "friend-actions");
-      var callBtn = el("button", "btn primary sm", "\u260E Call");
-      callBtn.setAttribute("aria-label", "Call " + f.name);
-      callBtn.onclick = function () { callFriend(f); };
-      actions.appendChild(callBtn);
-      var inviteBtn = el("button", "btn sm", "Invite");
-      inviteBtn.setAttribute("aria-label", "Invite " + f.name);
-      inviteBtn.onclick = function () { inviteFriend(f); };
-      actions.appendChild(inviteBtn);
-      var delBtn = el("button", "btn ghost sm", "Remove");
-      delBtn.setAttribute("aria-label", "Remove " + f.name);
-      delBtn.onclick = function () {
-        if (window.confirm ? confirm("Remove " + f.name + " from friends?") : true) {
-          removeFriend(f.id);
-          renderFriends(view);
-        }
-      };
-      actions.appendChild(delBtn);
-      row.appendChild(actions);
-      ul.appendChild(row);
+      ul.appendChild(personRow(f.name,
+        "Added " + new Date(f.addedAt).toLocaleDateString(),
+        function () { callPerson(f.name); },
+        function () {
+          if (!window.confirm || confirm("Remove " + f.name + "?")) {
+            saveLocalFriends(loadLocalFriends().filter(function (x) { return x.id !== f.id; }));
+            renderFriends(view);
+          }
+        }));
     });
     view.appendChild(ul);
   }
 
-  function teardown() { /* stateless — nothing to clean up */ }
+  function teardown() { /* stateless */ }
 
   window.NeutronFriends = {
     renderFriends: renderFriends,
     teardown: teardown,
-    listFriends: loadFriends,
+    listFriends: loadLocalFriends,
   };
 })();
