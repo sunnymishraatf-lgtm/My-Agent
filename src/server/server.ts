@@ -63,6 +63,7 @@ import {
 } from "./git/git-service";
 import { handleInsightsApi } from "./insights";
 import { handleTerminalApi } from "./terminal/api";
+import { handleAuthApi } from "./auth/api";
 import {
   getDemoManager,
   prepareDemoRepo,
@@ -1595,6 +1596,14 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
      field) is passed to the run in memory only, never stored. */
   if (url.pathname.startsWith("/api/agent/")) {
     await handleAgentApi(getAgentManager(opts.demoWorkspace), req, res, url);
+    return;
+  }
+
+  /* Accounts: login (guest / email / Google), profiles, connections.
+     Node server only — needs a writable user store, which serverless lacks. */
+  if (url.pathname === "/api/auth" || url.pathname.startsWith("/api/auth/") ||
+      url.pathname === "/api/connections" || url.pathname.startsWith("/api/connections/")) {
+    await handleAuthApi(opts.demoWorkspace, req, res, url);
     return;
   }
 

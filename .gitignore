@@ -48,3 +48,4 @@ apk/keystore/
 src/web/app/vendor/
 public/skills/
 public/src/web/skills/
+.neutron-data/

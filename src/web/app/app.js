@@ -706,6 +706,7 @@ var ROUTES = {
   health: function (view) { return window.NeutronInsights.renderHealth(view); },
   notifications: function (view) { return window.NeutronTasks.renderNotifications(view); },
   friends: function (view) { return window.NeutronFriends.renderFriends(view); },
+  account: function (view) { return window.NeutronAuth.renderAccount(view); },
   settings: renderSettings,
   usage: renderUsage,
 };
