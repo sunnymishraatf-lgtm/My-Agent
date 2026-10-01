@@ -5559,12 +5559,13 @@ a:hover { text-decoration: underline; }
   gap: 10px;
 }
 .brand .logo::before {
-  content: "";
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  background: var(--primary);
-  box-shadow: 0 2px 8px rgba(var(--primary-glow-rgb), 0.5);
+  content: none;
+}
+.brand .logo-mark {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  filter: drop-shadow(0 2px 6px rgba(var(--primary-glow-rgb), 0.45));
 }
 .brand .subtitle {
   font-family: var(--mono);
