@@ -100,6 +100,18 @@ export async function handleAuthApi(
   const ip = req.socket.remoteAddress ?? "unknown";
 
   try {
+    /* CORS preflight — browsers send OPTIONS before cross-origin POSTs. */
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+        "access-control-allow-headers": "content-type, authorization",
+        "access-control-max-age": "86400",
+      });
+      res.end();
+      return;
+    }
+
     /* GET /api/auth/status — is auth available? (persistent? google configured?) */
     if (req.method === "GET" && seg.length === 1 && seg[0] === "status") {
       const googleClientId = (process.env.GOOGLE_CLIENT_ID || "").trim();
