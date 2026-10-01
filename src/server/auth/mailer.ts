@@ -67,7 +67,12 @@ export async function sendVerificationEmail(
     `If you didn't create this account, you can ignore this email.</p>`;
 
   if (!cfg) {
-    console.log(`[auth] SMTP not configured — verification link for ${toEmail}: ${link}`);
+    // Never log the full link in production — it's a live credential.
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[auth] SMTP not configured — verification link for ${toEmail}: ${link}`);
+    } else {
+      console.log(`[auth] SMTP not configured — cannot send verification email to ${toEmail}`);
+    }
     return false;
   }
 
