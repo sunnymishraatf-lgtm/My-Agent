@@ -163,6 +163,7 @@
         size: "large",
         text: "continue_with",
         width: 280,
+        locale: "en",
       });
     }).catch(function () {
       wrap.appendChild(el("p", "auth-err", "Couldn't load Google sign-in. Check your connection."));
