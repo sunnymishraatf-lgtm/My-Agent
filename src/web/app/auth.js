@@ -134,7 +134,7 @@
     if (!gisLoading) {
       gisLoading = new Promise(function (resolve, reject) {
         var s = document.createElement("script");
-        s.src = "https://accounts.google.com/gsi/client";
+        s.src = "https://accounts.google.com/gsi/client?hl=en";
         s.async = true; s.defer = true;
         s.onload = resolve;
         s.onerror = function () { reject(new Error("Couldn't load Google sign-in.")); };
