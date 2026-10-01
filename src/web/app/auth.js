@@ -412,6 +412,13 @@
     outBtn.onclick = function () {
       apiAuth("POST", "/api/auth/logout").catch(function () {}).finally(function () {
         setToken("");
+        // Stop the friend-request poller.
+        try {
+          if (window.NeutronAuth._reqPoll) {
+            clearInterval(window.NeutronAuth._reqPoll);
+            window.NeutronAuth._reqPoll = null;
+          }
+        } catch (e) {}
         renderAccount(view);
         toast("Logged out.");
       });
