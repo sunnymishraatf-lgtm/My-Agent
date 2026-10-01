@@ -337,10 +337,16 @@
       var text = "Connect with me on NEUTRON: @" + user.username;
       try {
         var bridge = window.NeutronApp;
-        if (bridge && typeof bridge.shareText === "function") { bridge.shareText("Share profile", text); return; }
+        if (bridge && typeof bridge.shareText === "function") {
+          bridge.shareText("Share profile", text);
+          toast("Opening share…");
+          return;
+        }
       } catch (e) {}
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function () { toast("Profile copied."); });
+        navigator.clipboard.writeText(text).then(function () {
+          toast("Profile link copied to clipboard.");
+        }).catch(function () { toast(text); });
       } else toast(text);
     };
     box.appendChild(shareBtn);
