@@ -4793,6 +4793,37 @@ async function renderSettings(view) {
     view.appendChild(bp);
   })();
 
+  /* ----- Free music: Jamendo client ID (Android app only) ----- */
+  (function () {
+    var mp = el("section", "panel");
+    mp.appendChild(el("h2", null, "Free music (Jamendo)"));
+    mp.appendChild(el("p", "muted small",
+      "The Music section searches licensed Jamendo tracks too. Paste a free client ID from " +
+      "developer.jamendo.com — it stays on this device and is only sent to Jamendo's API. " +
+      "The Internet Archive needs no key."));
+    var kinp = el("input", "input");
+    kinp.placeholder = "Jamendo client ID\u2026";
+    kinp.setAttribute("aria-label", "Jamendo client ID");
+    kinp.setAttribute("autocomplete", "off");
+    kinp.setAttribute("spellcheck", "false");
+    try { kinp.value = localStorage.getItem("neutron_jamendo_client_id") || ""; } catch (e) {}
+    var krow = el("div", "row");
+    var ksave = el("button", "btn primary", "Save key");
+    ksave.type = "button";
+    ksave.onclick = function () {
+      try {
+        var v = kinp.value.trim();
+        if (v) localStorage.setItem("neutron_jamendo_client_id", v);
+        else localStorage.removeItem("neutron_jamendo_client_id");
+        toast(v ? "Jamendo key saved." : "Jamendo key cleared.");
+      } catch (e) { toast("Couldn't save the key."); }
+    };
+    krow.appendChild(ksave);
+    mp.appendChild(field("JAMENDO CLIENT ID", kinp));
+    mp.appendChild(krow);
+    view.appendChild(mp);
+  })();
+
   /* ----- Model router (Phase 21) ----- */
   var rp = el("section", "panel");
   rp.appendChild(el("h2", null, "Model router"));

@@ -37,11 +37,28 @@ public class MainActivity extends Activity {
         runtime permission; completed in onRequestPermissionsResult. */
     private PermissionRequest pendingWebRequest;
 
-    /** Relays notification/lock-screen music buttons into the web player. */
+    /** Relays notification/lock-screen music buttons into the web player,
+        plus native-audio events (track ended / error) from MusicService. */
     private final BroadcastReceiver musicCmdReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context ctx, Intent intent) {
             if (web == null || intent == null) return;
+            String action = intent.getAction();
+            /* Native player event: only fixed event names are forwarded,
+               never raw intent extras (no JS injection surface). */
+            if (MusicService.ACTION_AUDIO_EVENT.equals(action)) {
+                String ev = intent.getStringExtra(MusicService.EXTRA_EVENT);
+                String js = null;
+                if (MusicService.EVENT_ENDED.equals(ev)) {
+                    js = "(window.NeutronMusic && NeutronMusic._onNativeAudioEvent('ended'))";
+                } else if (MusicService.EVENT_ERROR.equals(ev)) {
+                    js = "(window.NeutronMusic && NeutronMusic._onNativeAudioEvent('error'))";
+                }
+                if (js != null) {
+                    try { web.evaluateJavascript(js, null); } catch (Exception ignored) {}
+                }
+                return;
+            }
             String cmd = intent.getStringExtra(MusicService.EXTRA_CMD);
             String js = null;
             if (MusicService.CMD_TOGGLE.equals(cmd)) {
@@ -310,6 +327,7 @@ public class MainActivity extends Activity {
 
         // Notification/lock-screen music controls -> web player.
         IntentFilter musicFilter = new IntentFilter(MusicService.ACTION_CMD);
+        musicFilter.addAction(MusicService.ACTION_AUDIO_EVENT);
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(musicCmdReceiver, musicFilter, Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -612,6 +630,60 @@ public class MainActivity extends Activity {
                 public void run() {
                     if (web != null) web.setKeepVisible(false);
                     MusicService.stop(MainActivity.this);
+                }
+            });
+        }
+
+        /* ----- Native URL audio (free-music engine) -----
+           Streams an mp3 URL directly in MusicService's MediaPlayer, so it
+           keeps playing with the screen off — no WebView involved. */
+
+        /** Feature-detect: the free-music engine uses this to pick the
+            native player over the HTML5 fallback. */
+        @JavascriptInterface
+        public boolean hasNativeAudio() {
+            return true;
+        }
+
+        @JavascriptInterface
+        public void nativeAudioPlay(final String url, final String title, final String artist) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    promptBatteryOptimizationOnce();
+                    MusicService.playStream(MainActivity.this, url,
+                            title != null ? title : "NEUTRON Music",
+                            artist != null ? artist : "");
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void nativeAudioPause() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MusicService.pauseStream(MainActivity.this);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void nativeAudioResume() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MusicService.resumeStream(MainActivity.this);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void nativeAudioStop() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    MusicService.stopStream(MainActivity.this);
                 }
             });
         }

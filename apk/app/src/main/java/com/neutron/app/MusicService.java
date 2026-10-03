@@ -36,6 +36,16 @@ public class MusicService extends Service {
     public static final String CMD_NEXT = "next";
     public static final String CMD_STOP = "stop";
 
+    /** Start native URL audio (free-music engine): plays an mp3 stream
+        directly in this service, so it survives the screen turning off —
+        no WebView involved. */
+    public static final String ACTION_PLAY_STREAM = "com.neutron.app.music.PLAY_STREAM";
+    /** Broadcast the service sends for native-player events (ended/error). */
+    public static final String ACTION_AUDIO_EVENT = "com.neutron.app.music.AUDIO_EVENT";
+    public static final String EXTRA_EVENT = "event";
+    public static final String EVENT_ENDED = "ended";
+    public static final String EVENT_ERROR = "error";
+
     private static final String ACTION_UPDATE = "com.neutron.app.music.UPDATE";
     private static final int NOTIF_ID = 4101;
     private static final String CHANNEL_ID = "neutron_music";
@@ -46,8 +56,14 @@ public class MusicService extends Service {
     private NotificationManager notifManager;
 
     private String currentTitle = "NEUTRON Music";
+    private String currentArtist = "NEUTRON Music";
     private boolean playing = false;
     private boolean foreground = false;
+
+    /** Native audio player: streams an mp3 URL directly in this service.
+        Null when the YouTube/WebView path is in use (or nothing plays). */
+    private android.media.MediaPlayer streamPlayer;
+    private boolean nativeActive = false;
 
     /** Called from the WebView bridge when playback starts or the track changes. */
     public static void update(Context ctx, String title, boolean isPlaying) {
@@ -62,6 +78,36 @@ public class MusicService extends Service {
     public static void stop(Context ctx) {
         Intent i = new Intent(ctx, MusicService.class);
         i.setAction(CMD_STOP);
+        startSvc(ctx, i);
+    }
+
+    /** Play an mp3 stream URL natively in this service (free-music engine).
+        Only http/https URLs are accepted. */
+    public static void playStream(Context ctx, String url, String title, String artist) {
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
+        Intent i = new Intent(ctx, MusicService.class);
+        i.setAction(ACTION_PLAY_STREAM);
+        i.putExtra("url", url);
+        if (title != null) i.putExtra("title", title);
+        if (artist != null) i.putExtra("artist", artist);
+        startSvc(ctx, i);
+    }
+
+    public static void pauseStream(Context ctx) {
+        Intent i = new Intent(ctx, MusicService.class);
+        i.setAction("com.neutron.app.music.PAUSE_STREAM");
+        startSvc(ctx, i);
+    }
+
+    public static void resumeStream(Context ctx) {
+        Intent i = new Intent(ctx, MusicService.class);
+        i.setAction("com.neutron.app.music.RESUME_STREAM");
+        startSvc(ctx, i);
+    }
+
+    public static void stopStream(Context ctx) {
+        Intent i = new Intent(ctx, MusicService.class);
+        i.setAction("com.neutron.app.music.STOP_STREAM");
         startSvc(ctx, i);
     }
 
@@ -118,9 +164,30 @@ public class MusicService extends Service {
             if (ACTION_UPDATE.equals(action)) {
                 String t = intent.getStringExtra("title");
                 if (t != null && !t.isEmpty()) currentTitle = t;
+                String a = intent.getStringExtra("artist");
+                if (a != null && !a.isEmpty()) currentArtist = a;
                 playing = intent.getBooleanExtra("playing", true);
                 goForeground();
                 return START_STICKY;
+            }
+            if (ACTION_PLAY_STREAM.equals(action)) {
+                startNativeStream(intent.getStringExtra("url"),
+                        intent.getStringExtra("title"),
+                        intent.getStringExtra("artist"));
+                return START_STICKY;
+            }
+            if ("com.neutron.app.music.PAUSE_STREAM".equals(action)) {
+                pauseNativeStream();
+                return START_STICKY;
+            }
+            if ("com.neutron.app.music.RESUME_STREAM".equals(action)) {
+                resumeNativeStream();
+                return START_STICKY;
+            }
+            if ("com.neutron.app.music.STOP_STREAM".equals(action)) {
+                stopNativeStream();
+                shutdown();
+                return START_NOT_STICKY;
             }
         }
         return START_STICKY;
@@ -154,7 +221,7 @@ public class MusicService extends Service {
         try {
             MediaMetadata md = new MediaMetadata.Builder()
                     .putString(MediaMetadata.METADATA_KEY_TITLE, currentTitle)
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST, "NEUTRON Music")
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, currentArtist)
                     .build();
             mediaSession.setMetadata(md);
             PlaybackState ps = new PlaybackState.Builder()
@@ -174,7 +241,98 @@ public class MusicService extends Service {
         try { sendBroadcast(i); } catch (Exception ignored) {}
     }
 
+    /* ---------- native URL audio (free-music engine) ---------- */
+
+    private void sendAudioEvent(String event) {
+        Intent i = new Intent(ACTION_AUDIO_EVENT);
+        i.putExtra(EXTRA_EVENT, event);
+        i.setPackage(getPackageName());
+        try { sendBroadcast(i); } catch (Exception ignored) {}
+    }
+
+    private void releaseStreamPlayer() {
+        if (streamPlayer != null) {
+            try { streamPlayer.reset(); } catch (Exception ignored) {}
+            try { streamPlayer.release(); } catch (Exception ignored) {}
+            streamPlayer = null;
+        }
+        nativeActive = false;
+    }
+
+    /** Start streaming an mp3 URL with MediaPlayer inside this service. */
+    private void startNativeStream(String url, String title, String artist) {
+        releaseStreamPlayer();
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) {
+            sendAudioEvent(EVENT_ERROR);
+            return;
+        }
+        if (title != null && !title.isEmpty()) currentTitle = title;
+        currentArtist = (artist != null && !artist.isEmpty()) ? artist : "NEUTRON Music";
+        try {
+            android.media.MediaPlayer mp = new android.media.MediaPlayer();
+            mp.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build());
+            mp.setDataSource(url);
+            mp.setOnPreparedListener(new android.media.MediaPlayer.OnPreparedListener() {
+                @Override public void onPrepared(android.media.MediaPlayer p) {
+                    nativeActive = true;
+                    playing = true;
+                    try { p.start(); } catch (Exception ignored) {}
+                    goForeground();
+                }
+            });
+            mp.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() {
+                @Override public void onCompletion(android.media.MediaPlayer p) {
+                    sendAudioEvent(EVENT_ENDED);
+                }
+            });
+            mp.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() {
+                @Override public boolean onError(android.media.MediaPlayer p, int what, int extra) {
+                    releaseStreamPlayer();
+                    sendAudioEvent(EVENT_ERROR);
+                    return true;
+                }
+            });
+            streamPlayer = mp;
+            playing = false;
+            updateSession();
+            try { mp.prepareAsync(); } catch (Exception e) {
+                releaseStreamPlayer();
+                sendAudioEvent(EVENT_ERROR);
+            }
+        } catch (Exception e) {
+            releaseStreamPlayer();
+            sendAudioEvent(EVENT_ERROR);
+        }
+    }
+
+    private void pauseNativeStream() {
+        if (streamPlayer != null && nativeActive) {
+            try {
+                if (streamPlayer.isPlaying()) streamPlayer.pause();
+            } catch (Exception ignored) {}
+            playing = false;
+            goForeground();
+        }
+    }
+
+    private void resumeNativeStream() {
+        if (streamPlayer != null && nativeActive) {
+            try { streamPlayer.start(); } catch (Exception ignored) {}
+            playing = true;
+            goForeground();
+        }
+    }
+
+    private void stopNativeStream() {
+        releaseStreamPlayer();
+        playing = false;
+    }
+
     private void shutdown() {
+        releaseStreamPlayer();
         try {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         } catch (Exception ignored) {}
@@ -232,7 +390,7 @@ public class MusicService extends Service {
         else b = new Notification.Builder(this);
         b.setSmallIcon(android.R.drawable.ic_media_play)
                 .setContentTitle(currentTitle)
-                .setContentText(playing ? "Playing in NEUTRON" : "Paused")
+                .setContentText(playing ? currentArtist : "Paused · " + currentArtist)
                 .setContentIntent(content)
                 .setOngoing(playing)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)

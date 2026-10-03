@@ -55,7 +55,14 @@
     return e;
   }
 
+  var FA_THUMB = "data:image/svg+xml," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+    '<rect width="64" height="64" rx="12" fill="#1b1b22"/>' +
+    '<text x="32" y="44" font-size="30" text-anchor="middle" fill="#e8e8ef">\u266A</text></svg>');
+
   function thumb(id) {
+    /* Free-music tracks (fa:…) have no YouTube thumbnail — use a note icon. */
+    if (typeof id === "string" && id.indexOf("fa:") === 0) return FA_THUMB;
     return "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg";
   }
 
@@ -544,8 +551,12 @@
     sectionEls.forEach(function (fn) { try { fn(); } catch (e) {} });
   }
 
+  /** Which engine owns playback right now: "yt" (YouTube embed) or "fa" (free-music). */
+  var activeEngine = "yt";
+
   /** Play the queue item at index i (wraps around). */
   function playAt(i) {
+    activeEngine = "yt";
     if (!queue.length) return;
     qi = ((i % queue.length) + queue.length) % queue.length;
     var c = queue[qi];
@@ -564,11 +575,16 @@
   }
 
   function playId(id, title) {
+    /* Free-music tracks route into the licensed-stream engine. */
+    if (typeof id === "string" && id.indexOf("fa:") === 0) { FreeAudio.playByFaid(id, title); return; }
+    activeEngine = "yt";
     queue = [{ id: id, title: title || "YouTube video" }];
     playAt(0);
   }
 
   function enqueue(id, title) {
+    /* Free-music tracks route into the licensed-stream engine. */
+    if (typeof id === "string" && id.indexOf("fa:") === 0) { FreeAudio.enqueueByFaid(id, title); return; }
     queue.push({ id: id, title: title || "YouTube video" });
     if (qi === -1) playAt(0);
     else refreshSections();
@@ -576,6 +592,7 @@
   }
 
   function toggle() {
+    if (activeEngine === "fa") { faToggle(); return; }
     if (!player || !player.getPlayerState) return;
     var YTNS = root.YT;
     var s = player.getPlayerState();
@@ -584,6 +601,7 @@
   }
 
   function step(d) {
+    if (activeEngine === "fa") { faStep(d); return; }
     if (queue.length <= 1) {
       if (player && player.seekTo) { player.seekTo(0); player.playVideo(); }
       return;
@@ -592,6 +610,7 @@
   }
 
   function stopAll() {
+    if (activeEngine === "fa") { faStop(); activeEngine = "yt"; return; }
     try { if (player && player.stopVideo) player.stopVideo(); } catch (e) {}
     queue = []; qi = -1; pendingPlay = null;
     if (barEl) {
@@ -682,15 +701,19 @@
 
     view.appendChild(el("h1", null, "Music"));
     view.appendChild(el("p", "muted",
-      "A free coding soundtrack. Playback is via YouTube embeds — free, but needs internet. " +
-      "The mini-player keeps playing while you use the rest of the app."));
+      "A free coding soundtrack. Free music streams licensed tracks that keep " +
+      "playing with the screen off on the Android app; stations and search below " +
+      "play via YouTube embeds. The mini-player keeps playing while you use the rest of the app."));
 
     var n = el("div", "music-note hidden");
     n.id = "music-note";
     n.setAttribute("role", "status");
     view.appendChild(n);
 
-    /* Stations */
+    /* Licensed free streams (Internet Archive + Jamendo) — native background playback. */
+    renderFreeMusicPanel(view);
+
+    /* Focus stations (YouTube) */
     var sp = el("section", "panel");
     sp.appendChild(el("h2", null, "Focus stations"));
     var grid = el("div", "music-grid");
@@ -898,6 +921,397 @@
       "Tip: start a station, then switch to any other section — the music keeps playing in the mini-player at the bottom."));
   }
 
+  /* ============ FREE MUSIC ENGINE (licensed streams) ============
+     Internet Archive (keyless) + Jamendo (free client ID in Settings).
+     Audio plays through the native Android player when available
+     (NeutronApp.nativeAudioPlay), so it keeps playing with the screen off;
+     plain browsers fall back to an HTML5 <audio> element.
+     Track ids are prefixed "fa:archive:<identifier>" / "fa:jamendo:<id>"
+     so history and playlists replay through this engine via playId. */
+
+  var FA_JAMENDO_KEY_LS = "neutron_jamendo_client_id";
+
+  function faJamendoKey() {
+    try { return (localStorage.getItem(FA_JAMENDO_KEY_LS) || "").trim(); }
+    catch (e) { return ""; }
+  }
+
+  /** Escape user input for an Archive.org Lucene query. */
+  function faEscapeLucene(s) {
+    return String(s || "").replace(/([+\-!(){}\[\]^"~*?:\\/])/g, "\\$1");
+  }
+
+  /** Normalize an Archive.org advancedsearch response into track objects. */
+  function faParseArchiveSearch(data) {
+    var docs = data && data.response && Array.isArray(data.response.docs)
+      ? data.response.docs : [];
+    var out = [];
+    docs.forEach(function (d) {
+      if (!d || !d.identifier) return;
+      out.push({
+        kind: "archive",
+        faid: "fa:archive:" + d.identifier,
+        identifier: d.identifier,
+        title: String(d.title || d.identifier),
+        artist: String(d.creator || ""),
+        url: null
+      });
+    });
+    return out;
+  }
+
+  /**
+   * Pick the best mp3 file from an Archive.org metadata response and build
+   * its direct download URL. Skips spectrograms/thumbnails; prefers the
+   * original mp3 over low-bitrate derivatives.
+   */
+  function faPickMp3(meta) {
+    if (!meta || !meta.metadata || !meta.metadata.identifier) return null;
+    var id = meta.metadata.identifier;
+    var files = Array.isArray(meta.files) ? meta.files : [];
+    var best = null;
+    files.forEach(function (f) {
+      if (!f || !f.name) return;
+      var name = String(f.name);
+      if (!/\.mp3$/i.test(name)) return;
+      if (/spectrogram|_thumb|__ia_thumb/i.test(name)) return;
+      if (!best) { best = name; return; }
+      if (/_vbr\.mp3$/i.test(best) && !/_vbr\.mp3$/i.test(name)) best = name;
+    });
+    if (!best) return null;
+    return "https://archive.org/download/" + encodeURIComponent(id) +
+      "/" + encodeURIComponent(best);
+  }
+
+  /** Normalize a Jamendo v3.0 /tracks response into track objects. */
+  function faParseJamendo(data) {
+    var list = data && Array.isArray(data.results) ? data.results : [];
+    var out = [];
+    list.forEach(function (t) {
+      if (!t || t.id == null || !t.audio) return;
+      out.push({
+        kind: "jamendo",
+        faid: "fa:jamendo:" + t.id,
+        identifier: String(t.id),
+        title: String(t.name || "Jamendo track"),
+        artist: String(t.artist_name || ""),
+        album: String(t.album_name || ""),
+        url: String(t.audio)
+      });
+    });
+    return out;
+  }
+
+  async function faSearchArchive(q) {
+    var query = "mediatype:audio AND (" + faEscapeLucene(q) + ")";
+    var url = "https://archive.org/advancedsearch.php?q=" + encodeURIComponent(query) +
+      "&fl[]=identifier&fl[]=title&fl[]=creator&rows=15&output=json";
+    return faParseArchiveSearch(await fetchTimeout(url, 10000));
+  }
+
+  async function faSearchJamendo(q) {
+    var key = faJamendoKey();
+    if (!key) return { needsKey: true, tracks: [] };
+    var url = "https://api.jamendo.com/v3.0/tracks/?client_id=" + encodeURIComponent(key) +
+      "&format=json&limit=15&search=" + encodeURIComponent(q) +
+      "&include=musicinfo&audioformat=mp32";
+    var data = await fetchTimeout(url, 10000);
+    if (data && data.headers && data.headers.status === "failed") {
+      var msg = (data.headers.error_message || "Jamendo request failed.");
+      throw new Error(msg);
+    }
+    return { needsKey: false, tracks: faParseJamendo(data) };
+  }
+
+  async function faResolveUrl(t) {
+    if (t.url) return t.url;
+    if (t.kind === "archive") {
+      var meta = await fetchTimeout(
+        "https://archive.org/metadata/" + encodeURIComponent(t.identifier), 10000);
+      var url = faPickMp3(meta);
+      if (!url) throw new Error("No playable audio file found for this item.");
+      t.url = url;
+      return url;
+    }
+    throw new Error("No stream URL for this track.");
+  }
+
+  /* ----- playback state ----- */
+
+  var faQueue = [];
+  var faIndex = -1;
+  var faPlaying = false;
+  var faGen = 0;          /* guards against stale async resolutions */
+  var faAudio = null;     /* HTML5 fallback element */
+  var faRegistry = {};    /* faid -> track, for history/playlist replay */
+
+  function faRegister(t) { faRegistry[t.faid] = t; return t; }
+
+  function faNative() {
+    try {
+      var b = root.NeutronApp;
+      return (b && typeof b.nativeAudioPlay === "function") ? b : null;
+    } catch (e) { return null; }
+  }
+
+  function faCurrent() {
+    return faIndex >= 0 && faIndex < faQueue.length ? faQueue[faIndex] : null;
+  }
+
+  function faLabel(t) {
+    return t.title + (t.artist ? " \u2014 " + t.artist : "");
+  }
+
+  function faPaintBar() {
+    var c = faCurrent();
+    if (!c) return;
+    ensureBar();
+    showBar();
+    barTitleEl.textContent = faLabel(c);
+    barThumbEl.src = FA_THUMB;
+    setPlayIcon(faPlaying);
+  }
+
+  function faPlayAt(i) {
+    if (!faQueue.length) return;
+    faIndex = ((i % faQueue.length) + faQueue.length) % faQueue.length;
+    var t = faQueue[faIndex];
+    var g = ++faGen;
+    activeEngine = "fa";
+    faPlaying = true;
+    faPaintBar();
+    barTitleEl.textContent = faLabel(t) + " (loading\u2026)";
+    setPlayIcon(true);
+    faResolveUrl(t).then(function (url) {
+      if (g !== faGen) return; /* superseded by a newer play request */
+      var bridge = faNative();
+      if (bridge) {
+        try { bridge.nativeAudioPlay(url, t.title, t.artist || ""); }
+        catch (e) { faHtmlFallback(url); }
+      } else {
+        faHtmlFallback(url);
+      }
+      faPaintBar();
+      pushHistory({ id: t.faid, title: faLabel(t) });
+      refreshSections();
+    }).catch(function (e) {
+      if (g !== faGen) return;
+      faPlaying = false;
+      setPlayIcon(false);
+      note("Couldn't play this track: " + (e && e.message ? e.message : "network error"));
+    });
+  }
+
+  function faHtmlFallback(url) {
+    try {
+      if (!faAudio) {
+        faAudio = new Audio();
+        faAudio.preload = "none";
+        faAudio.addEventListener("ended", function () { faStep(1); });
+        faAudio.addEventListener("error", function () {
+          note("Audio error \u2014 trying the next track.");
+          faStep(1);
+        });
+      } else {
+        try { faAudio.pause(); } catch (e2) {}
+      }
+      faAudio.src = url;
+      var p = faAudio.play();
+      if (p && p.catch) p.catch(function () { faPlaying = false; setPlayIcon(false); });
+    } catch (e) { /* audio unsupported — native path handles Android */ }
+  }
+
+  function faToggle() {
+    var c = faCurrent();
+    if (!c) return;
+    var bridge = faNative();
+    if (faPlaying) {
+      faPlaying = false;
+      if (bridge) { try { bridge.nativeAudioPause(); } catch (e) {} }
+      else if (faAudio) { try { faAudio.pause(); } catch (e) {} }
+    } else {
+      faPlaying = true;
+      if (bridge) { try { bridge.nativeAudioResume(); } catch (e) {} }
+      else if (faAudio) {
+        try {
+          var p = faAudio.play();
+          if (p && p.catch) p.catch(function () { faPlaying = false; setPlayIcon(false); });
+        } catch (e) {}
+      } else {
+        /* Nothing loaded yet (e.g. resumed before first resolve) — replay. */
+        faPlayAt(faIndex);
+        return;
+      }
+    }
+    setPlayIcon(faPlaying);
+  }
+
+  function faStep(d) {
+    if (!faQueue.length) return;
+    if (faQueue.length <= 1) { faPlayAt(faIndex); return; }
+    faPlayAt(faIndex + d);
+  }
+
+  function faStop() {
+    faGen++;
+    faPlaying = false;
+    faQueue = [];
+    faIndex = -1;
+    var bridge = faNative();
+    if (bridge) { try { bridge.nativeAudioStop(); } catch (e) {} }
+    if (faAudio) {
+      try { faAudio.pause(); faAudio.removeAttribute("src"); } catch (e) {}
+    }
+    if (barEl) {
+      barEl.classList.add("hidden");
+      barEl.classList.remove("video-open");
+    }
+    document.body.classList.remove("has-musicbar");
+    setPlayIcon(false);
+    refreshSections();
+  }
+
+  /** Called from MainActivity when the native player reports ended/error. */
+  function _onNativeAudioEvent(ev) {
+    if (activeEngine !== "fa") return;
+    if (ev === "ended") faStep(1);
+    else if (ev === "error") {
+      note("Stream error \u2014 trying the next track.");
+      faStep(1);
+    }
+  }
+
+  function faResultRow(t) {
+    var row = el("div", "music-result");
+    var img = el("img", "music-result-thumb");
+    img.src = FA_THUMB;
+    img.alt = "";
+    img.loading = "lazy";
+    row.appendChild(img);
+    var tcol = el("div", "music-result-text");
+    tcol.appendChild(el("div", "music-result-title", t.title));
+    var sub = (t.artist ? t.artist : "Unknown artist") +
+      (t.album ? " \u00B7 " + t.album : "") +
+      " \u00B7 " + (t.kind === "archive" ? "Internet Archive" : "Jamendo");
+    tcol.appendChild(el("div", "music-result-artist muted small", sub));
+    row.appendChild(tcol);
+    var play = el("button", "btn primary sm", "Play");
+    play.type = "button";
+    play.onclick = function () { FreeAudio.play(t); };
+    var add = el("button", "btn ghost sm", "+ Queue");
+    add.type = "button";
+    add.onclick = function () { FreeAudio.enqueue(t); };
+    var save = el("button", "btn ghost sm", "Save");
+    save.type = "button";
+    save.setAttribute("aria-label", "Save to playlist: " + t.title);
+    save.onclick = function () { toggleSavePicker(row, t.faid, faLabel(t)); };
+    row.appendChild(play);
+    row.appendChild(add);
+    row.appendChild(save);
+    return row;
+  }
+
+  function renderFreeMusicPanel(view) {
+    var fp = el("section", "panel");
+    fp.appendChild(el("h2", null, "Free music"));
+    var hasKey = !!faJamendoKey();
+    var hasNative = !!faNative();
+    fp.appendChild(el("p", "muted small",
+      "Licensed and public-domain tracks from the Internet Archive" +
+      (hasKey ? " and Jamendo" : "") + ". " +
+      (hasNative
+        ? "On this Android app they play through the native player, so music keeps going with the screen off."
+        : "Plays in the browser here.") +
+      (hasKey ? "" : " Add a free Jamendo client ID in Settings for more results.")));
+    var srow = el("div", "row");
+    var sinp = el("input", "input");
+    sinp.placeholder = "Song, artist, or vibe\u2026";
+    sinp.setAttribute("aria-label", "Search free music");
+    var sgo = el("button", "btn primary", "Search");
+    sgo.type = "button";
+    var res = el("div", "music-results");
+    function doSearch() {
+      var q = sinp.value.trim();
+      if (!q) return;
+      res.innerHTML = "";
+      res.appendChild(el("p", "muted small", "Searching free sources\u2026"));
+      sgo.disabled = true;
+      var jobs = [faSearchArchive(q).catch(function () { return []; })];
+      if (hasKey) {
+        jobs.push(faSearchJamendo(q).then(function (r) { return r.tracks; })
+          .catch(function (e) { note("Jamendo: " + (e && e.message ? e.message : "search failed")); return []; }));
+      }
+      Promise.all(jobs).then(function (lists) {
+        sgo.disabled = false;
+        res.innerHTML = "";
+        var tracks = [];
+        lists.forEach(function (l) {
+          l.forEach(function (t) { tracks.push(faRegister(t)); });
+        });
+        if (!tracks.length) {
+          res.appendChild(el("p", "muted", "No free tracks found \u2014 try different words."));
+          return;
+        }
+        tracks.forEach(function (t) { res.appendChild(faResultRow(t)); });
+      });
+    }
+    sgo.onclick = doSearch;
+    sinp.addEventListener("keydown", function (ev) { if (ev.key === "Enter") doSearch(); });
+    srow.appendChild(sinp);
+    srow.appendChild(sgo);
+    fp.appendChild(srow);
+    fp.appendChild(res);
+    view.appendChild(fp);
+  }
+
+  var FreeAudio = {
+    play: function (t) {
+      faRegister(t);
+      faQueue = [t];
+      faPlayAt(0);
+    },
+    enqueue: function (t) {
+      faRegister(t);
+      faQueue.push(t);
+      if (faIndex === -1) faPlayAt(0);
+      else note("Added to queue.");
+    },
+    playByFaid: function (faid, title) {
+      var t = faRegistry[faid];
+      if (!t) {
+        var m = /^fa:(archive|jamendo):(.+)$/.exec(faid || "");
+        if (!m) { note("Couldn't find that track."); return; }
+        if (m[1] === "archive") {
+          t = { kind: "archive", faid: faid, identifier: m[2],
+                title: title || m[2], artist: "", url: null };
+        } else {
+          note("That Jamendo track needs a fresh search to play.");
+          return;
+        }
+      }
+      faQueue = [t];
+      faPlayAt(0);
+    },
+    enqueueByFaid: function (faid, title) {
+      var t = faRegistry[faid];
+      if (!t) { FreeAudio.playByFaid(faid, title); return; }
+      faQueue.push(t);
+      if (faIndex === -1) faPlayAt(0);
+      else note("Added to queue.");
+    },
+    toggle: faToggle,
+    next: function () { faStep(1); },
+    prev: function () { faStep(-1); },
+    stop: faStop,
+    current: faCurrent,
+    /* Test hooks. */
+    faEscapeLucene: faEscapeLucene,
+    faParseArchiveSearch: faParseArchiveSearch,
+    faPickMp3: faPickMp3,
+    faParseJamendo: faParseJamendo,
+    FA_JAMENDO_KEY_LS: FA_JAMENDO_KEY_LS
+  };
+
   /* ---------------- export ---------------- */
 
   var exp = {
@@ -910,6 +1324,10 @@
     stop: stopAll,
     parseVideoId: parseVideoId,
     STATIONS: STATIONS,
+    /* Native-audio events from the Android service (ended / error). */
+    _onNativeAudioEvent: _onNativeAudioEvent,
+    /* Free-music engine (licensed streams) + test hooks. */
+    freeAudio: FreeAudio,
     /* Exposed for tests: server-first search + payload normalizers. */
     searchMusic: searchMusic,
     normalizeResults: normalizeResults,
