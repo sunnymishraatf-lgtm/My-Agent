@@ -390,9 +390,9 @@ var THEMES = [
 var THEME_IDS = THEMES.map(function (t) { return t.id; });
 function storedTheme() {
   try {
-    var t = localStorage.getItem(THEME_STORAGE) || "system";
-    return (t === "system" || THEME_IDS.indexOf(t) !== -1) ? t : "system";
-  } catch (e) { return "system"; }
+    var t = localStorage.getItem(THEME_STORAGE) || "claymorphism";
+    return (t === "system" || THEME_IDS.indexOf(t) !== -1) ? t : "claymorphism";
+  } catch (e) { return "claymorphism"; }
 }
 function setStoredTheme(t) {
   try {

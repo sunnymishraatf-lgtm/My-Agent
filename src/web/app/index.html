@@ -13,7 +13,7 @@
 /* Apply the saved theme before first paint — no flash. "system" follows the OS. */
 (function () {
   try {
-    var t = localStorage.getItem("neutron_theme") || "system";
+    var t = localStorage.getItem("neutron_theme") || "claymorphism";
     var name = t;
     if (t === "system") {
       name = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
