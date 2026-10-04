@@ -268,6 +268,8 @@ export async function handleAuthApi(
         sendJson(res, 400, { ok: false, error: "Invalid or expired reset link." });
         return;
       }
+      /* consumePasswordReset already revoked every existing session for the
+         user, so a stolen session can't survive the password change. */
       sendJson(res, 200, { ok: true });
       return;
     }
