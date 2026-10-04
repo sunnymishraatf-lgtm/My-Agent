@@ -70,6 +70,20 @@ public class MusicService extends Service {
     private android.media.MediaPlayer streamPlayer;
     private static volatile boolean nativeActive = false;
 
+    /* Audio effects for the equalizer. Created per-player (tied to the
+       MediaPlayer's audio session); the desired levels are kept in static
+       fields so the web UI can set them even before playback starts. */
+    private android.media.audiofx.Equalizer eqFx;
+    private android.media.audiofx.BassBoost bassFx;
+    private static volatile android.media.audiofx.Equalizer liveEq;
+    private static volatile android.media.audiofx.BassBoost liveBass;
+    private static volatile boolean eqEnabled = false;
+    private static final java.util.Map<Integer, Short> eqBandLevels =
+            new java.util.concurrent.ConcurrentHashMap<Integer, Short>();
+    private static volatile short bassBoostStrength = 0;
+    /* Last probed hardware layout, so the UI can render sliders. */
+    private static volatile String eqInfoCache = null;
+
     /** JSON snapshot of the native stream state, for the WebView bridge
         (lets the UI restore after a reload while the stream keeps playing). */
     public static String statusJson() {
@@ -386,9 +400,116 @@ public class MusicService extends Service {
             try { streamPlayer.release(); } catch (Exception ignored) {}
             streamPlayer = null;
         }
+        releaseAudioFx();
         abandonAudioFocus();
         nativeActive = false;
     }
+
+    /** Attach Equalizer + BassBoost to the player's audio session. */
+    private void attachAudioFx(int audioSessionId) {
+        releaseAudioFx();
+        try {
+            android.media.audiofx.Equalizer eq =
+                    new android.media.audiofx.Equalizer(0, audioSessionId);
+            short bands = eq.getNumberOfBands();
+            short[] range = eq.getBandLevelRange();
+            StringBuilder sb = new StringBuilder("{\"bands\":[");
+            for (short b = 0; b < bands; b++) {
+                if (b > 0) sb.append(',');
+                int freqHz = eq.getCenterFreq(b) / 1000;
+                sb.append("{\"i\":").append(b)
+                  .append(",\"freqHz\":").append(freqHz)
+                  .append(",\"minMb\":").append(range[0])
+                  .append(",\"maxMb\":").append(range[1])
+                  .append('}');
+            }
+            sb.append("],\"bassMax\":1000}");
+            eqInfoCache = sb.toString();
+            eq.setEnabled(eqEnabled);
+            for (java.util.Map.Entry<Integer, Short> e : eqBandLevels.entrySet()) {
+                try { eq.setBandLevel(e.getKey().shortValue(), e.getValue()); }
+                catch (Exception ignored) {}
+            }
+            eqFx = eq;
+            liveEq = eq;
+        } catch (Exception ignored) { eqFx = null; liveEq = null; }
+        try {
+            android.media.audiofx.BassBoost bb =
+                    new android.media.audiofx.BassBoost(0, audioSessionId);
+            bb.setEnabled(bassBoostStrength > 0);
+            try { bb.setStrength(bassBoostStrength); } catch (Exception ignored) {}
+            bassFx = bb;
+            liveBass = bb;
+        } catch (Exception ignored) { bassFx = null; liveBass = null; }
+    }
+
+    private void releaseAudioFx() {
+        liveEq = null;
+        liveBass = null;
+        if (eqFx != null) {
+            try { eqFx.release(); } catch (Exception ignored) {}
+            eqFx = null;
+        }
+        if (bassFx != null) {
+            try { bassFx.release(); } catch (Exception ignored) {}
+            bassFx = null;
+        }
+    }
+
+    /* ----- static EQ API used by the JS bridge ----- */
+
+    /** JSON describing the EQ hardware; falls back to a generic 5-band layout. */
+    public static String eqInfoJson() {
+        String cached = eqInfoCache;
+        if (cached != null) return cached;
+        return "{\"bands\":[" +
+                "{\"i\":0,\"freqHz\":60,\"minMb\":-1500,\"maxMb\":1500}," +
+                "{\"i\":1,\"freqHz\":230,\"minMb\":-1500,\"maxMb\":1500}," +
+                "{\"i\":2,\"freqHz\":910,\"minMb\":-1500,\"maxMb\":1500}," +
+                "{\"i\":3,\"freqHz\":3600,\"minMb\":-1500,\"maxMb\":1500}," +
+                "{\"i\":4,\"freqHz\":14000,\"minMb\":-1500,\"maxMb\":1500}" +
+                "],\"bassMax\":1000,\"probed\":false}";
+    }
+
+    public static void eqSetEnabled(boolean enabled) {
+        eqEnabled = enabled;
+        android.media.audiofx.Equalizer eq = liveEq;
+        if (eq != null) {
+            try { eq.setEnabled(enabled); } catch (Exception ignored) {}
+        }
+    }
+
+    public static boolean eqIsEnabled() { return eqEnabled; }
+
+    /** Set a band level in millibels (e.g. -1500..1500). */
+    public static void eqSetBand(int band, int levelMb) {
+        short level = (short) Math.max(-1500, Math.min(1500, levelMb));
+        eqBandLevels.put(band, level);
+        android.media.audiofx.Equalizer eq = liveEq;
+        if (eq != null) {
+            try { eq.setBandLevel((short) band, level); } catch (Exception ignored) {}
+        }
+    }
+
+    public static int eqGetBand(int band) {
+        Short v = eqBandLevels.get(band);
+        return v == null ? 0 : v.intValue();
+    }
+
+    /** Bass boost strength 0..1000 (0 = off). */
+    public static void bassBoostSet(int strength) {
+        short s = (short) Math.max(0, Math.min(1000, strength));
+        bassBoostStrength = s;
+        android.media.audiofx.BassBoost bb = liveBass;
+        if (bb != null) {
+            try {
+                bb.setEnabled(s > 0);
+                bb.setStrength(s);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    public static int bassBoostGet() { return bassBoostStrength; }
 
     /** Start streaming an mp3 URL with MediaPlayer inside this service. */
     private void startNativeStream(String url, String title, String artist) {
@@ -415,6 +536,7 @@ public class MusicService extends Service {
                 @Override public void onPrepared(android.media.MediaPlayer p) {
                     nativeActive = true;
                     playing = true;
+                    try { attachAudioFx(p.getAudioSessionId()); } catch (Exception ignored) {}
                     try { p.start(); } catch (Exception ignored) {}
                     goForeground();
                 }

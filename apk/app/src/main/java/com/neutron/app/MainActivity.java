@@ -697,6 +697,47 @@ public class MainActivity extends Activity {
             catch (Exception e) { return "{\"active\":false}"; }
         }
 
+        /* ----- equalizer ----- */
+
+        /** JSON describing the EQ hardware bands + bass-boost range. */
+        @JavascriptInterface
+        public String nativeAudioEqInfo() {
+            try { return MusicService.eqInfoJson(); }
+            catch (Exception e) { return "{\"bands\":[]}"; }
+        }
+
+        @JavascriptInterface
+        public void nativeAudioEqEnable(boolean enabled) {
+            try { MusicService.eqSetEnabled(enabled); } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public boolean nativeAudioEqIsEnabled() {
+            try { return MusicService.eqIsEnabled(); } catch (Exception e) { return false; }
+        }
+
+        /** Set an EQ band level in millibels (typically -1500..1500). */
+        @JavascriptInterface
+        public void nativeAudioEqBand(int band, int levelMb) {
+            try { MusicService.eqSetBand(band, levelMb); } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public int nativeAudioEqGetBand(int band) {
+            try { return MusicService.eqGetBand(band); } catch (Exception e) { return 0; }
+        }
+
+        /** Bass boost strength 0..1000 (0 = off). */
+        @JavascriptInterface
+        public void nativeAudioBassBoost(int strength) {
+            try { MusicService.bassBoostSet(strength); } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public int nativeAudioBassBoostGet() {
+            try { return MusicService.bassBoostGet(); } catch (Exception e) { return 0; }
+        }
+
         /* ----- Persistent data (SharedPreferences) -----
            The web app mirrors localStorage here, so user data (history,
            playlists, theme, API keys, friends) survives even if the
