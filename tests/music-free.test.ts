@@ -135,6 +135,70 @@ describe("free music engine: Archive helpers", () => {
   });
 });
 
+describe("free music engine: native state restore", () => {
+  function fakeEl() {
+    return {
+      className: "", textContent: "", id: "", title: "", src: "", alt: "", loading: "", type: "",
+      style: {},
+      setAttribute() {}, appendChild() {}, addEventListener() {},
+      classList: { add() {}, remove() {}, contains: () => false, toggle() {} },
+    };
+  }
+  function loadWithBridge(statusJson: string | null) {
+    const src = readFileSync(join(root, "src", "web", "app", "music.js"), "utf8");
+    const sandbox: Record<string, unknown> = {};
+    vm.createContext(sandbox);
+    sandbox.window = {};
+    (sandbox as Record<string, unknown>).document = {
+      createElement: () => fakeEl(),
+      body: fakeEl(),
+    };
+    (sandbox.window as Record<string, unknown>).NeutronApp = {
+      nativeAudioPlay() {},
+      nativeAudioPause() {},
+      nativeAudioResume() {},
+      nativeAudioStatus: statusJson === null ? undefined : () => statusJson,
+    };
+    (sandbox.window as Record<string, unknown>).addEventListener = () => {};
+    vm.runInContext(src, sandbox, { filename: "music.js" });
+    return (sandbox.window as Record<string, unknown>).NeutronMusic as {
+      toggle: () => void;
+      freeAudio: {
+        faRestoreNativeState: () => void;
+        current: () => { title: string; restored?: boolean } | null;
+      };
+    };
+  }
+
+  it("does nothing when the bridge has no status API", () => {
+    const M = loadWithBridge(null);
+    expect(() => M.freeAudio.faRestoreNativeState()).not.toThrow();
+    expect(M.freeAudio.current()).toBeNull();
+  });
+
+  it("does nothing when no stream is active", () => {
+    const M = loadWithBridge('{"active":false}');
+    M.freeAudio.faRestoreNativeState();
+    expect(M.freeAudio.current()).toBeNull();
+  });
+
+  it("restores the mini-player from an active native stream (runs once)", () => {
+    const M = loadWithBridge('{"active":true,"playing":true,"title":"Lofi Tape","artist":"Tape Maker"}');
+    M.freeAudio.faRestoreNativeState();
+    const c = M.freeAudio.current();
+    expect(c && c.title).toBe("Lofi Tape");
+    expect(c && c.restored).toBe(true);
+    M.freeAudio.faRestoreNativeState();
+    expect(M.freeAudio.current()).toBe(c);
+  });
+
+  it("survives malformed status JSON", () => {
+    const M = loadWithBridge('not json{');
+    expect(() => M.freeAudio.faRestoreNativeState()).not.toThrow();
+    expect(M.freeAudio.current()).toBeNull();
+  });
+});
+
 describe("free music engine: Jamendo helpers", () => {
   it("normalizes Jamendo v3.0 /tracks payloads", () => {
     const { faParseJamendo } = loadMusic().freeAudio;

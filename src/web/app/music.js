@@ -701,6 +701,9 @@
     /* Fresh view: drop stale repaint callbacks from any previous render. */
     sectionEls.length = 0;
 
+    /* Restore the mini-player if the native stream survived a reload. */
+    try { faRestoreNativeState(); } catch (e) {}
+
     view.appendChild(el("h1", null, "Music"));
     view.appendChild(el("p", "muted",
       "A free coding soundtrack. Free music streams licensed tracks that keep " +
@@ -1168,6 +1171,11 @@
 
   function faStep(d) {
     if (!faQueue.length) return;
+    var c = faCurrent();
+    if (c && c.restored) {
+      note("The queue was lost on reload \u2014 pick a track to rebuild it.");
+      return;
+    }
     if (faQueue.length <= 1) { faPlayAt(faIndex); return; }
     faPlayAt(faIndex + d);
   }
@@ -1212,6 +1220,36 @@
     if (/creativecommons\.org\/publicdomain\/zero/.test(u)) return "CC0";
     if (/creativecommons\.org\/publicdomain/.test(u)) return "Public domain";
     return "Licensed";
+  }
+
+  var faRestored = false;
+
+  /**
+   * After a page reload the WebView's JS state is gone but the native
+   * stream can still be playing in the service. Restore the mini-player
+   * UI from the service's status snapshot so pause/resume keep working.
+   * Runs once, on first section render.
+   */
+  function faRestoreNativeState() {
+    if (faRestored) return;
+    faRestored = true;
+    var bridge = faNative();
+    if (!bridge || typeof bridge.nativeAudioStatus !== "function") return;
+    var st = null;
+    try { st = JSON.parse(bridge.nativeAudioStatus()); } catch (e) { return; }
+    if (!st || !st.active) return;
+    var t = {
+      kind: "archive", faid: "fa:native:current", identifier: "",
+      title: String(st.title || "NEUTRON Music"),
+      artist: String(st.artist || ""), license: "", url: null,
+      restored: true
+    };
+    faRegister(t);
+    faQueue = [t];
+    faIndex = 0;
+    faPlaying = !!st.playing;
+    activeEngine = "fa";
+    faPaintBar();
   }
 
   function faResultRow(t) {
@@ -1342,6 +1380,7 @@
     faEscapeLucene: faEscapeLucene,
     faFreeLicense: faFreeLicense,
     faLicenseLabel: faLicenseLabel,
+    faRestoreNativeState: faRestoreNativeState,
     faParseArchiveSearch: faParseArchiveSearch,
     faPickMp3: faPickMp3,
     faParseJamendo: faParseJamendo,

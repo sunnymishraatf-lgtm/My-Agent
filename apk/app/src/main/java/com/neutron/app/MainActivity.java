@@ -688,6 +688,15 @@ public class MainActivity extends Activity {
             });
         }
 
+        /** JSON snapshot of the native stream player: {active, playing,
+            title, artist}. Lets the web UI restore after a reload while
+            the stream keeps playing in the service. */
+        @JavascriptInterface
+        public String nativeAudioStatus() {
+            try { return MusicService.statusJson(); }
+            catch (Exception e) { return "{\"active\":false}"; }
+        }
+
         /* ----- Persistent data (SharedPreferences) -----
            The web app mirrors localStorage here, so user data (history,
            playlists, theme, API keys, friends) survives even if the

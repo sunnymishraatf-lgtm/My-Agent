@@ -60,15 +60,31 @@ public class MusicService extends Service {
     private MediaSession mediaSession;
     private NotificationManager notifManager;
 
-    private String currentTitle = "NEUTRON Music";
-    private String currentArtist = "NEUTRON Music";
-    private boolean playing = false;
+    private static volatile String currentTitle = "NEUTRON Music";
+    private static volatile String currentArtist = "NEUTRON Music";
+    private static volatile boolean playing = false;
     private boolean foreground = false;
 
     /** Native audio player: streams an mp3 URL directly in this service.
         Null when the YouTube/WebView path is in use (or nothing plays). */
     private android.media.MediaPlayer streamPlayer;
-    private boolean nativeActive = false;
+    private static volatile boolean nativeActive = false;
+
+    /** JSON snapshot of the native stream state, for the WebView bridge
+        (lets the UI restore after a reload while the stream keeps playing). */
+    public static String statusJson() {
+        boolean active = nativeActive;
+        boolean p = playing && active;
+        return "{\"active\":" + active + ",\"playing\":" + p +
+                ",\"title\":" + jsonStr(currentTitle) +
+                ",\"artist\":" + jsonStr(currentArtist) + "}";
+    }
+
+    private static String jsonStr(String s) {
+        if (s == null) return "\"\"";
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r") + "\"";
+    }
 
     /* ----- audio focus + headset events (native stream path) ----- */
 
