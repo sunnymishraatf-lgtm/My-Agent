@@ -5442,6 +5442,73 @@
   --shadow-lg: 0 14px 32px -12px rgba(0, 0, 0, 0.65);
 }
 
+/* Claymorphism — soft 3D clay: pastel surfaces, chunky radii, dual
+   light/shadow pairs instead of flat drop shadows. */
+[data-theme="claymorphism"] {
+  --primary: #7C5CE0;
+  --primary-dark: #6A4BD0;
+  --primary-soft: #E4DCFA;
+  --primary-glow-rgb: 124, 92, 224;
+  --on-primary: #FFFFFF;
+  --accent: #E88CA0;
+  --bg: #E8E3F1;
+  --bg-soft: #EFEAF7;
+  --surface: #F5F2FA;
+  --surface-2: #FBF9FE;
+  --surface-line: #DCD4EC;
+  --white: #F5F2FA;
+  --text: #2E2A3D;
+  --text-2: #5B5470;
+  --text-3: #8A82A3;
+  --border: #DCD4EC;
+  --border-strong: #C6B8E2;
+  --green: #2F9E5F;
+  --green-soft: #DFF3E6;
+  --green-border: #B7E2C6;
+  --red: #E14D6B;
+  --red-soft: #FADFE6;
+  --red-border: #F0B4C2;
+  --red-ink: #C22747;
+  --on-danger: #FFFFFF;
+  --amber: #B45309;
+  --amber-soft: #F7EAD3;
+  --amber-border: #E8CFA0;
+  --blue-soft: #DFE9FB;
+  --blue-border: #B9CFF2;
+  --shadow-sm: 3px 3px 6px rgba(163, 152, 196, 0.35), -3px -3px 6px rgba(255, 255, 255, 0.9);
+  --shadow-md: 6px 6px 14px rgba(163, 152, 196, 0.4), -6px -6px 14px rgba(255, 255, 255, 0.95);
+  --shadow-lg: 10px 10px 28px rgba(163, 152, 196, 0.45), -10px -10px 28px rgba(255, 255, 255, 0.9);
+}
+
+/* Claymorphism shape language: chunky radii, thick soft borders, and
+   pressed (inset) states for buttons and inputs. */
+[data-theme="claymorphism"] .panel,
+[data-theme="claymorphism"] .music-card,
+[data-theme="claymorphism"] .music-result,
+[data-theme="claymorphism"] .music-plcard,
+[data-theme="claymorphism"] .card {
+  border-radius: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+}
+[data-theme="claymorphism"] .btn {
+  border-radius: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 4px 4px 8px rgba(163, 152, 196, 0.45), -4px -4px 8px rgba(255, 255, 255, 0.9), inset 1px 1px 2px rgba(255, 255, 255, 0.8);
+}
+[data-theme="claymorphism"] .btn:active {
+  box-shadow: inset 4px 4px 8px rgba(163, 152, 196, 0.45), inset -4px -4px 8px rgba(255, 255, 255, 0.9);
+}
+[data-theme="claymorphism"] .input,
+[data-theme="claymorphism"] select.input {
+  border-radius: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  box-shadow: inset 3px 3px 6px rgba(163, 152, 196, 0.35), inset -3px -3px 6px rgba(255, 255, 255, 0.9);
+}
+[data-theme="claymorphism"] .music-bar {
+  border-radius: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+}
+
 /* ---- glassmorphism: frosted surfaces for the glass themes ----
    Modest 18px blur. Blurred elements are never animated themselves —
    only transforms animate (see .panel:hover). Browsers without

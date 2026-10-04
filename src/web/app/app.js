@@ -225,7 +225,7 @@ function isVerbose() {
 function setVerbose(on) {
   try { localStorage.setItem(VERBOSE_STORAGE, on ? "1" : "0"); } catch (e) { /* private mode */ }
 }
-/* ----- Theme (Appearance): 148 named themes + System. Stored as the theme
+/* ----- Theme (Appearance): 149 named themes + System. Stored as the theme
    name or "system"; applied via the data-theme attribute. ----- */
 var THEME_STORAGE = "neutron_theme";
 var THEMES = [
@@ -385,6 +385,7 @@ var THEMES = [
   { id: "espresso", name: "Espresso", swatch: ["#0C0906", "#A0785A", "#1E150E"] },
   { id: "slate-night", name: "Slate Night", swatch: ["#0A0E14", "#7C8DA6", "#141C28"] },
   { id: "ink", name: "Ink", swatch: ["#07090C", "#94A3B8", "#11161D"] },
+  { id: "claymorphism", name: "Claymorphism", swatch: ["#E8E3F1", "#7C5CE0", "#F5F2FA"] },
 ];
 var THEME_IDS = THEMES.map(function (t) { return t.id; });
 function storedTheme() {

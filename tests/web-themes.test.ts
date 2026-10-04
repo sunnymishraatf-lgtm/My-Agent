@@ -22,9 +22,9 @@ function themeIds(): string[] {
 }
 
 describe("theme registration", () => {
-  it("registers 148 named themes plus System", () => {
+  it("registers 149 named themes plus System", () => {
     const ids = themeIds();
-    expect(ids.length).toBe(148);
+    expect(ids.length).toBe(149);
     expect(new Set(ids).size).toBe(ids.length); // no duplicate ids
   });
 
@@ -32,7 +32,7 @@ describe("theme registration", () => {
     const m = appJs.match(/var THEMES = \[([\s\S]*?)\];/);
     const body: string = (m as RegExpMatchArray)[1] as string;
     const names = [...body.matchAll(/name:\s*"([^"]+)"/g)].map((x) => x[1] as string);
-    expect(names.length).toBe(148);
+    expect(names.length).toBe(149);
     expect(new Set(names).size).toBe(names.length); // no duplicate names
   });
 
@@ -40,7 +40,7 @@ describe("theme registration", () => {
     const m = appJs.match(/var THEMES = \[([\s\S]*?)\];/);
     const body: string = (m as RegExpMatchArray)[1] as string;
     const swatches = [...body.matchAll(/swatch:\s*\[([^\]]+)\]/g)].map((x) => x[1] as string);
-    expect(swatches.length).toBe(148);
+    expect(swatches.length).toBe(149);
     expect(new Set(swatches).size).toBe(swatches.length);
   });
 
