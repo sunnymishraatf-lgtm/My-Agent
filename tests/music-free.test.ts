@@ -25,6 +25,12 @@ function loadMusic() {
         kind: string; faid: string; identifier: string; title: string; artist: string; album: string; url: string
       }>;
       FA_JAMENDO_KEY_LS: string;
+      faRestoreNativeState: () => void;
+      faRecommendQueries: (seed: { title?: string; artist?: string } | null) => string[];
+      faSetAutoplay: (on: boolean) => void;
+      faAutoplayOn: () => boolean;
+      eqState: () => { enabled: boolean; bands: number[]; bass: number };
+      eqApply: () => void;
     };
     _onNativeAudioEvent: (ev: string) => void;
   };
@@ -196,6 +202,38 @@ describe("free music engine: native state restore", () => {
     const M = loadWithBridge('not json{');
     expect(() => M.freeAudio.faRestoreNativeState()).not.toThrow();
     expect(M.freeAudio.current()).toBeNull();
+  });
+});
+
+describe("free music engine: autoplay recommendations", () => {
+  it("builds recommendation queries from the seed track", () => {
+    const { faRecommendQueries } = loadMusic().freeAudio;
+    const qs = faRecommendQueries({ kind: "archive", title: "Midnight Drive", artist: "Neon Coast" } as { title?: string; artist?: string });
+    expect(qs[0]).toBe("Neon Coast");
+    expect(qs).toContain("chill");
+  });
+
+  it("falls back to a genre query with no seed", () => {
+    const { faRecommendQueries } = loadMusic().freeAudio;
+    expect(faRecommendQueries(null)).toEqual(["chill"]);
+  });
+
+  it("toggles autoplay state", () => {
+    const { faSetAutoplay, faAutoplayOn } = loadMusic().freeAudio;
+    faSetAutoplay(false);
+    expect(faAutoplayOn()).toBe(false);
+    faSetAutoplay(true);
+    expect(faAutoplayOn()).toBe(true);
+  });
+});
+
+describe("free music engine: equalizer", () => {
+  it("exposes EQ state and applies without a bridge", () => {
+    const { eqState, eqApply } = loadMusic().freeAudio;
+    const st = eqState();
+    expect(st.enabled).toBe(false);
+    expect(st.bands).toHaveLength(5);
+    expect(() => eqApply()).not.toThrow();
   });
 });
 

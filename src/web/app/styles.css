@@ -8335,6 +8335,55 @@ label.fld-label { display: block; font-size: 12px; font-weight: 600; color: var(
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 12px;
 }
+.music-subhead {
+  margin: 18px 0 8px;
+  font-size: 0.95em;
+  opacity: 0.85;
+}
+.station-btn {
+  min-height: 52px;
+  font-weight: 600;
+}
+.autoplay-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  cursor: pointer;
+}
+.autoplay-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent, #CC8066);
+}
+.eq-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.eq-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card, 8px);
+}
+.eq-slider {
+  width: 100%;
+  accent-color: var(--accent, #CC8066);
+}
+.eq-bass-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+}
+.eq-bass-row .eq-slider { flex: 1; }
+.eq-presets { gap: 8px; margin-top: 10px; }
 .music-card {
   display: flex; flex-direction: column; gap: 6px; text-align: left;
   padding: 10px;

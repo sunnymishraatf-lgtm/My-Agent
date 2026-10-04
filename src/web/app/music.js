@@ -718,6 +718,11 @@
     /* Licensed free streams (Internet Archive + Jamendo) — native background playback. */
     renderFreeMusicPanel(view);
 
+    /* Equalizer — native on Android, Web Audio in browsers. */
+    renderEqPanel(view);
+    /* Re-apply saved EQ (e.g. after a reload while the native player runs). */
+    try { if (eqState.enabled) eqApply(); } catch (e) {}
+
     /* Focus stations (YouTube) */
     var sp = el("section", "panel");
     sp.appendChild(el("h2", null, "Focus stations"));
@@ -1099,6 +1104,7 @@
     var t = faQueue[faIndex];
     var g = ++faGen;
     activeEngine = "fa";
+    faRememberRecent(t.faid);
     /* Never overlap with the YouTube engine: stop its player first. */
     try { if (player && player.stopVideo) player.stopVideo(); } catch (e) {}
     faPlaying = true;
@@ -1135,6 +1141,8 @@
           note("Audio error \u2014 trying the next track.");
           faStep(1);
         });
+        /* Wire the Web Audio EQ graph to the new element. */
+        try { if (eqState.enabled) eqEnsureWebAudio(); } catch (e) {}
       } else {
         try { faAudio.pause(); } catch (e2) {}
       }
@@ -1176,8 +1184,84 @@
       note("The queue was lost on reload \u2014 pick a track to rebuild it.");
       return;
     }
+    if (d > 0 && faIndex >= faQueue.length - 1) {
+      /* End of the queue — autoplay a recommendation instead of stopping. */
+      faAutoplayNext();
+      return;
+    }
     if (faQueue.length <= 1) { faPlayAt(faIndex); return; }
     faPlayAt(faIndex + d);
+  }
+
+  /* ----- autoplay radio ----- */
+
+  var FA_AUTOPLAY_LS = "neutron_fa_autoplay";
+  var faAutoplay = true;
+  try { faAutoplay = localStorage.getItem(FA_AUTOPLAY_LS) !== "0"; } catch (e) {}
+  /* faids played recently — autoplay skips these so it doesn't repeat. */
+  var faRecentIds = [];
+  function faRememberRecent(faid) {
+    if (!faid) return;
+    faRecentIds.push(faid);
+    if (faRecentIds.length > 60) faRecentIds.splice(0, faRecentIds.length - 60);
+  }
+  function faSetAutoplay(on) {
+    faAutoplay = !!on;
+    try { localStorage.setItem(FA_AUTOPLAY_LS, faAutoplay ? "1" : "0"); } catch (e) {}
+  }
+
+  /**
+   * Build recommendation queries from a seed track: same artist first,
+   * then distinctive title words, then a genre fallback.
+   */
+  function faRecommendQueries(seed) {
+    var qs = [];
+    if (seed) {
+      if (seed.artist) qs.push(seed.artist);
+      var words = String(seed.title || "").split(/[^A-Za-z0-9]+/)
+        .filter(function (w) { return w.length > 3; }).slice(0, 2);
+      if (words.length) qs.push(words.join(" "));
+    }
+    qs.push("chill");
+    return qs;
+  }
+
+  /** Find a fresh track similar to the seed (Archive.org, licensed only). */
+  async function faRecommend(seed) {
+    var queries = faRecommendQueries(seed);
+    for (var i = 0; i < queries.length; i++) {
+      var tracks;
+      try { tracks = await faSearchArchive(queries[i]); }
+      catch (e) { continue; }
+      var fresh = tracks.filter(function (t) {
+        return faRecentIds.indexOf(t.faid) === -1 &&
+          (!seed || t.faid !== seed.faid);
+      });
+      if (fresh.length) return fresh;
+    }
+    return [];
+  }
+
+  /** Play a recommended follow-up when the queue runs out. */
+  async function faAutoplayNext() {
+    if (!faAutoplay) { faPlayAt(faIndex); return; }
+    var seed = faCurrent();
+    var g = ++faGen;
+    try { note("Autoplay \u2014 finding something similar\u2026"); } catch (e) {}
+    var tracks;
+    try { tracks = await faRecommend(seed); }
+    catch (e) { tracks = []; }
+    if (g !== faGen) return; /* superseded */
+    if (!tracks.length) {
+      try { note("Couldn't find a follow-up \u2014 replaying."); } catch (e2) {}
+      faPlayAt(faIndex);
+      return;
+    }
+    var t = tracks[0];
+    faRegister(t);
+    faQueue.push(t);
+    faPlayAt(faQueue.length - 1);
+    try { note("Autoplay: " + faLabel(t)); } catch (e3) {}
   }
 
   function faStop() {
@@ -1283,6 +1367,185 @@
     return row;
   }
 
+  /* ----- equalizer ----- */
+
+  var EQ_LS = "neutron_fa_eq";
+  var eqState = { enabled: false, bands: [0, 0, 0, 0, 0], bass: 0 };
+  try {
+    var _eqSaved = JSON.parse(localStorage.getItem(EQ_LS) || "null");
+    if (_eqSaved && Array.isArray(_eqSaved.bands)) eqState = _eqSaved;
+  } catch (e) {}
+
+  function eqSave() {
+    try { localStorage.setItem(EQ_LS, JSON.stringify(eqState)); } catch (e) {}
+  }
+
+  /* Web Audio fallback for browsers (Android uses the native EQ). */
+  var eqCtx = null, eqNodes = null;
+  function eqEnsureWebAudio() {
+    if (eqCtx || !faAudio) return eqCtx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      eqCtx = new AC();
+      var src = eqCtx.createMediaElementSource(faAudio);
+      var freqs = [60, 230, 910, 3600, 14000];
+      var types = ["lowshelf", "peaking", "peaking", "peaking", "highshelf"];
+      var prev = src;
+      eqNodes = [];
+      for (var i = 0; i < 5; i++) {
+        var f = eqCtx.createBiquadFilter();
+        f.type = types[i];
+        f.frequency.value = freqs[i];
+        f.gain.value = eqState.bands[i] || 0;
+        if (types[i] === "peaking") f.Q.value = 1;
+        prev.connect(f);
+        prev = f;
+        eqNodes.push(f);
+      }
+      prev.connect(eqCtx.destination);
+      return eqCtx;
+    } catch (e) { return null; }
+  }
+
+  function eqApplyWebAudio() {
+    if (!eqNodes) return;
+    for (var i = 0; i < eqNodes.length; i++) {
+      try { eqNodes[i].gain.value = eqState.enabled ? (eqState.bands[i] || 0) : 0; }
+      catch (e) {}
+    }
+    if (eqNodes.length && eqState.enabled && eqState.bass > 0) {
+      try { eqNodes[0].gain.value += (eqState.bass / 1000) * 12; } catch (e2) {}
+    }
+  }
+
+  /** Push the EQ state to the native player (Android) or Web Audio. */
+  function eqApply() {
+    eqSave();
+    var bridge = faNative();
+    if (bridge && typeof bridge.nativeAudioEqBand === "function") {
+      try {
+        bridge.nativeAudioEqEnable(eqState.enabled);
+        for (var i = 0; i < eqState.bands.length; i++) {
+          bridge.nativeAudioEqBand(i, Math.round((eqState.bands[i] || 0) * 100));
+        }
+        bridge.nativeAudioBassBoost(eqState.enabled ? (eqState.bass | 0) : 0);
+      } catch (e) {}
+      return;
+    }
+    if (eqState.enabled) eqEnsureWebAudio();
+    eqApplyWebAudio();
+  }
+
+  function renderEqPanel(view) {
+    var bridge = faNative();
+    var hasNativeEq = !!(bridge && typeof bridge.nativeAudioEqInfo === "function");
+    var bands = [
+      { label: "60 Hz" }, { label: "230 Hz" }, { label: "910 Hz" },
+      { label: "3.6 kHz" }, { label: "14 kHz" },
+    ];
+    if (hasNativeEq) {
+      try {
+        var info = JSON.parse(bridge.nativeAudioEqInfo());
+        if (info && info.bands && info.bands.length) {
+          bands = info.bands.map(function (b) {
+            return { label: b.freqHz >= 1000 ? (b.freqHz / 1000) + " kHz" : b.freqHz + " Hz" };
+          });
+        }
+      } catch (e) {}
+    }
+    while (eqState.bands.length < bands.length) eqState.bands.push(0);
+    eqState.bands.length = bands.length;
+
+    var p = el("section", "panel");
+    p.appendChild(el("h2", null, "Equalizer"));
+    p.appendChild(el("p", "muted small",
+      hasNativeEq
+        ? "Shapes the native player's sound \u2014 bass to treble, plus a bass boost."
+        : "Shapes the browser player's sound."));
+
+    var erow = el("label", "row autoplay-row");
+    var etoggle = el("input", null);
+    etoggle.type = "checkbox";
+    etoggle.checked = eqState.enabled;
+    etoggle.setAttribute("aria-label", "Enable equalizer");
+    erow.appendChild(etoggle);
+    erow.appendChild(el("span", "small", "Enable equalizer"));
+    p.appendChild(erow);
+
+    var sgrid = el("div", "eq-grid");
+    bands.forEach(function (b, i) {
+      var cell = el("div", "eq-cell");
+      var slider = el("input", "eq-slider");
+      slider.type = "range";
+      slider.min = "-15"; slider.max = "15"; slider.step = "1";
+      slider.value = String(eqState.bands[i] || 0);
+      slider.setAttribute("aria-label", b.label + " band");
+      var val = el("div", "eq-val small", (eqState.bands[i] || 0) + " dB");
+      slider.oninput = function () {
+        eqState.bands[i] = parseInt(slider.value, 10) || 0;
+        val.textContent = eqState.bands[i] + " dB";
+        if (eqState.enabled) eqApply(); else eqSave();
+      };
+      cell.appendChild(el("div", "eq-freq small", b.label));
+      cell.appendChild(slider);
+      cell.appendChild(val);
+      sgrid.appendChild(cell);
+    });
+    p.appendChild(sgrid);
+
+    var brow = el("div", "eq-bass-row");
+    brow.appendChild(el("span", "small", "Bass boost"));
+    var bslider = el("input", "eq-slider");
+    bslider.type = "range";
+    bslider.min = "0"; bslider.max = "1000"; bslider.step = "10";
+    bslider.value = String(eqState.bass | 0);
+    bslider.setAttribute("aria-label", "Bass boost strength");
+    var bval = el("span", "eq-val small", Math.round((eqState.bass | 0) / 10) + "%");
+    bslider.oninput = function () {
+      eqState.bass = parseInt(bslider.value, 10) || 0;
+      bval.textContent = Math.round(eqState.bass / 10) + "%";
+      if (eqState.enabled) eqApply(); else eqSave();
+    };
+    brow.appendChild(bslider);
+    brow.appendChild(bval);
+    p.appendChild(brow);
+
+    var presets = el("div", "row eq-presets");
+    var PRESETS = {
+      "Flat": [0, 0, 0, 0, 0],
+      "Bass": [8, 5, 0, -2, -3],
+      "Treble": [-4, -2, 0, 4, 7],
+      "Vocal": [-3, 2, 5, 3, -1],
+    };
+    Object.keys(PRESETS).forEach(function (name) {
+      var pb = el("button", "btn ghost sm", name);
+      pb.type = "button";
+      pb.onclick = function () {
+        eqState.bands = PRESETS[name].slice(0, bands.length);
+        while (eqState.bands.length < bands.length) eqState.bands.push(0);
+        var sliders = sgrid.querySelectorAll("input");
+        var vals = sgrid.querySelectorAll(".eq-val");
+        for (var i = 0; i < sliders.length && i < eqState.bands.length; i++) {
+          sliders[i].value = String(eqState.bands[i]);
+          vals[i].textContent = eqState.bands[i] + " dB";
+        }
+        if (eqState.enabled) eqApply(); else eqSave();
+        try { note("EQ preset: " + name); } catch (e) {}
+      };
+      presets.appendChild(pb);
+    });
+    p.appendChild(presets);
+
+    etoggle.onchange = function () {
+      eqState.enabled = etoggle.checked;
+      eqApply();
+      try { note(eqState.enabled ? "Equalizer on." : "Equalizer off."); } catch (e) {}
+    };
+
+    view.appendChild(p);
+  }
+
   function renderFreeMusicPanel(view) {
     var fp = el("section", "panel");
     fp.appendChild(el("h2", null, "Free music"));
@@ -1333,7 +1596,61 @@
     srow.appendChild(sgo);
     fp.appendChild(srow);
     fp.appendChild(res);
+
+    /* Genre stations — one tap loads a queue of licensed tracks. */
+    var FA_STATIONS = [
+      { name: "Lofi", query: "lofi hip hop" },
+      { name: "Electronic", query: "electronic" },
+      { name: "Ambient", query: "ambient" },
+      { name: "Jazz", query: "jazz" },
+      { name: "Classical", query: "classical" },
+      { name: "Rock", query: "rock" },
+      { name: "Folk", query: "folk" },
+      { name: "World", query: "world music" },
+    ];
+    fp.appendChild(el("h3", "music-subhead", "Stations"));
+    var sgrid = el("div", "music-grid");
+    FA_STATIONS.forEach(function (st) {
+      var b = el("button", "btn ghost station-btn", st.name);
+      b.type = "button";
+      b.onclick = function () { faPlayStation(st); };
+      sgrid.appendChild(b);
+    });
+    fp.appendChild(sgrid);
+
+    /* Autoplay toggle — keep the music going with recommendations. */
+    var arow = el("label", "row autoplay-row");
+    var atoggle = el("input", null);
+    atoggle.type = "checkbox";
+    atoggle.checked = faAutoplay;
+    atoggle.setAttribute("aria-label", "Autoplay similar tracks");
+    atoggle.onchange = function () {
+      faSetAutoplay(atoggle.checked);
+      note(atoggle.checked ? "Autoplay on \u2014 I'll keep the music going." : "Autoplay off.");
+    };
+    arow.appendChild(atoggle);
+    arow.appendChild(el("span", "small", "Autoplay: keep playing similar tracks when the queue ends"));
+    fp.appendChild(arow);
+
     view.appendChild(fp);
+  }
+
+  /** Play a genre station: search Archive.org and queue the licensed results. */
+  async function faPlayStation(st) {
+    var g = ++faGen;
+    try { note("Loading " + st.name + " station\u2026"); } catch (e) {}
+    var tracks;
+    try { tracks = await faSearchArchive(st.query); }
+    catch (e) { tracks = []; }
+    if (g !== faGen) return;
+    if (!tracks.length) {
+      try { note("Couldn't load the " + st.name + " station."); } catch (e2) {}
+      return;
+    }
+    faQueue = tracks.map(function (t) { return faRegister(t); });
+    faPlayAt(0);
+    try { note(st.name + " station \u2014 " + tracks.length + " tracks. Autoplay will keep it going."); }
+    catch (e3) {}
   }
 
   var FreeAudio = {
@@ -1381,6 +1698,11 @@
     faFreeLicense: faFreeLicense,
     faLicenseLabel: faLicenseLabel,
     faRestoreNativeState: faRestoreNativeState,
+    faRecommendQueries: faRecommendQueries,
+    faSetAutoplay: faSetAutoplay,
+    faAutoplayOn: function () { return faAutoplay; },
+    eqApply: eqApply,
+    eqState: function () { return eqState; },
     faParseArchiveSearch: faParseArchiveSearch,
     faPickMp3: faPickMp3,
     faParseJamendo: faParseJamendo,
