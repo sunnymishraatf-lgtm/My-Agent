@@ -15,8 +15,10 @@ function loadMusic() {
   const M = (sandbox.window as Record<string, unknown>).NeutronMusic as {
     freeAudio: {
       faEscapeLucene: (s: string) => string;
+      faFreeLicense: (u: unknown) => boolean;
+      faLicenseLabel: (u: unknown) => string;
       faParseArchiveSearch: (d: unknown) => Array<{
-        kind: string; faid: string; identifier: string; title: string; artist: string; url: null
+        kind: string; faid: string; identifier: string; title: string; artist: string; license: string; url: null
       }>;
       faPickMp3: (meta: unknown) => string | null;
       faParseJamendo: (d: unknown) => Array<{
@@ -44,8 +46,10 @@ describe("free music engine: Archive helpers", () => {
     const tracks = faParseArchiveSearch({
       response: {
         docs: [
-          { identifier: "some-lofi-tape", title: "Some Lofi Tape", creator: "Tape Maker" },
-          { identifier: "no-title-item" },
+          { identifier: "some-lofi-tape", title: "Some Lofi Tape", creator: "Tape Maker", licenseurl: "https://creativecommons.org/licenses/by-nc-nd/3.0/" },
+          { identifier: "no-title-item", licenseurl: "http://creativecommons.org/publicdomain/zero/1.0/" },
+          { identifier: "unlicensed-upload", title: "Commercial Rip", creator: "Uploader" }, // skipped: no license
+          { identifier: "weird-license", title: "Weird", licenseurl: "https://example.com/all-rights-reserved" }, // skipped
           { identifier: "" }, // skipped
           null, // skipped
         ],
@@ -58,6 +62,7 @@ describe("free music engine: Archive helpers", () => {
         identifier: "some-lofi-tape",
         title: "Some Lofi Tape",
         artist: "Tape Maker",
+        license: "https://creativecommons.org/licenses/by-nc-nd/3.0/",
         url: null,
       },
       {
@@ -66,9 +71,20 @@ describe("free music engine: Archive helpers", () => {
         identifier: "no-title-item",
         title: "no-title-item",
         artist: "",
+        license: "http://creativecommons.org/publicdomain/zero/1.0/",
         url: null,
       },
     ]);
+  });
+
+  it("faFreeLicense accepts CC/public-domain URLs and rejects the rest", () => {
+    const { faFreeLicense } = loadMusic().freeAudio;
+    expect(faFreeLicense("https://creativecommons.org/licenses/by/4.0/")).toBe(true);
+    expect(faFreeLicense("http://creativecommons.org/licenses/by-nc-nd/3.0/")).toBe(true);
+    expect(faFreeLicense("https://creativecommons.org/publicdomain/zero/1.0/")).toBe(true);
+    expect(faFreeLicense("")).toBe(false);
+    expect(faFreeLicense(null)).toBe(false);
+    expect(faFreeLicense("https://example.com/all-rights-reserved")).toBe(false);
   });
 
   it("returns [] for garbage Archive payloads", () => {
@@ -76,6 +92,15 @@ describe("free music engine: Archive helpers", () => {
     expect(faParseArchiveSearch(null)).toEqual([]);
     expect(faParseArchiveSearch({})).toEqual([]);
     expect(faParseArchiveSearch({ response: { docs: "nope" } })).toEqual([]);
+  });
+
+  it("faLicenseLabel shortens license URLs for display", () => {
+    const { faLicenseLabel } = loadMusic().freeAudio;
+    expect(faLicenseLabel("https://creativecommons.org/licenses/by-nc-nd/3.0/")).toBe("CC BY-NC-ND 3.0");
+    expect(faLicenseLabel("http://creativecommons.org/licenses/by/4.0/")).toBe("CC BY 4.0");
+    expect(faLicenseLabel("https://creativecommons.org/publicdomain/zero/1.0/")).toBe("CC0");
+    expect(faLicenseLabel("https://creativecommons.org/publicdomain/mark/1.0/")).toBe("Public domain");
+    expect(faLicenseLabel("")).toBe("Licensed");
   });
 
   it("picks the best mp3 from Archive metadata", () => {

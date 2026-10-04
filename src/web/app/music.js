@@ -943,6 +943,18 @@
     return String(s || "").replace(/([+\-!(){}\[\]^"~*?:\\/])/g, "\\$1");
   }
 
+  /**
+   * True when an Archive.org licenseurl is a recognized free license (any
+   * Creative Commons license or a public-domain dedication). Items without
+   * a verifiable free license are excluded — not every Archive.org upload
+   * is freely licensed, so we only present results we can verify.
+   */
+  function faFreeLicense(url) {
+    var u = String(url || "").toLowerCase();
+    return u.indexOf("creativecommons.org/licenses/") !== -1 ||
+      u.indexOf("creativecommons.org/publicdomain/") !== -1;
+  }
+
   /** Normalize an Archive.org advancedsearch response into track objects. */
   function faParseArchiveSearch(data) {
     var docs = data && data.response && Array.isArray(data.response.docs)
@@ -950,12 +962,14 @@
     var out = [];
     docs.forEach(function (d) {
       if (!d || !d.identifier) return;
+      if (!faFreeLicense(d.licenseurl)) return; /* unlicensed uploads excluded */
       out.push({
         kind: "archive",
         faid: "fa:archive:" + d.identifier,
         identifier: d.identifier,
         title: String(d.title || d.identifier),
         artist: String(d.creator || ""),
+        license: String(d.licenseurl || ""),
         url: null
       });
     });
@@ -1005,9 +1019,11 @@
   }
 
   async function faSearchArchive(q) {
-    var query = "mediatype:audio AND (" + faEscapeLucene(q) + ")";
+    /* licenseurl:* keeps only items with license metadata; the client-side
+       faFreeLicense check then verifies it is a recognized free license. */
+    var query = "mediatype:audio AND licenseurl:* AND (" + faEscapeLucene(q) + ")";
     var url = "https://archive.org/advancedsearch.php?q=" + encodeURIComponent(query) +
-      "&fl[]=identifier&fl[]=title&fl[]=creator&rows=15&output=json";
+      "&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=licenseurl&rows=15&output=json";
     return faParseArchiveSearch(await fetchTimeout(url, 10000));
   }
 
@@ -1185,6 +1201,19 @@
     }
   }
 
+  /**
+   * Shorten a license URL for display: "CC BY-NC-ND 3.0", "CC0", or
+   * "Public domain". Falls back to "Licensed".
+   */
+  function faLicenseLabel(url) {
+    var u = String(url || "").toLowerCase();
+    var m = u.match(/creativecommons\.org\/licenses\/([a-z-]+)\/([\d.]+)/);
+    if (m) return "CC " + m[1].toUpperCase().replace(/-/g, "-") + " " + m[2];
+    if (/creativecommons\.org\/publicdomain\/zero/.test(u)) return "CC0";
+    if (/creativecommons\.org\/publicdomain/.test(u)) return "Public domain";
+    return "Licensed";
+  }
+
   function faResultRow(t) {
     var row = el("div", "music-result");
     var img = el("img", "music-result-thumb");
@@ -1197,6 +1226,7 @@
     var sub = (t.artist ? t.artist : "Unknown artist") +
       (t.album ? " \u00B7 " + t.album : "") +
       " \u00B7 " + (t.kind === "archive" ? "Internet Archive" : "Jamendo");
+    if (t.kind === "archive" && t.license) sub += " \u00B7 " + faLicenseLabel(t.license);
     tcol.appendChild(el("div", "music-result-artist muted small", sub));
     row.appendChild(tcol);
     var play = el("button", "btn primary sm", "Play");
@@ -1310,6 +1340,8 @@
     current: faCurrent,
     /* Test hooks. */
     faEscapeLucene: faEscapeLucene,
+    faFreeLicense: faFreeLicense,
+    faLicenseLabel: faLicenseLabel,
     faParseArchiveSearch: faParseArchiveSearch,
     faPickMp3: faPickMp3,
     faParseJamendo: faParseJamendo,
