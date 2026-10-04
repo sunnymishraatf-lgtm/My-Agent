@@ -89,9 +89,32 @@ const WEB_MIME: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
 };
+
+/**
+ * Serves a single static file from inside webDir, with path containment.
+ * Shared by the /src/web/ and /app/ routes below.
+ */
+function serveWebFile(
+  res: ServerResponse,
+  webDir: string,
+  rel: string,
+): boolean {
+  const filePath = rel ? normalize(join(webDir, rel)) : "";
+  // Containment: never serve anything outside the dashboard directory.
+  if (!filePath.startsWith(webDir + sep) || !existsSync(filePath)) return false;
+  res.writeHead(200, { "content-type": WEB_MIME[extname(filePath)] ?? "text/plain; charset=utf-8" });
+  const stream = createReadStream(filePath);
+  stream.on("error", (err) => {
+    if (!res.headersSent) sendJson(res, 500, { ok: false, error: `Failed to read file: ${err.message}` });
+    else res.destroy();
+  });
+  stream.pipe(res);
+  return true;
+}
 
 
 function makeMaintenanceRequest(request: string, repository: string, branch: string, riskTolerance: "safe" | "balanced" | "aggressive", execution: "plan-only" | "implement-and-test"): MaintenanceRequest {
@@ -1622,18 +1645,22 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     } catch {
       /* malformed escape -> 404 below */
     }
-    const filePath = webDir && rel ? normalize(join(webDir, rel)) : "";
-    // Containment: never serve anything outside the dashboard directory.
-    if (webDir && filePath.startsWith(webDir + sep) && existsSync(filePath)) {
-      res.writeHead(200, { "content-type": WEB_MIME[extname(filePath)] ?? "text/plain; charset=utf-8" });
-      const stream = createReadStream(filePath);
-      stream.on("error", (err) => {
-        if (!res.headersSent) sendJson(res, 500, { ok: false, error: `Failed to read file: ${err.message}` });
-        else res.destroy();
-      });
-      stream.pipe(res);
-      return;
+    if (webDir && serveWebFile(res, webDir, rel)) return;
+    sendJson(res, 404, { ok: false, error: "Not found" });
+    return;
+  }
+
+  /* Static assets under /app/ (manifest, icons) — the /app SPA entry above
+     only serves index.html; this covers everything else inside dist/web/app. */
+  if (req.method === "GET" && url.pathname.startsWith("/app/")) {
+    const webDir = resolveWebDir();
+    let rel = "";
+    try {
+      rel = decodeURIComponent("app/" + url.pathname.slice("/app/".length));
+    } catch {
+      /* malformed escape -> 404 below */
     }
+    if (webDir && serveWebFile(res, webDir, rel)) return;
     sendJson(res, 404, { ok: false, error: "Not found" });
     return;
   }
