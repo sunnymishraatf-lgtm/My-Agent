@@ -709,6 +709,7 @@ var ROUTES = {
   friends: function (view) { return window.NeutronFriends.renderFriends(view); },
   account: function (view) { return window.NeutronAuth.renderAccount(view); },
   verify: function (view) { return window.NeutronAuth.renderVerify(view); },
+  "reset-password": function (view) { return window.NeutronAuth.renderResetPassword(view); },
   settings: renderSettings,
   usage: renderUsage,
 };

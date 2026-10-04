@@ -12,7 +12,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { AuthStore, validUsername, safeUser } from "./store";
 import { hashPassword, verifyPassword, verifyGoogleIdToken } from "./crypto";
-import { sendVerificationEmail } from "./mailer";
+import { sendVerificationEmail, sendPasswordResetEmail } from "./mailer";
 
 let store: AuthStore | null = null;
 
@@ -235,6 +235,38 @@ export async function handleAuthApi(
       if (user && user.provider === "email" && !user.emailVerified && user.email) {
         const vToken = await st.createEmailVerification(user.id);
         await sendVerificationEmail(user.email, user.displayName, vToken);
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    /* POST /api/auth/forgot-password { email } — email a reset link.
+       Always returns ok (don't leak which emails are registered). */
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "forgot-password") {
+      if (rateLimited(ip, 30)) { sendJson(res, 429, { ok: false, error: "Too many requests. Slow down." }); return; }
+      const body = await readJsonBody(req);
+      const email = str(body.email).trim().toLowerCase();
+      const user = await st.findByEmail(email);
+      if (user && user.provider === "email" && user.email) {
+        const rToken = await st.createPasswordReset(user.id);
+        await sendPasswordResetEmail(user.email, user.displayName, rToken);
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    /* POST /api/auth/reset-password { token, password } — set a new password. */
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "reset-password") {
+      if (rateLimited(ip, 30)) { sendJson(res, 429, { ok: false, error: "Too many requests. Slow down." }); return; }
+      const body = await readJsonBody(req);
+      const token = str(body.token).trim();
+      const password = str(body.password);
+      if (!token) throw new AuthHttpError(400, "Missing reset token.");
+      if (password.length < 8) throw new AuthHttpError(400, "Password must be at least 8 characters.");
+      const user = await st.consumePasswordReset(token, await hashPassword(password));
+      if (!user) {
+        sendJson(res, 400, { ok: false, error: "Invalid or expired reset link." });
+        return;
       }
       sendJson(res, 200, { ok: true });
       return;

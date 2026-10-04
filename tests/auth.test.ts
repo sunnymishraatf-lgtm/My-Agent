@@ -201,3 +201,34 @@ describe("AuthStore email verification", () => {
     expect((await st.verifyEmailToken(t2))!.emailVerified).toBe(true);
   });
 });
+
+describe("AuthStore password reset", () => {
+  it("creates, consumes (single-use), and updates the password hash", async () => {
+    const st = freshStore();
+    const u = await st.createUser({ username: "resetter", displayName: "R", provider: "email", email: "r@test.com" });
+    const tok = await st.createPasswordReset(u.id);
+    expect(tok.startsWith("pr_")).toBe(true);
+    const updated = await st.consumePasswordReset(tok, "new-hash-value");
+    expect(updated!.id).toBe(u.id);
+    expect((await st.findByEmail("r@test.com"))!.passwordHash).toBe("new-hash-value");
+    // Single-use: the same token is dead now.
+    expect(await st.consumePasswordReset(tok, "another")).toBeNull();
+    expect(await st.consumePasswordReset("pr_nonexistent", "x")).toBeNull();
+  });
+
+  it("replaces old tokens when creating a new one", async () => {
+    const st = freshStore();
+    const u = await st.createUser({ username: "resetter2", displayName: "R", provider: "email", email: "r2@test.com" });
+    const t1 = await st.createPasswordReset(u.id);
+    const t2 = await st.createPasswordReset(u.id);
+    expect(await st.consumePasswordReset(t1, "h1")).toBeNull();
+    expect((await st.consumePasswordReset(t2, "h2"))!.passwordHash).toBe("h2");
+  });
+
+  it("refuses tokens for non-email providers", async () => {
+    const st = freshStore();
+    const u = await st.createUser({ username: "googler", displayName: "G", provider: "google", email: "g@test.com" });
+    const tok = await st.createPasswordReset(u.id);
+    expect(await st.consumePasswordReset(tok, "h")).toBeNull();
+  });
+});

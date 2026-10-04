@@ -292,6 +292,13 @@
       var err = el("p", "auth-err hidden");
       formBox.appendChild(err);
       function fail(m) { err.textContent = m; err.classList.remove("hidden"); }
+      if (!isRegister) {
+        var forgot = el("button", "btn ghost sm", "Forgot password?");
+        forgot.type = "button";
+        forgot.style.marginTop = "8px";
+        forgot.onclick = function () { forgotForm(); };
+        formBox.appendChild(forgot);
+      }
       go.onclick = function () {
         err.classList.add("hidden");
         go.disabled = true;
@@ -318,11 +325,44 @@
         }
       };
     }
+    /** Forgot-password form: request a reset link by email. */
+    function forgotForm() {
+      formBox.innerHTML = "";
+      formBox.appendChild(el("p", "muted small",
+        "Enter your account email — if it's registered, we'll send a reset link (valid 1 hour)."));
+      var emailI = el("input", "input"); emailI.placeholder = "Email"; emailI.type = "email";
+      emailI.setAttribute("aria-label", "Email");
+      var go = el("button", "btn primary", "Send reset link");
+      var err = el("p", "auth-err hidden");
+      var ok = el("p", "muted hidden");
+      formBox.appendChild(emailI); formBox.appendChild(go);
+      formBox.appendChild(err); formBox.appendChild(ok);
+      var back = el("button", "btn ghost sm", "← Back to log in");
+      back.type = "button";
+      back.style.marginTop = "8px";
+      back.onclick = function () { emailForm(false); };
+      formBox.appendChild(back);
+      go.onclick = function () {
+        err.classList.add("hidden"); ok.classList.add("hidden");
+        var email = emailI.value.trim();
+        if (!email) { err.textContent = "Enter your email."; err.classList.remove("hidden"); return; }
+        go.disabled = true;
+        apiAuth("POST", "/api/auth/forgot-password", { email: email }).then(function () {
+          go.disabled = false;
+          ok.textContent = "If that email is registered, a reset link is on its way.";
+          ok.classList.remove("hidden");
+        }).catch(function (e) {
+          go.disabled = false;
+          err.textContent = String((e && e.message) || e);
+          err.classList.remove("hidden");
+        });
+      };
+    }
+
     loginTab.onclick = function () {
       loginTab.classList.add("active"); regTab.classList.remove("active");
       emailForm(false);
-    };
-    regTab.onclick = function () {
+    };    regTab.onclick = function () {
       regTab.classList.add("active"); loginTab.classList.remove("active");
       emailForm(true);
     };
@@ -468,6 +508,44 @@
       box.appendChild(el("p", "auth-err", String((e && e.message) || e)));
       box.appendChild(el("p", "muted small", "The link may have expired — request a new one from Account."));
     });
+  }
+  function renderResetPassword(view) {
+    view.innerHTML = "";
+    view.appendChild(el("h1", null, "Reset password"));
+    var box = el("div", "panel");
+    view.appendChild(box);
+    var m = (location.hash.match(/token=([^&]+)/) || [])[1];
+    var token = m ? decodeURIComponent(m) : "";
+    if (!token) {
+      box.appendChild(el("p", "auth-err", "No reset token in the link."));
+      box.appendChild(el("p", "muted small", "Request a new link from Account → Log in → Forgot password?"));
+      return;
+    }
+    box.appendChild(el("p", "muted small", "Choose a new password (8+ characters). The link works once and expires in 1 hour."));
+    var p1 = el("input", "input"); p1.type = "password"; p1.placeholder = "New password";
+    p1.setAttribute("aria-label", "New password");
+    var p2 = el("input", "input"); p2.type = "password"; p2.placeholder = "Confirm new password";
+    p2.setAttribute("aria-label", "Confirm new password");
+    var go = el("button", "btn primary", "Set new password");
+    var err = el("p", "auth-err hidden");
+    box.appendChild(p1); box.appendChild(p2); box.appendChild(go); box.appendChild(err);
+    function fail(msg) { err.textContent = msg; err.classList.remove("hidden"); }
+    go.onclick = function () {
+      err.classList.add("hidden");
+      if (p1.value.length < 8) { fail("Password must be at least 8 characters."); return; }
+      if (p1.value !== p2.value) { fail("Passwords don't match."); return; }
+      go.disabled = true;
+      apiAuth("POST", "/api/auth/reset-password", { token: token, password: p1.value }).then(function () {
+        box.innerHTML = "";
+        box.appendChild(el("p", null, "✓ Password updated — you can log in with it now."));
+        var login = el("button", "btn primary", "Go to log in");
+        login.onclick = function () { location.hash = "#/account"; };
+        box.appendChild(login);
+      }).catch(function (e) {
+        go.disabled = false;
+        fail(String((e && e.message) || e));
+      });
+    };
   }
   /** Show another user's public profile; records the view. */
   function viewUserProfile(username) {
@@ -778,6 +856,7 @@
   window.NeutronAuth = {
     renderAccount: renderAccount,
     renderVerify: renderVerify,
+    renderResetPassword: renderResetPassword,
     teardown: teardown,
     me: me,
     getToken: getToken,

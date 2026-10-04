@@ -55,6 +55,12 @@ export interface EmailVerification {
   createdAt: number;
 }
 
+export interface PasswordReset {
+  token: string;
+  userId: string;
+  createdAt: number;
+}
+
 interface DbShape {
   users: Record<string, User>;
   usernames: Record<string, string>; // lower(username) -> userId
@@ -64,11 +70,12 @@ interface DbShape {
   connections: Record<string, Connection>;
   profileViews: Record<string, ProfileView[]>; // viewedUserId -> views (newest first)
   verifications: Record<string, EmailVerification>; // token -> verification
+  passwordResets: Record<string, PasswordReset>; // token -> reset request
 }
 
 const EMPTY: DbShape = {
   users: {}, usernames: {}, emails: {}, googleSubs: {}, sessions: {}, connections: {},
-  profileViews: {}, verifications: {},
+  profileViews: {}, verifications: {}, passwordResets: {},
 };
 
 function redisCfg(): { url: string; token: string } | null {
@@ -269,6 +276,46 @@ export class AuthStore {
     }
     user.emailVerified = true;
     delete db.verifications[token];
+    await this.save(db);
+    return user;
+  }
+
+  /** Create (or replace) a password-reset token for a user. 1-hour expiry. */
+  async createPasswordReset(userId: string): Promise<string> {
+    const db = await this.load();
+    // Remove any existing reset tokens for this user.
+    for (const [tok, v] of Object.entries(db.passwordResets)) {
+      if (v.userId === userId) delete db.passwordResets[tok];
+    }
+    const token = "pr_" + randomBytes(24).toString("hex");
+    db.passwordResets[token] = { token, userId, createdAt: Date.now() };
+    await this.save(db);
+    return token;
+  }
+
+  /**
+   * Consume a password-reset token: validates it, sets the new password
+   * hash, and deletes the token (single-use). Returns the user, or null
+   * when the token is missing/expired.
+   */
+  async consumePasswordReset(token: string, newPasswordHash: string): Promise<User | null> {
+    const db = await this.load();
+    const r = db.passwordResets[token];
+    if (!r) return null;
+    // Tokens expire after 1 hour.
+    if (Date.now() - r.createdAt > 60 * 60 * 1000) {
+      delete db.passwordResets[token];
+      await this.save(db);
+      return null;
+    }
+    const user = db.users[r.userId];
+    if (!user || user.provider !== "email") {
+      delete db.passwordResets[token];
+      await this.save(db);
+      return null;
+    }
+    user.passwordHash = newPasswordHash;
+    delete db.passwordResets[token];
     await this.save(db);
     return user;
   }
