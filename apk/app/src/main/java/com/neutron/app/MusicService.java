@@ -5,9 +5,14 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -64,6 +69,98 @@ public class MusicService extends Service {
         Null when the YouTube/WebView path is in use (or nothing plays). */
     private android.media.MediaPlayer streamPlayer;
     private boolean nativeActive = false;
+
+    /* ----- audio focus + headset events (native stream path) ----- */
+
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest; /* API 26+ */
+    /** True when a transient focus loss paused us and we should resume on gain. */
+    private boolean resumeOnFocusGain = false;
+    private boolean noisyReceiverRegistered = false;
+
+    private final AudioManager.OnAudioFocusChangeListener focusListener =
+            new AudioManager.OnAudioFocusChangeListener() {
+        @Override public void onAudioFocusChange(int focusChange) {
+            switch (focusChange) {
+                case AudioManager.AUDIOFOCUS_LOSS:
+                    // Permanent loss (e.g. another music app): pause, don't auto-resume.
+                    resumeOnFocusGain = false;
+                    pauseNativeStream();
+                    break;
+                case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                    // Short interruption (e.g. phone call): pause, resume afterwards.
+                    if (streamPlayer != null && nativeActive) {
+                        try { resumeOnFocusGain = streamPlayer.isPlaying(); }
+                        catch (Exception ignored) { resumeOnFocusGain = false; }
+                    }
+                    pauseNativeStream();
+                    break;
+                case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                    // Notification sound etc.: keep playing quietly.
+                    if (streamPlayer != null) {
+                        try { streamPlayer.setVolume(0.2f, 0.2f); } catch (Exception ignored) {}
+                    }
+                    break;
+                case AudioManager.AUDIOFOCUS_GAIN:
+                    if (streamPlayer != null) {
+                        try { streamPlayer.setVolume(1.0f, 1.0f); } catch (Exception ignored) {}
+                    }
+                    if (resumeOnFocusGain) {
+                        resumeOnFocusGain = false;
+                        resumeNativeStream();
+                    }
+                    break;
+            }
+        }
+    };
+
+    /** Headphones unplugged (or BT disconnected): pause instead of blasting the speaker. */
+    private final BroadcastReceiver noisyReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
+                resumeOnFocusGain = false;
+                pauseNativeStream();
+            }
+        }
+    };
+
+    /** Request audio focus for the native stream. False when denied. */
+    private boolean requestAudioFocus() {
+        if (audioManager == null) return false;
+        try {
+            int res;
+            if (Build.VERSION.SDK_INT >= 26) {
+                if (audioFocusRequest == null) {
+                    audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                            .setAudioAttributes(new AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                    .build())
+                            .setOnAudioFocusChangeListener(focusListener)
+                            .build();
+                }
+                res = audioManager.requestAudioFocus(audioFocusRequest);
+            } else {
+                @SuppressWarnings("deprecation")
+                int r = audioManager.requestAudioFocus(focusListener,
+                        AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+                res = r;
+            }
+            return res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        } catch (Exception ignored) { return false; }
+    }
+
+    private void abandonAudioFocus() {
+        if (audioManager == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= 26 && audioFocusRequest != null) {
+                audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            } else {
+                audioManager.abandonAudioFocus(focusListener); /* pre-26 API */
+            }
+        } catch (Exception ignored) {}
+        resumeOnFocusGain = false;
+    }
 
     /** Called from the WebView bridge when playback starts or the track changes. */
     public static void update(Context ctx, String title, boolean isPlaying) {
@@ -126,6 +223,13 @@ public class MusicService extends Service {
         super.onCreate();
         notifManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         ensureChannel();
+
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        try {
+            registerReceiver(noisyReceiver,
+                    new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+            noisyReceiverRegistered = true;
+        } catch (Exception ignored) {}
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NEUTRON:music");
@@ -256,6 +360,7 @@ public class MusicService extends Service {
             try { streamPlayer.release(); } catch (Exception ignored) {}
             streamPlayer = null;
         }
+        abandonAudioFocus();
         nativeActive = false;
     }
 
@@ -263,6 +368,11 @@ public class MusicService extends Service {
     private void startNativeStream(String url, String title, String artist) {
         releaseStreamPlayer();
         if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) {
+            sendAudioEvent(EVENT_ERROR);
+            return;
+        }
+        if (!requestAudioFocus()) {
+            // Another app owns audio (e.g. a call): don't start over it.
             sendAudioEvent(EVENT_ERROR);
             return;
         }
@@ -353,6 +463,10 @@ public class MusicService extends Service {
 
     @Override
     public void onDestroy() {
+        if (noisyReceiverRegistered) {
+            try { unregisterReceiver(noisyReceiver); } catch (Exception ignored) {}
+            noisyReceiverRegistered = false;
+        }
         shutdown();
         super.onDestroy();
     }
