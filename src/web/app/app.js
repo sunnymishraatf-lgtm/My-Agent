@@ -722,7 +722,7 @@ function currentRoute() {
     window.__neutronPendingRoom = rm[1];
     return "rooms";
   }
-  var r = h.replace(/^#\/?/, "").split("/")[0];
+  var r = h.replace(/^#\/?/, "").split("/")[0].split("?")[0];
   return ROUTES[r] ? r : "dashboard";
 }
 
