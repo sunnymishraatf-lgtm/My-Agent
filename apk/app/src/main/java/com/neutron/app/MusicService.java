@@ -258,6 +258,16 @@ public class MusicService extends Service {
                 return START_NOT_STICKY;
             }
             if (CMD_TOGGLE.equals(action)) {
+                if (nativeActive && streamPlayer != null) {
+                    // The native stream can outlive the activity (swiped away):
+                    // handle the toggle here so the notification button always
+                    // works. The broadcast below keeps the web UI in sync when
+                    // it is alive (its toggle converges to the same state).
+                    try {
+                        if (streamPlayer.isPlaying()) pauseNativeStream();
+                        else resumeNativeStream();
+                    } catch (Exception ignored) {}
+                }
                 sendCmd(CMD_TOGGLE);
                 return START_STICKY;
             }
