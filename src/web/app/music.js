@@ -1283,7 +1283,7 @@
           l.forEach(function (t) { tracks.push(faRegister(t)); });
         });
         if (!tracks.length) {
-          res.appendChild(el("p", "muted", "No free tracks found \u2014 try different words."));
+          res.appendChild(el("p", "muted", "No freely-licensed tracks found \u2014 try different words."));
           return;
         }
         tracks.forEach(function (t) { res.appendChild(faResultRow(t)); });
