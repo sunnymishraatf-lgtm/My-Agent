@@ -231,4 +231,21 @@ describe("AuthStore password reset", () => {
     const tok = await st.createPasswordReset(u.id);
     expect(await st.consumePasswordReset(tok, "h")).toBeNull();
   });
+
+  it("revokes all sessions when the password is reset", async () => {
+    const st = freshStore();
+    const u = await st.createUser({ username: "revokee", displayName: "R", provider: "email", email: "rev@test.com" });
+    const s1 = await st.createSession(u.id);
+    const s2 = await st.createSession(u.id);
+    const other = await st.createUser({ username: "other", displayName: "O", provider: "email", email: "o@test.com" });
+    const s3 = await st.createSession(other.id);
+    const tok = await st.createPasswordReset(u.id);
+    await st.consumePasswordReset(tok, "new-hash");
+    expect(await st.getSession(s1.token)).toBeNull();
+    expect(await st.getSession(s2.token)).toBeNull();
+    // Other users' sessions are untouched.
+    expect((await st.getSession(s3.token))!.user.id).toBe(other.id);
+    expect(await st.deleteSessionsForUser(other.id)).toBe(1);
+    expect(await st.getSession(s3.token)).toBeNull();
+  });
 });

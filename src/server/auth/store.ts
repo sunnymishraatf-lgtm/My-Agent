@@ -316,6 +316,10 @@ export class AuthStore {
     }
     user.passwordHash = newPasswordHash;
     delete db.passwordResets[token];
+    // A password reset revokes every existing session.
+    for (const [tok, s] of Object.entries(db.sessions)) {
+      if (s.userId === user.id) delete db.sessions[tok];
+    }
     await this.save(db);
     return user;
   }
@@ -346,6 +350,17 @@ export class AuthStore {
     const db = await this.load();
     delete db.sessions[token];
     await this.save(db);
+  }
+
+  /** Revoke every session for a user (used after a password reset). */
+  async deleteSessionsForUser(userId: string): Promise<number> {
+    const db = await this.load();
+    let n = 0;
+    for (const [tok, s] of Object.entries(db.sessions)) {
+      if (s.userId === userId) { delete db.sessions[tok]; n++; }
+    }
+    if (n) await this.save(db);
+    return n;
   }
 
   // ----- connections -----
