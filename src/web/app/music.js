@@ -557,6 +557,8 @@
   /** Play the queue item at index i (wraps around). */
   function playAt(i) {
     activeEngine = "yt";
+    /* Never overlap with the free-music engine: stop its audio first. */
+    if (faPlaying || faIndex !== -1) faStop();
     if (!queue.length) return;
     qi = ((i % queue.length) + queue.length) % queue.length;
     var c = queue[qi];
@@ -1078,6 +1080,8 @@
     var t = faQueue[faIndex];
     var g = ++faGen;
     activeEngine = "fa";
+    /* Never overlap with the YouTube engine: stop its player first. */
+    try { if (player && player.stopVideo) player.stopVideo(); } catch (e) {}
     faPlaying = true;
     faPaintBar();
     barTitleEl.textContent = faLabel(t) + " (loading\u2026)";
