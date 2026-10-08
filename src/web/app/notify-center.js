@@ -140,6 +140,22 @@
         };
         foot.appendChild(mr);
       }
+      var del = el("button", "btn ghost sm danger", "Delete");
+      del.type = "button";
+      del.title = "Delete this announcement";
+      del.onclick = async function () {
+        if (!window.confirm("Delete this announcement?\n\nIt will be permanently removed from your inbox.")) return;
+        del.disabled = true;
+        try {
+          await api("DELETE", "/api/notifications/" + encodeURIComponent(n.notificationId));
+          refreshBadge();
+          renderAnnouncementsRefresh(view);
+        } catch (e) {
+          del.disabled = false;
+          window.alert("Couldn't delete: " + (e.message || e));
+        }
+      };
+      foot.appendChild(del);
       card.appendChild(foot);
       list.appendChild(card);
     });

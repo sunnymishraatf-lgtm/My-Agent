@@ -7,12 +7,14 @@
  *   POST /api/admin/notifications
  *   GET  /api/admin/notifications?type=&search=&page=&limit=
  *   GET  /api/admin/notifications/:id
+ *   DELETE /api/admin/notifications/:id  (removes the notification + all user copies)
  *
  * User routes (any authenticated user, scoped to their own data):
  *   GET   /api/notifications?unreadOnly=&limit=
  *   GET   /api/notifications/unread-count
  *   PATCH /api/notifications/:id/read
  *   PATCH /api/notifications/read-all
+ *   DELETE /api/notifications/:id  (removes the user's own copy)
  *
  * Node server only — needs the writable auth store (Render). The web UI
  * already falls back to the Render backend for auth calls.
@@ -215,6 +217,24 @@ export async function handleAdminApi(
       return;
     }
 
+    /* DELETE /api/admin/notifications/:id — delete a sent notification entirely,
+       including every user's delivered copy. Data is removed, not just hidden. */
+    if (req.method === "DELETE" && seg.length === 2 && seg[0] === "notifications") {
+      const nid = seg[1] || "";
+      if (!/^n_[A-Za-z0-9_-]{1,40}$/.test(nid)) throw new HttpError(400, "Invalid notification ID.");
+      const deleted = await st.deleteNotification(nid);
+      if (!deleted) throw new HttpError(404, "Notification not found.");
+      await st.logAudit({
+        adminId,
+        adminEmail: admin.user.email,
+        action: "DELETE_NOTIFICATION",
+        notificationId: nid,
+        details: `title="${deleted.title.slice(0, 60)}"`,
+      });
+      sendJson(res, 200, { ok: true, message: "Notification deleted." });
+      return;
+    }
+
     sendJson(res, 404, { ok: false, error: "Not found." });
   } catch (e) {
     if (e instanceof HttpError) {
@@ -272,6 +292,18 @@ export async function handleNotifyApi(
       const ok = await st.markNotificationRead(userId, nid);
       if (!ok) throw new HttpError(404, "Notification not found.");
       sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    /* DELETE /api/notifications/:id — delete the user's own copy.
+       Data is removed from storage, not just hidden. Scoped to the caller:
+       the composite key makes another user's copy unreachable (404). */
+    if (req.method === "DELETE" && seg.length === 1) {
+      const nid = seg[0] || "";
+      if (!/^n_[A-Za-z0-9_-]{1,40}$/.test(nid)) throw new HttpError(400, "Invalid notification ID.");
+      const ok = await st.deleteUserNotification(userId, nid);
+      if (!ok) throw new HttpError(404, "Notification not found.");
+      sendJson(res, 200, { ok: true, message: "Notification deleted." });
       return;
     }
 

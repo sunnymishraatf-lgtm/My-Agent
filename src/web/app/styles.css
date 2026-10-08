@@ -8585,3 +8585,15 @@ body.has-musicbar .view { padding-bottom: 84px; }
   .music-player-slot { width: 72px; height: 41px; }
   .music-thumb { display: none; }
 }
+
+/* Admin: danger buttons + role badges (notification delete, users page). */
+.btn.danger { color: #e5484d; border-color: rgba(229, 72, 77, 0.45); }
+.btn.danger:hover { background: rgba(229, 72, 77, 0.12); }
+.admin-role-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+  background: rgba(128, 128, 128, 0.15); color: inherit;
+}
+.admin-role-badge.is-admin {
+  background: rgba(204, 128, 102, 0.2); color: var(--accent, #CC8066);
+}

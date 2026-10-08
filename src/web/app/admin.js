@@ -4,8 +4,9 @@
  * Routes:
  *   #/admin/login               — admin sign-in (email + password)
  *   #/admin                     — dashboard (stats cards)
+ *   #/admin/users                — all users (searchable)
  *   #/admin/notifications       — compose + send notification
- *   #/admin/notifications/history — sent history with search/filter
+ *   #/admin/notifications/history — sent history with search/filter + delete
  *
  * Security: every admin API call sends the user's Bearer token; the
  * backend independently verifies the ADMIN role. The frontend never
@@ -105,6 +106,7 @@
     var nav = el("nav", "admin-nav");
     var links = [
       ["#/admin", "Dashboard", "dashboard"],
+      ["#/admin/users", "Users", "users"],
       ["#/admin/notifications", "Notifications", "send"],
       ["#/admin/notifications/history", "History", "history"],
     ];
@@ -202,6 +204,74 @@
       grid.innerHTML = "";
       grid.appendChild(el("p", "auth-err", "Couldn't load stats: " + (e.message || e)));
     }
+  }
+
+  /* ---------------- users ---------------- */
+
+  async function renderAdminUsers(view) {
+    var me;
+    try { me = await guardAdmin(view); } catch (e) {
+      view.appendChild(el("p", "auth-err", "Couldn't load: " + (e.message || e)));
+      return;
+    }
+    if (!me) return;
+    adminShell(view, "users", me, "Users");
+
+    var searchI = el("input", "input");
+    searchI.placeholder = "Search username, name or email…";
+    searchI.setAttribute("aria-label", "Search users");
+    view.appendChild(searchI);
+
+    var tableWrap = el("div", "panel");
+    var countP = el("p", "muted small");
+    view.appendChild(countP);
+    view.appendChild(tableWrap);
+
+    async function load() {
+      tableWrap.innerHTML = "";
+      tableWrap.appendChild(el("p", "muted", "Loading…"));
+      var qs = "";
+      if (searchI.value.trim()) qs = "?search=" + encodeURIComponent(searchI.value.trim());
+      try {
+        var d = await api("GET", "/api/admin/users" + qs);
+        var users = d.users || [];
+        countP.textContent = users.length + " user" + (users.length === 1 ? "" : "s");
+        tableWrap.innerHTML = "";
+        if (!users.length) {
+          tableWrap.appendChild(el("p", "muted", "No users found."));
+          return;
+        }
+        var table = el("table", "admin-table");
+        var head = el("tr", null);
+        ["Username", "Name", "Email", "Role", "Joined"].forEach(function (h) {
+          head.appendChild(el("th", null, h));
+        });
+        table.appendChild(head);
+        users.forEach(function (u) {
+          var tr = el("tr", null);
+          tr.appendChild(el("td", null, "@" + u.username));
+          tr.appendChild(el("td", null, u.displayName || "—"));
+          tr.appendChild(el("td", null, u.email || "—"));
+          var roleTd = el("td", null);
+          var badge = el("span", "admin-role-badge" + (u.role === "admin" ? " is-admin" : ""), u.role || "user");
+          roleTd.appendChild(badge);
+          tr.appendChild(roleTd);
+          tr.appendChild(el("td", null, fmtDate(u.createdAt)));
+          table.appendChild(tr);
+        });
+        tableWrap.appendChild(table);
+      } catch (e) {
+        tableWrap.innerHTML = "";
+        tableWrap.appendChild(el("p", "auth-err", "Couldn't load users: " + (e.message || e)));
+      }
+    }
+
+    var deb = null;
+    searchI.addEventListener("input", function () {
+      if (deb) clearTimeout(deb);
+      deb = setTimeout(load, 350);
+    });
+    load();
   }
 
   /* ---------------- send notification ---------------- */
@@ -368,6 +438,18 @@
 
   /* ---------------- history ---------------- */
 
+  /** Delete a sent notification for everyone, after confirmation. */
+  async function deleteNotification(id, title, onDone) {
+    if (!window.confirm("Delete this notification for everyone?\n\n\"" + title + "\"\n\nThis permanently removes it from all users' inboxes. This cannot be undone.")) return;
+    try {
+      await api("DELETE", "/api/admin/notifications/" + encodeURIComponent(id));
+      toast("Notification deleted.");
+      if (onDone) onDone();
+    } catch (e) {
+      toast("Couldn't delete: " + (e.message || e));
+    }
+  }
+
   function fmtDate(ts) {
     try { return new Date(ts).toLocaleString(); } catch (e) { return ""; }
   }
@@ -427,7 +509,7 @@
         }
         var table = el("table", "admin-table");
         var head = el("tr", null);
-        ["Title", "Type", "Audience", "Recipients", "Date", "Status"].forEach(function (h) {
+        ["Title", "Type", "Audience", "Recipients", "Date", "Status", ""].forEach(function (h) {
           head.appendChild(el("th", null, h));
         });
         table.appendChild(head);
@@ -439,6 +521,18 @@
           tr.appendChild(el("td", null, String(n.recipientCount || 0)));
           tr.appendChild(el("td", null, fmtDate(n.createdAt)));
           tr.appendChild(el("td", null, "Sent"));
+          var actTd = el("td", null);
+          var del = el("button", "btn ghost sm danger", "Delete");
+          del.type = "button";
+          del.title = "Delete this notification for everyone";
+          del.onclick = (function (id, title) {
+            return function (ev) {
+              ev.stopPropagation();
+              deleteNotification(id, title, load);
+            };
+          })(n.id, n.title);
+          actTd.appendChild(del);
+          tr.appendChild(actTd);
           tr.style.cursor = "pointer";
           tr.title = "View details";
           tr.onclick = (function (id) {
@@ -498,7 +592,17 @@
         var close = el("button", "btn", "Close");
         close.type = "button";
         close.onclick = function () { overlay.remove(); };
-        box.appendChild(close);
+        var delBtn = el("button", "btn ghost sm danger", "Delete for everyone");
+        delBtn.type = "button";
+        delBtn.style.marginLeft = "8px";
+        delBtn.onclick = function () {
+          overlay.remove();
+          deleteNotification(id, n.title, load);
+        };
+        var btnRow = el("div", "row");
+        btnRow.appendChild(close);
+        btnRow.appendChild(delBtn);
+        box.appendChild(btnRow);
         overlay.appendChild(box);
         overlay.addEventListener("click", function (ev) {
           if (ev.target === overlay) overlay.remove();
@@ -525,6 +629,7 @@
   root.NeutronAdmin = {
     renderAdminLogin: renderAdminLogin,
     renderAdmin: renderAdmin,
+    renderAdminUsers: renderAdminUsers,
     renderAdminSend: renderAdminSend,
     renderAdminHistory: renderAdminHistory,
   };

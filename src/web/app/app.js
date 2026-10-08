@@ -719,6 +719,7 @@ var ROUTES = {
   admin: function (view) {
     var rest = (location.hash || "").replace(/^#\/?admin\/?/, "");
     if (rest === "login") return window.NeutronAdmin.renderAdminLogin(view);
+    if (rest === "users") return window.NeutronAdmin.renderAdminUsers(view);
     if (rest === "notifications/history") return window.NeutronAdmin.renderAdminHistory(view);
     if (rest === "notifications") return window.NeutronAdmin.renderAdminSend(view);
     return window.NeutronAdmin.renderAdmin(view);

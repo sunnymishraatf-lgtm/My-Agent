@@ -79,7 +79,7 @@ export interface AuditEntry {
   id: string;
   adminId: string;
   adminEmail?: string | undefined;
-  action: "SEND_NOTIFICATION";
+  action: "SEND_NOTIFICATION" | "DELETE_NOTIFICATION";
   notificationId?: string;
   timestamp: number;
   details?: string;
@@ -569,6 +569,31 @@ export class AuthStore {
     }
     if (n) await this.save(db);
     return n;
+  }
+
+  /** Delete a notification entirely: the record plus every user's delivered copy.
+   *  Returns the deleted notification, or null if it didn't exist. */
+  async deleteNotification(id: string): Promise<AdminNotification | null> {
+    const db = await this.load();
+    const notif = db.notifications[id];
+    if (!notif) return null;
+    delete db.notifications[id];
+    for (const key of Object.keys(db.userNotifications)) {
+      const un = db.userNotifications[key];
+      if (un && un.notificationId === id) delete db.userNotifications[key];
+    }
+    await this.save(db);
+    return notif;
+  }
+
+  /** Delete one user's own copy of a notification. Returns false if not found. */
+  async deleteUserNotification(userId: string, notificationId: string): Promise<boolean> {
+    const db = await this.load();
+    const key = `${userId}:${notificationId}`;
+    if (!db.userNotifications[key]) return false;
+    delete db.userNotifications[key];
+    await this.save(db);
+    return true;
   }
 
   async logAudit(e: Omit<AuditEntry, "id" | "timestamp">): Promise<AuditEntry> {

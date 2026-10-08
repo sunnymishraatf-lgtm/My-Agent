@@ -296,3 +296,94 @@ describe("admin history", () => {
     expect(r.json.notification.recipientCount).toBe(3);
   });
 });
+
+
+describe("delete notifications", () => {
+  let st: AuthStore;
+  beforeEach(() => { st = freshStore(); });
+
+  async function sendOne(aT: string) {
+    const r = await callAdmin(st, "POST", "/api/admin/notifications", {
+      token: aT,
+      body: { title: "Temp", message: "Delete me", type: "information", audience: "all" },
+    });
+    expect(r.status).toBe(200);
+    return r.json.id as string;
+  }
+
+  it("admin delete removes the notification and every user copy", async () => {
+    const { admin, alice, bob, adminTok: aT } = await makeUsers(st);
+    void admin;
+    const nid = await sendOne(aT);
+    expect(await st.getNotification(nid)).not.toBeNull();
+    expect((await st.getUserNotifications(alice.id)).length).toBe(1);
+
+    const r = await callAdmin(st, "DELETE", `/api/admin/notifications/${nid}`, { token: aT });
+    expect(r.status).toBe(200);
+    expect(r.json.ok).toBe(true);
+
+    // Data is gone, not hidden.
+    expect(await st.getNotification(nid)).toBeNull();
+    expect(await st.getUserNotifications(alice.id)).toEqual([]);
+    expect(await st.getUserNotifications(bob.id)).toEqual([]);
+    expect(await st.getUnreadCount(alice.id)).toBe(0);
+    const h = await callAdmin(st, "GET", "/api/admin/notifications", { token: aT });
+    expect(h.json.total).toBe(0);
+    // Deleting again is 404.
+    expect((await callAdmin(st, "DELETE", `/api/admin/notifications/${nid}`, { token: aT })).status).toBe(404);
+  });
+
+  it("rejects unauthenticated (401) and non-admin (403) admin deletes", async () => {
+    const { adminTok: aT, aliceTok: alT } = await makeUsers(st);
+    const nid = await sendOne(aT);
+    expect((await callAdmin(st, "DELETE", `/api/admin/notifications/${nid}`)).status).toBe(401);
+    expect((await callAdmin(st, "DELETE", `/api/admin/notifications/${nid}`, { token: alT })).status).toBe(403);
+    expect(await st.getNotification(nid)).not.toBeNull();
+  });
+
+  it("rejects malformed notification IDs (400)", async () => {
+    const { adminTok: aT, aliceTok: alT } = await makeUsers(st);
+    expect((await callAdmin(st, "DELETE", "/api/admin/notifications/xyz", { token: aT })).status).toBe(400);
+    expect((await callNotify(st, "DELETE", "/api/notifications/xyz", { token: alT })).status).toBe(400);
+  });
+
+  it("user can delete their own copy; others are untouched", async () => {
+    const { adminTok: aT, alice, bob, aliceTok: alT, bobTok: bT } = await makeUsers(st);
+    const nid = await sendOne(aT);
+
+    const r = await callNotify(st, "DELETE", `/api/notifications/${nid}`, { token: alT });
+    expect(r.status).toBe(200);
+    expect((await st.getUserNotifications(alice.id)).length).toBe(0);
+    // Bob still has his copy; the admin record is intact.
+    expect((await st.getUserNotifications(bob.id)).length).toBe(1);
+    expect(await st.getNotification(nid)).not.toBeNull();
+    // Deleting again is 404 for Alice.
+    expect((await callNotify(st, "DELETE", `/api/notifications/${nid}`, { token: alT })).status).toBe(404);
+    // Bob can still delete his own copy.
+    expect((await callNotify(st, "DELETE", `/api/notifications/${nid}`, { token: bT })).status).toBe(200);
+    expect((await st.getUserNotifications(bob.id)).length).toBe(0);
+  });
+
+  it("user delete requires auth (401)", async () => {
+    const { adminTok: aT } = await makeUsers(st);
+    const nid = await sendOne(aT);
+    expect((await callNotify(st, "DELETE", `/api/notifications/${nid}`)).status).toBe(401);
+  });
+
+  it("admin users endpoint lists all users with search, no hash leaks", async () => {
+    const { adminTok: aT, aliceTok: alT } = await makeUsers(st);
+    let r = await callAdmin(st, "GET", "/api/admin/users", { token: aT });
+    expect(r.status).toBe(200);
+    expect(r.json.users.length).toBe(3);
+    const names = r.json.users.map((u: any) => u.username).sort();
+    expect(names).toEqual(["alice", "bob", "boss"]);
+    expect(JSON.stringify(r.json)).not.toContain("passwordHash");
+
+    r = await callAdmin(st, "GET", "/api/admin/users?search=ali", { token: aT });
+    expect(r.json.users.length).toBe(1);
+    expect(r.json.users[0].username).toBe("alice");
+
+    expect((await callAdmin(st, "GET", "/api/admin/users", { token: alT })).status).toBe(403);
+    expect((await callAdmin(st, "GET", "/api/admin/users")).status).toBe(401);
+  });
+});
