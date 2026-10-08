@@ -1,8 +1,11 @@
 /**
  * NEUTRON user notification center — admin broadcasts.
  *
- * - Polls /api/notifications/unread-count and merges with the task
- *   notification badge.
+ * - Realtime: opens an authenticated WebSocket to
+ *   /api/notifications/stream for instant delivery + badge updates.
+ * - Fallback: polls /api/notifications/unread-count every 45s when the
+ *   socket isn't live (e.g. serverless hosts can't hold WebSockets).
+ * - Merges the admin unread count with the task notification badge.
  * - Renders the "Announcements" section on the #/notifications page.
  * - Mark individual as read / mark all as read.
  *
@@ -52,6 +55,129 @@
   var POLL_MS = 45000;
   var pollTimer = null;
 
+  /* ----- realtime stream (WebSocket) -----
+     The Node backend pushes deliveries instantly over
+     /api/notifications/stream. 45s polling stays as the fallback for
+     hosts that can't hold WebSocket connections (e.g. Vercel serverless). */
+  var WS_PATH = "/api/notifications/stream";
+  var ws = null;
+  var wsToken = null; // token the current socket authenticated with
+  var wsAlive = false; // authenticated + open
+  var wsRetryMs = 1000;
+  var wsRetryTimer = null;
+  var WS_MAX_RETRY_MS = 30000;
+
+  function nudgeBadge() {
+    try {
+      if (window.NeutronTasks && window.NeutronTasks.updateBadge) {
+        window.NeutronTasks.updateBadge();
+      }
+    } catch (e) {}
+  }
+
+  function notifyToast(n) {
+    var msg = "New announcement: " + (n.title || "NEUTRON");
+    try {
+      if (window.NeutronUI && window.NeutronUI.toast) { window.NeutronUI.toast(msg); return; }
+    } catch (e) {}
+    try {
+      if (typeof window.toast === "function") { window.toast(msg); return; }
+    } catch (e2) {}
+  }
+
+  function wsUrl(base) {
+    var b = String(base || "").replace(/\/+$/, "");
+    if (!b) b = location.protocol + "//" + location.host; // same-origin fallback
+    return b.replace(/^http/i, "ws") + WS_PATH;
+  }
+
+  function scheduleWsRetry() {
+    if (wsRetryTimer) return;
+    wsRetryTimer = setTimeout(function () {
+      wsRetryTimer = null;
+      wsRetryMs = Math.min(WS_MAX_RETRY_MS, wsRetryMs * 2);
+      ensureSocket();
+    }, wsRetryMs);
+  }
+
+  function closeSocket() {
+    wsAlive = false;
+    wsToken = null;
+    if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
+    if (ws) {
+      try { ws.close(); } catch (e) {}
+      ws = null;
+    }
+  }
+
+  /** Connect when logged in; tear down on logout. Idempotent. */
+  function ensureSocket() {
+    var t = token();
+    if (!t) { closeSocket(); return; }
+    if (typeof WebSocket === "undefined") return;
+    // Account switched while a socket is open: drop it and reconnect.
+    if (ws && wsToken !== t) closeSocket();
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    if (wsRetryTimer) return;
+    var myToken = t;
+    wsToken = t;
+    var baseP = null;
+    try {
+      baseP = window.NeutronAuth && window.NeutronAuth.resolveAuthBase
+        ? window.NeutronAuth.resolveAuthBase() : Promise.resolve("");
+    } catch (e) { baseP = Promise.resolve(""); }
+    Promise.resolve(baseP).then(function (base) {
+      if (token() !== myToken) return; // logged out/switched meanwhile
+      var url;
+      try { url = wsUrl(base); } catch (e) { return; }
+      var sock;
+      try { sock = new WebSocket(url); } catch (e) { scheduleWsRetry(); return; }
+      ws = sock;
+      sock.onopen = function () {
+        // Token goes in the first frame, never in the URL (no access-log leak).
+        try { sock.send(JSON.stringify({ type: "auth", token: myToken })); } catch (e) {}
+      };
+      sock.onmessage = function (ev) { onSocketMessage(sock, ev); };
+      sock.onclose = function () {
+        if (ws === sock) {
+          ws = null;
+          wsAlive = false;
+          if (token()) scheduleWsRetry(); // reconnect while still logged in
+        }
+      };
+      sock.onerror = function () { /* onclose follows */ };
+    });
+  }
+
+  function onSocketMessage(sock, ev) {
+    var msg = null;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "ready") {
+      wsAlive = true;
+      wsRetryMs = 1000; // reset backoff on success
+      if (typeof msg.unreadCount === "number") {
+        window.__neutronAdminUnread = msg.unreadCount;
+        nudgeBadge();
+      }
+      return;
+    }
+    if (msg.type === "pong") return;
+    if (msg.type === "notification" && msg.notification) {
+      if (typeof msg.unreadCount === "number") window.__neutronAdminUnread = msg.unreadCount;
+      else window.__neutronAdminUnread = (window.__neutronAdminUnread || 0) + 1;
+      nudgeBadge();
+      notifyToast(msg.notification);
+      // Refresh the announcements list if it's on screen.
+      try {
+        if ((location.hash || "").indexOf("#/notifications") === 0 &&
+            window.NeutronApp && window.NeutronApp.rerender) {
+          window.NeutronApp.rerender();
+        }
+      } catch (e) {}
+    }
+  }
+
   function typeLabel(t) {
     var m = { information: "Information", success: "Success", warning: "Warning",
               important: "Important", system_update: "System Update" };
@@ -88,8 +214,17 @@
   function startPolling() {
     if (pollTimer) return;
     window.__neutronAdminUnread = 0;
-    refreshBadge();
-    pollTimer = setInterval(refreshBadge, POLL_MS);
+    tick();
+    pollTimer = setInterval(tick, POLL_MS);
+  }
+
+  /**
+   * One loop tick: keep the realtime socket in the right state, and poll
+   * the unread count only when the socket isn't delivering it live.
+   */
+  function tick() {
+    ensureSocket();
+    if (!wsAlive) refreshBadge();
   }
 
   /** Render the Announcements section into the notifications page. */

@@ -23,6 +23,7 @@ import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RoomManager } from "./collab/room-manager";
 import { CollabServer, COLLAB_WS_PATH, type IceServerConfig } from "./collab/collab-server";
+import { NotifySocketServer } from "./auth/notify-socket";
 import {
   getAgentManager,
   serializeRun,
@@ -1555,6 +1556,16 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
     return;
   }
 
+  // Admin panel alias: /admin... redirects to the canonical /app#/admin...
+  // hash route (nothing existing moves; this only adds the shortcut).
+  if (req.method === "GET" && (url.pathname === "/admin" || url.pathname.startsWith("/admin/"))) {
+    const rest = url.pathname.slice("/admin".length); // "" or "/..."
+    const loc = "/app#/admin" + rest + url.search;
+    res.writeHead(302, { location: loc });
+    res.end();
+    return;
+  }
+
   // APK download page (also served statically from /download on Vercel).
   if (req.method === "GET" && url.pathname === "/download") {
     const webDir = resolveWebDir();
@@ -1845,6 +1856,11 @@ export function startServer(opts: ServeOptions): Promise<RunningServer> {
       /* A corrupt snapshot must never prevent boot; start with no rooms. */
     }
     const server = createServer(createRequestHandler({ ...opts, collabManager }));
+    // Attach the notification stream BEFORE collab: its upgrade handler
+    // 404-destroys sockets for paths it doesn't own, and skips sockets
+    // claimed by an earlier handler (see __neutronNotifyClaimed).
+    const notifySockets = new NotifySocketServer();
+    notifySockets.attach(server);
     const collab = new CollabServer({
       manager: collabManager,
       dataRoot: opts.root,
@@ -1861,6 +1877,13 @@ export function startServer(opts: ServeOptions): Promise<RunningServer> {
         port,
         close: () =>
           new Promise<void>((done) => {
+            // Terminate realtime sockets first: upgraded WebSocket connections
+            // would otherwise keep server.close() hanging.
+            try {
+              notifySockets.close();
+            } catch {
+              /* ignore */
+            }
             // Terminate collab sockets first: upgraded WebSocket connections
             // would otherwise keep server.close() hanging.
             try {

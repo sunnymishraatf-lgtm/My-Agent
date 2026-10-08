@@ -5672,6 +5672,16 @@ a:hover { text-decoration: underline; }
 .pill.ok::before { background: var(--green); }
 .pill.bad { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 .pill.bad::before { background: var(--red); }
+.pill.warn { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+.pill.warn::before { background: var(--amber); }
+
+/* ---- admin system page ---- */
+.admin-card-v { font-size: 1.05em; font-weight: 600; overflow-wrap: anywhere; }
+.admin-cfg { display: grid; gap: 8px; margin: 4px 0 8px; }
+.admin-cfg .row { justify-content: space-between; align-items: center; }
+.admin-filters { flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.admin-filters .input { width: auto; }
+.admin-filters input[type="date"] { max-width: 160px; }
 
 /* ---- offline bar ---- */
 .offline-bar {

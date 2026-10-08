@@ -546,10 +546,12 @@ export class AuthStore {
     return db.notifications[id] || null;
   }
 
-  async listNotifications(opts: { type?: string; search?: string; limit?: number; offset?: number } = {}): Promise<{ items: AdminNotification[]; total: number }> {
+  async listNotifications(opts: { type?: string; search?: string; limit?: number; offset?: number; from?: number; to?: number } = {}): Promise<{ items: AdminNotification[]; total: number }> {
     const db = await this.load();
     let items = Object.values(db.notifications).sort((a, b) => b.createdAt - a.createdAt);
     if (opts.type) items = items.filter((n) => n.type === opts.type);
+    if (opts.from) items = items.filter((n) => n.createdAt >= (opts.from as number));
+    if (opts.to) items = items.filter((n) => n.createdAt <= (opts.to as number));
     if (opts.search) {
       const q = opts.search.toLowerCase();
       items = items.filter((n) =>
@@ -559,6 +561,13 @@ export class AuthStore {
     const offset = Math.max(0, opts.offset || 0);
     const limit = Math.min(100, Math.max(1, opts.limit || 20));
     return { items: items.slice(offset, offset + limit), total };
+  }
+
+  /** Recent audit entries, newest first. Admin-only via the API layer. */
+  async listAudit(limit = 50): Promise<AuditEntry[]> {
+    const db = await this.load();
+    const n = Math.min(200, Math.max(1, limit));
+    return db.auditLog.slice(-n).reverse();
   }
 
   /** Fan out a notification to user IDs; returns the recipient count. */

@@ -109,6 +109,7 @@
       ["#/admin/users", "Users", "users"],
       ["#/admin/notifications", "Notifications", "send"],
       ["#/admin/notifications/history", "History", "history"],
+      ["#/admin/system", "System", "system"],
     ];
     links.forEach(function (l) {
       var a = el("a", "btn ghost sm" + (active === l[2] ? " active" : ""), l[1]);
@@ -501,8 +502,22 @@
     NOTIF_TYPES.forEach(function (t) {
       var o = el("option", null, t[1]); o.value = t[0]; typeS.appendChild(o);
     });
+    var fromI = el("input", "input");
+    fromI.type = "date";
+    fromI.setAttribute("aria-label", "From date");
+    fromI.title = "From date";
+    var toI = el("input", "input");
+    toI.type = "date";
+    toI.setAttribute("aria-label", "To date");
+    toI.title = "To date";
+    var clearB = el("button", "btn ghost sm", "Clear");
+    clearB.type = "button";
+    clearB.title = "Clear filters";
     filters.appendChild(searchI);
     filters.appendChild(typeS);
+    filters.appendChild(fromI);
+    filters.appendChild(toI);
+    filters.appendChild(clearB);
     view.appendChild(filters);
 
     var tableWrap = el("div", "panel");
@@ -519,6 +534,8 @@
       var qs = "?page=" + page + "&limit=" + limit;
       if (typeS.value) qs += "&type=" + encodeURIComponent(typeS.value);
       if (searchI.value.trim()) qs += "&search=" + encodeURIComponent(searchI.value.trim());
+      if (fromI.value) qs += "&from=" + encodeURIComponent(fromI.value);
+      if (toI.value) qs += "&to=" + encodeURIComponent(toI.value);
       try {
         var d = await api("GET", "/api/admin/notifications" + qs);
         tableWrap.innerHTML = "";
@@ -641,7 +658,127 @@
     }
     searchI.addEventListener("input", refetch);
     typeS.onchange = refetch;
+    fromI.onchange = refetch;
+    toI.onchange = refetch;
+    clearB.onclick = function () {
+      searchI.value = ""; typeS.value = ""; fromI.value = ""; toI.value = "";
+      refetch();
+    };
     load();
+  }
+
+  /* ---------------- system ---------------- */
+
+  /** Service status + audit log. Read-only; booleans only, no secrets. */
+  async function renderAdminSystem(view) {
+    var me;
+    try { me = await guardAdmin(view); } catch (e) {
+      view.appendChild(el("p", "auth-err", "Couldn't load: " + (e.message || e)));
+      return;
+    }
+    if (!me) return;
+    adminShell(view, "system", me, "System");
+
+    var statusWrap = el("div", "panel");
+    statusWrap.appendChild(el("p", "muted small", "Loading status…"));
+    view.appendChild(statusWrap);
+
+    var auditWrap = el("div", "panel");
+    auditWrap.appendChild(el("h3", null, "Audit log"));
+    auditWrap.appendChild(el("p", "muted small", "Loading…"));
+    view.appendChild(auditWrap);
+
+    function boolBadge(v) {
+      return el("span", "pill " + (v ? "ok" : "warn"), v ? "yes" : "no");
+    }
+
+    try {
+      var d = await api("GET", "/api/admin/system");
+      var s = d.system || {};
+      statusWrap.innerHTML = "";
+      statusWrap.appendChild(el("h3", null, "Service status"));
+      var grid = el("div", "admin-cards");
+      var cards = [
+        ["Store", (s.store === "redis" ? "Redis (persistent)" : "Memory (ephemeral)")],
+        ["Uptime", fmtUptime(s.uptimeSec || 0)],
+        ["Node", s.node || "—"],
+        ["Realtime", s.realtime && s.realtime.supported ? "WebSocket " + (s.realtime.path || "") : "unavailable"],
+      ];
+      cards.forEach(function (c) {
+        var card = el("div", "panel admin-card");
+        card.appendChild(el("div", "muted small", c[0]));
+        card.appendChild(el("div", "admin-card-v", String(c[1])));
+        grid.appendChild(card);
+      });
+      statusWrap.appendChild(grid);
+
+      var cfg = s.config || {};
+      var cfgRows = [
+        ["Admin emails configured", cfg.adminEmailsConfigured],
+        ["Google sign-in configured", cfg.googleClientConfigured],
+        ["Email (SMTP) configured", cfg.smtpConfigured],
+      ];
+      var cfgList = el("div", "admin-cfg");
+      cfgRows.forEach(function (r) {
+        var row = el("div", "row");
+        row.appendChild(el("span", null, r[0]));
+        row.appendChild(boolBadge(!!r[1]));
+        cfgList.appendChild(row);
+      });
+      statusWrap.appendChild(el("h3", null, "Configuration"));
+      statusWrap.appendChild(cfgList);
+
+      var push = s.push || {};
+      statusWrap.appendChild(el("p", "muted small",
+        "Delivery: notifications persist server-side and push instantly to online " +
+        "devices over the realtime channel. " +
+        (push.supported ? "" : "Background browser push is not enabled — the app delivers on next open when offline.")));
+    } catch (e) {
+      statusWrap.innerHTML = "";
+      statusWrap.appendChild(el("p", "auth-err", "Couldn't load status: " + (e.message || e)));
+    }
+
+    try {
+      var a = await api("GET", "/api/admin/audit?limit=50");
+      var items = a.items || [];
+      auditWrap.innerHTML = "";
+      auditWrap.appendChild(el("h3", null, "Audit log"));
+      if (!items.length) {
+        auditWrap.appendChild(el("p", "muted small", "No audit entries yet."));
+      } else {
+        var table = el("table", "admin-table");
+        var head = el("tr", null);
+        ["Time", "Admin", "Action", "Details"].forEach(function (h) { head.appendChild(el("th", null, h)); });
+        table.appendChild(head);
+        items.forEach(function (en) {
+          var tr = el("tr", "admin-row");
+          tr.appendChild(el("td", "small", fmtDate(en.timestamp)));
+          tr.appendChild(el("td", "small", en.adminEmail || en.adminId || "—"));
+          tr.appendChild(el("td", "small", auditLabel(en.action)));
+          tr.appendChild(el("td", "small", en.details || "—"));
+          table.appendChild(tr);
+        });
+        auditWrap.appendChild(table);
+      }
+    } catch (e) {
+      auditWrap.innerHTML = "";
+      auditWrap.appendChild(el("h3", null, "Audit log"));
+      auditWrap.appendChild(el("p", "auth-err", "Couldn't load audit log: " + (e.message || e)));
+    }
+  }
+
+  function fmtUptime(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    if (d) return d + "d " + h + "h";
+    if (h) return h + "h " + m + "m";
+    if (m) return m + "m";
+    return sec + "s";
+  }
+
+  function auditLabel(a) {
+    var m = { SEND_NOTIFICATION: "Sent", DELETE_NOTIFICATION: "Deleted notification", DELETE_USER: "Deleted user" };
+    return m[a] || a;
   }
 
   /* ---------------- exports + routes ---------------- */
@@ -652,5 +789,6 @@
     renderAdminUsers: renderAdminUsers,
     renderAdminSend: renderAdminSend,
     renderAdminHistory: renderAdminHistory,
+    renderAdminSystem: renderAdminSystem,
   };
 })(typeof window !== "undefined" ? window : this);

@@ -3,9 +3,12 @@
  *
  * Admin routes (all require an authenticated ADMIN):
  *   GET  /api/admin/stats
+ *   GET  /api/admin/system            (non-sensitive service status)
+ *   GET  /api/admin/audit?limit=      (audit log, newest first)
  *   GET  /api/admin/users?search=
+ *   DELETE /api/admin/users/:id
  *   POST /api/admin/notifications
- *   GET  /api/admin/notifications?type=&search=&page=&limit=
+ *   GET  /api/admin/notifications?type=&search=&from=&to=&page=&limit=
  *   GET  /api/admin/notifications/:id
  *   DELETE /api/admin/notifications/:id  (removes the notification + all user copies)
  *
@@ -23,6 +26,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { getAuthStore } from "./api";
 import type { AuthStore } from "./store";
 import type { NotificationType, NotificationAudience } from "./store";
+import { broadcastNotification } from "./notify-events";
+import { NOTIFY_WS_PATH } from "./notify-socket";
 
 class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -58,6 +63,29 @@ function bearer(req: IncomingMessage): string | null {
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+/**
+ * Parse a date filter bound. Accepts YYYY-MM-DD (interpreted as the local
+ * day: start for `from`, end for `to`) or a full ISO date-time string.
+ * Returns undefined when absent, null when invalid.
+ */
+function parseDateBound(v: unknown, endOfDay: boolean): number | undefined | null {
+  const s = str(v).trim();
+  if (!s) return undefined;
+  let ms: number;
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (day) {
+    const y = +(day[1] ?? ""), m = +(day[2] ?? ""), d = +(day[3] ?? "");
+    if (!y || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    ms = endOfDay
+      ? new Date(y, m - 1, d, 23, 59, 59, 999).getTime()
+      : new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+  } else {
+    ms = Date.parse(s);
+  }
+  if (!Number.isFinite(ms)) return null;
+  return ms;
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -117,6 +145,41 @@ export async function handleAdminApi(
     /* GET /api/admin/stats — dashboard cards */
     if (req.method === "GET" && seg.length === 1 && seg[0] === "stats") {
       sendJson(res, 200, { ok: true, stats: await st.adminStats() });
+      return;
+    }
+
+    /* GET /api/admin/audit?limit= — recent audit entries, newest first */
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "audit") {
+      const limit = Math.min(200, Math.max(1, parseInt(str(url.searchParams.get("limit")), 10) || 50));
+      sendJson(res, 200, { ok: true, items: await st.listAudit(limit) });
+      return;
+    }
+
+    /* GET /api/admin/system — non-sensitive service status for the System page.
+       Booleans only; no secret values are ever exposed. */
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "system") {
+      const stats = await st.adminStats();
+      sendJson(res, 200, {
+        ok: true,
+        system: {
+          now: Date.now(),
+          uptimeSec: Math.floor(process.uptime()),
+          node: process.version,
+          store: st.persistent ? "redis" : "memory",
+          realtime: { supported: true, path: NOTIFY_WS_PATH },
+          push: { supported: false, note: "Browser push (VAPID) is not implemented; in-app realtime covers online users." },
+          config: {
+            adminEmailsConfigured: (process.env.NEUTRON_ADMIN_EMAILS || "").trim().length > 0,
+            googleClientConfigured: (process.env.GOOGLE_CLIENT_ID || "").trim().length > 0,
+            smtpConfigured: (process.env.SMTP_HOST || "").trim().length > 0,
+          },
+          counts: {
+            totalUsers: stats.totalUsers,
+            activeUsers: stats.activeUsers,
+            notificationsSent: stats.notificationsSent,
+          },
+        },
+      });
       return;
     }
 
@@ -182,7 +245,8 @@ export async function handleAdminApi(
 
       const targetIds = await st.resolveAudience(audience, specificIds);
       if (!targetIds.length) {
-        sendJson(res, 200, { ok: false, error: "There are no eligible users for this notification." });
+        // 422 (not 200): the UI must not show a success toast for this.
+        sendJson(res, 422, { ok: false, error: "There are no eligible users for this notification." });
         return;
       }
 
@@ -203,6 +267,15 @@ export async function handleAdminApi(
         details: `type=${type} audience=${audience} recipients=${delivered}`,
       });
 
+      // Best-effort instant push to online clients (persistence already done).
+      broadcastNotification(targetIds, {
+        id: notif.id,
+        title: notif.title,
+        message: notif.message,
+        type: notif.type,
+        createdAt: notif.createdAt,
+      });
+
       sendJson(res, 200, {
         ok: true,
         message: `Notification sent to ${delivered} user${delivered === 1 ? "" : "s"}.`,
@@ -212,7 +285,8 @@ export async function handleAdminApi(
       return;
     }
 
-    /* GET /api/admin/notifications — history with filters */
+    /* GET /api/admin/notifications — history with filters.
+       Date bounds: from/to accept YYYY-MM-DD (local day) or full ISO strings. */
     if (req.method === "GET" && seg.length === 1 && seg[0] === "notifications") {
       const type = str(url.searchParams.get("type")).trim().toLowerCase() || undefined;
       const search = str(url.searchParams.get("search")).trim().slice(0, 80) || undefined;
@@ -221,8 +295,14 @@ export async function handleAdminApi(
       if (type && !NOTIF_TYPES.includes(type as NotificationType)) {
         throw new HttpError(400, "Invalid type filter.");
       }
+      const from = parseDateBound(url.searchParams.get("from"), false);
+      const to = parseDateBound(url.searchParams.get("to"), true);
+      if (from === null || to === null) throw new HttpError(400, "Invalid date filter. Use YYYY-MM-DD or ISO.");
+      if (from !== undefined && to !== undefined && from > to) {
+        throw new HttpError(400, "\"from\" date must not be after \"to\" date.");
+      }
       const { items, total } = await st.listNotifications({
-        type, search, limit, offset: (page - 1) * limit,
+        type, search, from, to, limit, offset: (page - 1) * limit,
       });
       sendJson(res, 200, { ok: true, items, total, page, limit });
       return;

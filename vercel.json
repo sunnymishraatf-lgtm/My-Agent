@@ -22,6 +22,14 @@
       "source": "/app"
     },
     {
+      "destination": "/app/index.html",
+      "source": "/admin"
+    },
+    {
+      "destination": "/app/index.html",
+      "source": "/admin/:path*"
+    },
+    {
       "destination": "/download/index.html",
       "source": "/download"
     },

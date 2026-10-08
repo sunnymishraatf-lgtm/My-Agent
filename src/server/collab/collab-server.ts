@@ -428,6 +428,9 @@ export class CollabServer {
 
   attach(http: HttpServer): void {
     http.on("upgrade", (req: IncomingMessage, socket: Socket, head: Buffer) => {
+      // Claimed by another WebSocket handler (e.g. the notification stream)
+      // — leave it alone.
+      if ((socket as unknown as Record<string, unknown>).__neutronNotifyClaimed) return;
       let pathname = "";
       try {
         pathname = new URL(req.url || "", "http://localhost").pathname;

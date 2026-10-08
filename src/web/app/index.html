@@ -23,6 +23,21 @@
   } catch (e) { /* private mode — default light */ }
 })();
 </script>
+<script>
+/* Admin alias: /admin, /admin/login, ... map to the /app#/admin... hash routes.
+   The Node server 302-redirects these, but Vercel rewrites serve index.html
+   directly at /admin — so translate the pathname here before the router boots. */
+(function () {
+  try {
+    var p = location.pathname || "";
+    if (p === "/admin" || p.indexOf("/admin/") === 0) {
+      var rest = p.slice(6); // "" or "/login", "/notifications", ...
+      var target = "/app#/admin" + rest + location.search;
+      history.replaceState(null, "", target);
+    }
+  } catch (e) { /* ignore */ }
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
