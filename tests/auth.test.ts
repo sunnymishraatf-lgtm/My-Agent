@@ -249,3 +249,56 @@ describe("AuthStore password reset", () => {
     expect(await st.getSession(s3.token)).toBeNull();
   });
 });
+
+describe("guest pruning", () => {
+  it("removes guests with no valid session past the grace period", async () => {
+    const st = freshStore();
+    const g = await st.createUser({ username: "guestx1", displayName: "Gx", provider: "guest" });
+    // Session that expired long ago.
+    const sess = await st.createSession(g.id, 1);
+    await new Promise((r) => setTimeout(r, 5));
+    // Trigger a write so expired sessions are pruned.
+    await st.createUser({ username: "keeper1", displayName: "K", provider: "guest" });
+
+    // Guest with expired session + grace=0 -> pruned.
+    expect(await st.pruneInactiveGuests(0)).toBeGreaterThanOrEqual(1);
+    expect(await st.findById(g.id)).toBeNull();
+    void sess;
+  });
+
+  it("keeps guests with an active session", async () => {
+    const st = freshStore();
+    const g = await st.createUser({ username: "guestx2", displayName: "Gx", provider: "guest" });
+    await st.createSession(g.id); // 30-day session
+    expect(await st.pruneInactiveGuests(0)).toBe(0);
+    expect(await st.findById(g.id)).not.toBeNull();
+  });
+
+  it("never prunes email/google users", async () => {
+    const st = freshStore();
+    const u = await st.createUser({
+      username: "realuser1", displayName: "R", provider: "email",
+      email: "real1@test.com",
+    });
+    expect(await st.pruneInactiveGuests(0)).toBe(0);
+    expect(await st.findById(u.id)).not.toBeNull();
+  });
+
+  it("cleans up the guest's sessions, usernames and notifications", async () => {
+    const st = freshStore();
+    const g = await st.createUser({ username: "guestx3", displayName: "Gx", provider: "guest" });
+    const n = await st.createNotification({
+      title: "Hi", message: "Hello", type: "information", audience: "all",
+      createdBy: "x", recipientCount: 1,
+    });
+    await st.deliverNotification(n, [g.id]);
+    expect((await st.getUserNotifications(g.id)).length).toBe(1);
+
+    await st.pruneInactiveGuests(0);
+    expect(await st.findById(g.id)).toBeNull();
+    // Username freed for reuse.
+    expect(await st.usernameTaken("guestx3")).toBe(false);
+    // No orphan notification rows.
+    expect((await st.getUserNotifications(g.id)).length).toBe(0);
+  });
+});

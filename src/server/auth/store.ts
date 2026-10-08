@@ -115,6 +115,7 @@ interface DbShape {
   notifications: Record<string, AdminNotification>; // id -> notification
   userNotifications: Record<string, UserNotification>; // `${userId}:${notificationId}` -> entry
   auditLog: AuditEntry[]; // newest last; capped
+  lastGuestPruneAt?: number; // last run of inactive-guest cleanup
 }
 
 const EMPTY: DbShape = {
@@ -196,6 +197,11 @@ export class AuthStore {
     const now = Date.now();
     for (const [t, s] of Object.entries(db.sessions)) {
       if (s.expiresAt <= now) delete db.sessions[t];
+    }
+    // Prune dead guest accounts at most once a day (keeps storage bounded).
+    if (now - (db.lastGuestPruneAt || 0) > 24 * 3600 * 1000) {
+      db.lastGuestPruneAt = now;
+      this.pruneGuestsInline(db, now);
     }
     if (this.persistent) {
       await redis(["SET", REDIS_KEY, JSON.stringify(db)]);
@@ -417,6 +423,68 @@ export class AuthStore {
     }
     if (n) await this.save(db);
     return n;
+  }
+
+  /**
+   * Delete guest accounts that can never come back: provider === "guest",
+   * no valid (unexpired) session, and created longer than graceMs ago.
+   * A guest with no valid session cannot authenticate anymore — the next
+   * visit mints a fresh guest ID — so the stale record only consumes storage.
+   * Only guests are touched; email/Google accounts are never auto-deleted.
+   * Returns the number of guest accounts removed.
+   */
+  async pruneInactiveGuests(graceMs = 24 * 3600 * 1000): Promise<number> {
+    const db = await this.load();
+    const pruned = this.pruneGuestsInline(db, Date.now(), graceMs);
+    db.lastGuestPruneAt = Date.now();
+    await this.save(db);
+    return pruned;
+  }
+
+  /** Core guest-prune scan over an already-loaded DB. Returns count removed. */
+  private pruneGuestsInline(db: DbShape, now: number, graceMs = 24 * 3600 * 1000): number {
+    const activeUserIds = new Set<string>();
+    for (const s of Object.values(db.sessions)) {
+      if (s.expiresAt > now) activeUserIds.add(s.userId);
+    }
+    let pruned = 0;
+    for (const u of Object.values(db.users)) {
+      if (u.provider !== "guest") continue;
+      if (u.role === "admin") continue; // paranoia: never auto-delete an admin
+      if (activeUserIds.has(u.id)) continue;
+      if (now - u.createdAt < graceMs) continue;
+      this.deleteUserEverywhere(db, u.id, u.username);
+      pruned++;
+    }
+    return pruned;
+  }
+
+  /** Remove a user and every record that references them. */
+  private deleteUserEverywhere(db: DbShape, userId: string, username: string): void {
+    delete db.users[userId];
+    const unameKey = username.toLowerCase();
+    if (db.usernames[unameKey] === userId) delete db.usernames[unameKey];
+    for (const [tok, s] of Object.entries(db.sessions)) {
+      if (s.userId === userId) delete db.sessions[tok];
+    }
+    for (const [id, c] of Object.entries(db.connections)) {
+      if (c.fromUserId === userId || c.toUserId === userId) delete db.connections[id];
+    }
+    delete db.profileViews[userId];
+    for (const [viewedId, views] of Object.entries(db.profileViews)) {
+      const kept = views.filter((v) => v.viewerId !== userId);
+      if (kept.length !== views.length) db.profileViews[viewedId] = kept;
+    }
+    for (const [tok, v] of Object.entries(db.verifications)) {
+      if (v.userId === userId) delete db.verifications[tok];
+    }
+    for (const [tok, r] of Object.entries(db.passwordResets)) {
+      if (r.userId === userId) delete db.passwordResets[tok];
+    }
+    const prefix = `${userId}:`;
+    for (const key of Object.keys(db.userNotifications)) {
+      if (key.startsWith(prefix)) delete db.userNotifications[key];
+    }
   }
 
   // ----- admin notifications -----
