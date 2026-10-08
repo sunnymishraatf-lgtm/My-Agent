@@ -77,6 +77,27 @@ class SessionStore(context: Context) {
         api.setBaseUrl(clean)
     }
 
+    // ---------- AI provider keys (BYOK) ----------
+    fun setProviderKey(provider: String, key: String) {
+        prefs.edit().putString("pk_$provider", key).apply()
+    }
+
+    fun getProviderKey(provider: String): String? =
+        prefs.getString("pk_$provider", null)?.ifBlank { null }
+
+    fun setDefaultProvider(provider: String) {
+        prefs.edit().putString("default_provider", provider).apply()
+    }
+
+    fun defaultProvider(): String =
+        prefs.getString("default_provider", "openai") ?: "openai"
+
+    fun setDefaultModel(model: String) {
+        prefs.edit().putString("default_model", model).apply()
+    }
+
+    fun defaultModel(): String = prefs.getString("default_model", "") ?: ""
+
     fun baseUrl(): String = prefs.getString("base_url", ApiClient.DEFAULT_BASE_URL)
         ?: ApiClient.DEFAULT_BASE_URL
 

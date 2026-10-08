@@ -33,7 +33,7 @@ import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(store: SessionStore, onOpenLegacy: (String) -> Unit) {
+fun HomeScreen(store: SessionStore, onOpenOverlay: (String) -> Unit) {
     val user by store.user.collectAsState()
     val unread by store.unread.collectAsState()
     var stats by remember { mutableStateOf<AdminStats?>(null) }
@@ -68,15 +68,14 @@ fun HomeScreen(store: SessionStore, onOpenLegacy: (String) -> Unit) {
         }
 
         Text("Quick actions", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-        ActionRow("💬", "Chat", "Talk to NEUTRON") { onOpenLegacy("/app") }
-        ActionRow("🤖", "Agent", "Autonomous tasks") { onOpenLegacy("/app#/agent") }
-        ActionRow("⌨️", "Terminal", "Command line") { onOpenLegacy("/app#/terminal") }
-        ActionRow("🎵", "Music", "Listen") { onOpenLegacy("/app#/music") }
+        ActionRow("🔔", "Notifications",
+            if (unread > 0) "$unread unread" else "Announcements") { onOpenOverlay("notifications") }
+        ActionRow("⌨️", "Terminal", "Server shell") { onOpenOverlay("terminal") }
         if (isAdmin) {
             Spacer(Modifier.height(4.dp))
             Text("Admin", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-            ActionRow("📣", "Send notification", "Broadcast to users") { onOpenLegacy("admin_send") }
-            ActionRow("👥", "Manage users", "View & remove users") { onOpenLegacy("admin_users") }
+            ActionRow("📣", "Send notification", "Broadcast to users") { onOpenOverlay("admin_send") }
+            ActionRow("👥", "Manage users", "View & remove users") { onOpenOverlay("admin_users") }
         }
     }
 }

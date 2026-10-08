@@ -178,6 +178,137 @@ class ApiClient(private var baseUrl: String, private var token: String? = null) 
         request("DELETE", "/api/admin/notifications/$notificationId")
     }
 
+    // ---------- chat ----------
+    data class ChatReply(val text: String, val model: String?)
+
+    suspend fun chat(
+        messages: List<Pair<String, String>>,
+        provider: String?, model: String?, apiKey: String?,
+    ): ChatReply {
+        val arr = JSONArray()
+        for ((role, content) in messages) {
+            arr.put(JSONObject().put("role", role).put("content", content))
+        }
+        val b = JSONObject().put("messages", arr)
+        if (!provider.isNullOrBlank()) b.put("provider", provider)
+        if (!model.isNullOrBlank()) b.put("model", model)
+        if (!apiKey.isNullOrBlank()) b.put("apiKey", apiKey)
+        val j = request("POST", "/api/chat", body = b)
+        // Response shape: { ok, message: { content } } or { ok, reply/text }.
+        val msg = j.optJSONObject("message")
+        val text = msg?.optString("content")
+            ?: j.optString("reply").ifBlank { j.optString("text") }
+        return ChatReply(text, j.optString("model", null))
+    }
+
+    // ---------- terminal ----------
+    data class TermSession(val id: String, val label: String, val state: String)
+
+    suspend fun termSessions(): List<TermSession> {
+        val j = request("GET", "/api/terminal/sessions")
+        return pagedArray(j, "sessions").map {
+            TermSession(
+                it.optString("id", ""), it.optString("label", it.optString("id", "")),
+                it.optString("state", it.optString("status", "")),
+            )
+        }
+    }
+
+    suspend fun termCreate(label: String): TermSession {
+        val j = request("POST", "/api/terminal/sessions",
+            body = JSONObject().put("label", label))
+        val s = j.optJSONObject("session") ?: j
+        return TermSession(s.optString("id", ""), s.optString("label", label),
+            s.optString("state", s.optString("status", "")))
+    }
+
+    data class TermOutput(val lines: List<String>, val cursor: Long, val state: String)
+
+    suspend fun termOutput(id: String, since: Long): TermOutput {
+        val j = request("GET", "/api/terminal/sessions/$id/output",
+            query = mapOf("since" to since.toString()))
+        val lines = mutableListOf<String>()
+        val arr = j.optJSONArray("lines") ?: j.optJSONArray("output") ?: JSONArray()
+        for (i in 0 until arr.length()) lines.add(arr.optString(i))
+        return TermOutput(lines, j.optLong("cursor", j.optLong("since", since)),
+            j.optString("state", j.optString("status", "")))
+    }
+
+    suspend fun termInput(id: String, data: String) {
+        request("POST", "/api/terminal/sessions/$id/input",
+            body = JSONObject().put("data", data))
+    }
+
+    suspend fun termDelete(id: String) {
+        request("DELETE", "/api/terminal/sessions/$id")
+    }
+
+    // ---------- music ----------
+    data class Track(val id: String, val title: String, val artist: String?)
+
+    suspend fun musicSearch(q: String): List<Track> {
+        val j = request("POST", "/api/chat",
+            body = JSONObject().put("action", "music-search").put("q", q))
+        return pagedArray(j, "results").map {
+            Track(it.optString("id", ""), it.optString("title", ""),
+                it.optString("artist", null))
+        }
+    }
+
+    // ---------- agent ----------
+    data class AgentRun(
+        val id: String, val goal: String, val status: String,
+        val log: String, val approvals: List<Approval>,
+    )
+    data class Approval(val id: String, val summary: String)
+
+    private fun JSONObject.toAgentRun(): AgentRun {
+        val apprs = mutableListOf<Approval>()
+        val arr = optJSONArray("approvals") ?: optJSONArray("pendingApprovals") ?: JSONArray()
+        for (i in 0 until arr.length()) {
+            val a = arr.getJSONObject(i)
+            apprs.add(Approval(a.optString("id", ""), a.optString("summary", a.optString("description", ""))))
+        }
+        // Log can be a string or an array of lines/entries.
+        val logRaw = opt("log") ?: opt("output") ?: ""
+        val log = when (logRaw) {
+            is JSONArray -> (0 until logRaw.length()).joinToString("\n") { logRaw.optString(it) }
+            else -> logRaw.toString()
+        }
+        return AgentRun(
+            id = optString("id", ""), goal = optString("goal", ""),
+            status = optString("status", ""), log = log, approvals = apprs,
+        )
+    }
+
+    suspend fun agentRuns(): List<AgentRun> {
+        val j = request("GET", "/api/agent/runs")
+        return pagedArray(j, "runs").map { it.toAgentRun() }
+    }
+
+    suspend fun agentCreate(goal: String, provider: String?, model: String?, apiKey: String?): AgentRun {
+        val b = JSONObject().put("goal", goal)
+        if (!provider.isNullOrBlank()) b.put("provider", provider)
+        if (!model.isNullOrBlank()) b.put("model", model)
+        if (!apiKey.isNullOrBlank()) b.put("apiKey", apiKey)
+        val j = request("POST", "/api/agent/runs", body = b)
+        return (j.optJSONObject("run") ?: j).toAgentRun()
+    }
+
+    suspend fun agentGet(id: String): AgentRun {
+        val j = request("GET", "/api/agent/runs/$id")
+        return (j.optJSONObject("run") ?: j).toAgentRun()
+    }
+
+    suspend fun agentStop(id: String) {
+        request("POST", "/api/agent/runs/$id/stop")
+    }
+
+    suspend fun agentDecide(runId: String, approvalId: String, approved: Boolean) {
+        request("POST", "/api/agent/runs/$runId/approvals/$approvalId",
+            body = JSONObject().put("approved", approved))
+    }
+
     companion object {
         const val DEFAULT_BASE_URL = "https://neutron-server.onrender.com"
     }
