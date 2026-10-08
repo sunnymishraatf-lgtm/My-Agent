@@ -208,8 +208,11 @@ export async function handleAuthApi(
       if (!user.emailVerified) {
         throw new AuthHttpError(403, "Please verify your email first — check your inbox for the verification link.");
       }
+      // Grant the admin role to emails listed in NEUTRON_ADMIN_EMAILS.
+      await st.syncAdminRole(user);
       const session = await st.createSession(user.id);
-      sendJson(res, 200, { ok: true, user: safeUser(user), token: session.token });
+      const fresh = (await st.findById(user.id)) || user;
+      sendJson(res, 200, { ok: true, user: safeUser(fresh), token: session.token });
       return;
     }
 
@@ -318,7 +321,9 @@ export async function handleAuthApi(
         }
       }
       const session = await st.createSession(user.id);
-      sendJson(res, 200, { ok: true, user: safeUser(user), token: session.token });
+      await st.syncAdminRole(user);
+      const freshUser = (await st.findById(user.id)) || user;
+      sendJson(res, 200, { ok: true, user: safeUser(freshUser), token: session.token });
       return;
     }
 

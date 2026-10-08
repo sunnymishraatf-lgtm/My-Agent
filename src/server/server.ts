@@ -64,6 +64,7 @@ import {
 import { handleInsightsApi } from "./insights";
 import { handleTerminalApi } from "./terminal/api";
 import { handleAuthApi } from "./auth/api";
+import { handleAdminApi, handleNotifyApi } from "./auth/notify-api";
 import {
   getDemoManager,
   prepareDemoRepo,
@@ -1627,6 +1628,17 @@ async function handle(opts: ServeOptions, req: IncomingMessage, res: ServerRespo
   if (url.pathname === "/api/auth" || url.pathname.startsWith("/api/auth/") ||
       url.pathname === "/api/connections" || url.pathname.startsWith("/api/connections/")) {
     await handleAuthApi(opts.demoWorkspace, req, res, url);
+    return;
+  }
+
+  /* Admin notification system + user notification center.
+     Node server only — needs the writable auth store. */
+  if (url.pathname === "/api/admin" || url.pathname.startsWith("/api/admin/")) {
+    await handleAdminApi(opts.demoWorkspace, req, res, url);
+    return;
+  }
+  if (url.pathname === "/api/notifications" || url.pathname.startsWith("/api/notifications/")) {
+    await handleNotifyApi(opts.demoWorkspace, req, res, url);
     return;
   }
 

@@ -122,6 +122,8 @@
       var badge = document.getElementById("notif-badge");
       if (!badge) return;
       var c = UI.notifUnreadCount(notifItems);
+      // Add admin broadcast unread count (published by notify-center.js).
+      try { c += (window.__neutronAdminUnread || 0); } catch (e2) {}
       badge.textContent = c > 99 ? "99+" : String(c);
       badge.classList.toggle("hidden", c === 0);
     } catch (e) {}
@@ -713,6 +715,7 @@
     notify: notify,
     closePanel: closePanel,
     loadTaskStore: loadTaskStore,
+    updateBadge: updateBadge,
     getNotifications: function () { loadNotifState(); return (notifItems || []).slice(); },
   };
 })();

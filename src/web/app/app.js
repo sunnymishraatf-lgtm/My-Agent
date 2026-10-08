@@ -705,11 +705,24 @@ var ROUTES = {
   security: function (view) { return window.NeutronInsights.renderSecurity(view); },
   deps: function (view) { return window.NeutronInsights.renderDeps(view); },
   health: function (view) { return window.NeutronInsights.renderHealth(view); },
-  notifications: function (view) { return window.NeutronTasks.renderNotifications(view); },
+  notifications: function (view) {
+    window.NeutronTasks.renderNotifications(view);
+    // Admin broadcast announcements (additive; task notifications untouched).
+    try {
+      if (window.NeutronNotifyCenter) window.NeutronNotifyCenter.renderAnnouncements(view);
+    } catch (e) {}
+  },
   friends: function (view) { return window.NeutronFriends.renderFriends(view); },
   account: function (view) { return window.NeutronAuth.renderAccount(view); },
   verify: function (view) { return window.NeutronAuth.renderVerify(view); },
   "reset-password": function (view) { return window.NeutronAuth.renderResetPassword(view); },
+  admin: function (view) {
+    var rest = (location.hash || "").replace(/^#\/?admin\/?/, "");
+    if (rest === "login") return window.NeutronAdmin.renderAdminLogin(view);
+    if (rest === "notifications/history") return window.NeutronAdmin.renderAdminHistory(view);
+    if (rest === "notifications") return window.NeutronAdmin.renderAdminSend(view);
+    return window.NeutronAdmin.renderAdmin(view);
+  },
   settings: renderSettings,
   usage: renderUsage,
 };

@@ -860,6 +860,13 @@
     teardown: teardown,
     me: me,
     getToken: getToken,
+    setToken: setToken,
+    resolveAuthBase: resolveAuthBase,
+    logout: function () {
+      return apiAuth("POST", "/api/auth/logout").catch(function () {}).finally(function () {
+        setToken("");
+      });
+    },
     authStatus: authStatus,
   };
 })();
