@@ -387,3 +387,58 @@ describe("delete notifications", () => {
     expect((await callAdmin(st, "GET", "/api/admin/users")).status).toBe(401);
   });
 });
+
+describe("admin delete user", () => {
+  let st: AuthStore;
+  beforeEach(() => { st = freshStore(); });
+
+  it("admin can delete a regular user and all their data", async () => {
+    const { adminTok: aT, alice, aliceTok: alT } = await makeUsers(st);
+    // Alice has a notification and a session.
+    const n = await st.createNotification({
+      title: "Hi", message: "Hey", type: "information", audience: "all",
+      createdBy: "x", recipientCount: 1,
+    });
+    await st.deliverNotification(n, [alice.id]);
+
+    const r = await callAdmin(st, "DELETE", `/api/admin/users/${alice.id}`, { token: aT });
+    expect(r.status).toBe(200);
+    expect(r.json.ok).toBe(true);
+
+    expect(await st.findById(alice.id)).toBeNull();
+    expect(await st.usernameTaken("alice")).toBe(false);
+    // Alice's session no longer authenticates.
+    expect(await st.getSession(alT)).toBeNull();
+    // Her notification copies are gone.
+    expect((await st.getUserNotifications(alice.id)).length).toBe(0);
+  });
+
+  it("admin cannot delete themselves (400)", async () => {
+    const { admin, adminTok: aT } = await makeUsers(st);
+    const r = await callAdmin(st, "DELETE", `/api/admin/users/${admin.id}`, { token: aT });
+    expect(r.status).toBe(400);
+    expect(await st.findById(admin.id)).not.toBeNull();
+  });
+
+  it("admin cannot delete another admin (403)", async () => {
+    const { adminTok: aT } = await makeUsers(st);
+    const st2 = st;
+    const admin2 = await st2.createUser({
+      username: "boss2", displayName: "Boss2", provider: "email",
+      email: "boss2@test.com", role: "admin",
+    });
+    const r = await callAdmin(st, "DELETE", `/api/admin/users/${admin2.id}`, { token: aT });
+    expect(r.status).toBe(403);
+    expect(await st.findById(admin2.id)).not.toBeNull();
+  });
+
+  it("rejects unauthenticated (401), non-admin (403), unknown user (404), bad id (400)", async () => {
+    const { adminTok: aT, alice, aliceTok: alT } = await makeUsers(st);
+    expect((await callAdmin(st, "DELETE", `/api/admin/users/${alice.id}`)).status).toBe(401);
+    expect((await callAdmin(st, "DELETE", `/api/admin/users/${alice.id}`, { token: alT })).status).toBe(403);
+    expect((await callAdmin(st, "DELETE", "/api/admin/users/u_doesnotexist1", { token: aT })).status).toBe(404);
+    expect((await callAdmin(st, "DELETE", "/api/admin/users/xyz", { token: aT })).status).toBe(400);
+    // Alice survived all the rejected attempts.
+    expect(await st.findById(alice.id)).not.toBeNull();
+  });
+});

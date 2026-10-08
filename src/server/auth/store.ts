@@ -79,7 +79,7 @@ export interface AuditEntry {
   id: string;
   adminId: string;
   adminEmail?: string | undefined;
-  action: "SEND_NOTIFICATION" | "DELETE_NOTIFICATION";
+  action: "SEND_NOTIFICATION" | "DELETE_NOTIFICATION" | "DELETE_USER";
   notificationId?: string;
   timestamp: number;
   details?: string;
@@ -459,11 +459,24 @@ export class AuthStore {
     return pruned;
   }
 
+  /** Admin: permanently delete a user and all their data. Returns false if not found. */
+  async adminDeleteUser(userId: string): Promise<boolean> {
+    const db = await this.load();
+    const u = db.users[userId];
+    if (!u) return false;
+    this.deleteUserEverywhere(db, u.id, u.username);
+    await this.save(db);
+    return true;
+  }
+
   /** Remove a user and every record that references them. */
   private deleteUserEverywhere(db: DbShape, userId: string, username: string): void {
+    const u = db.users[userId];
     delete db.users[userId];
     const unameKey = username.toLowerCase();
     if (db.usernames[unameKey] === userId) delete db.usernames[unameKey];
+    if (u?.email && db.emails[u.email.toLowerCase()] === userId) delete db.emails[u.email.toLowerCase()];
+    if (u?.googleSub && db.googleSubs[u.googleSub] === userId) delete db.googleSubs[u.googleSub];
     for (const [tok, s] of Object.entries(db.sessions)) {
       if (s.userId === userId) delete db.sessions[tok];
     }

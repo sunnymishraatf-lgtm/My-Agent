@@ -243,7 +243,7 @@
         }
         var table = el("table", "admin-table");
         var head = el("tr", null);
-        ["Username", "Name", "Email", "Role", "Joined"].forEach(function (h) {
+        ["Username", "Name", "Email", "Role", "Joined", ""].forEach(function (h) {
           head.appendChild(el("th", null, h));
         });
         table.appendChild(head);
@@ -257,6 +257,26 @@
           roleTd.appendChild(badge);
           tr.appendChild(roleTd);
           tr.appendChild(el("td", null, fmtDate(u.createdAt)));
+          var actTd = el("td", null);
+          // Never offer delete for admins or yourself.
+          if (u.role !== "admin" && u.id !== me.id) {
+            var del = el("button", "btn ghost sm danger", "Remove");
+            del.type = "button";
+            del.title = "Permanently delete this user";
+            del.onclick = (function (uid, uname) {
+              return function () {
+                if (!window.confirm("Permanently delete @" + uname + "?\n\nThis removes their account and all their data. This cannot be undone.")) return;
+                api("DELETE", "/api/admin/users/" + encodeURIComponent(uid)).then(function () {
+                  toast("User @" + uname + " deleted.");
+                  load();
+                }).catch(function (e) {
+                  toast("Couldn't delete: " + (e.message || e));
+                });
+              };
+            })(u.id, u.username);
+            actTd.appendChild(del);
+          }
+          tr.appendChild(actTd);
           table.appendChild(tr);
         });
         tableWrap.appendChild(table);

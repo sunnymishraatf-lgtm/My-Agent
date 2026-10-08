@@ -127,6 +127,27 @@ export async function handleAdminApi(
       return;
     }
 
+    /* DELETE /api/admin/users/:id — permanently remove a user and all their data.
+       Guards: cannot delete yourself; cannot delete another admin. */
+    if (req.method === "DELETE" && seg.length === 2 && seg[0] === "users") {
+      const uid = seg[1] || "";
+      if (!/^u_[A-Za-z0-9_-]{1,40}$/.test(uid)) throw new HttpError(400, "Invalid user ID.");
+      if (uid === adminId) throw new HttpError(400, "You cannot delete your own account.");
+      const target = await st.findById(uid);
+      if (!target) throw new HttpError(404, "User not found.");
+      if (target.role === "admin") throw new HttpError(403, "Admin accounts cannot be deleted.");
+      const ok = await st.adminDeleteUser(uid);
+      if (!ok) throw new HttpError(404, "User not found.");
+      await st.logAudit({
+        adminId,
+        adminEmail: admin.user.email,
+        action: "DELETE_USER",
+        details: `username=${target.username}`,
+      });
+      sendJson(res, 200, { ok: true, message: `User @${target.username} deleted.` });
+      return;
+    }
+
     /* POST /api/admin/notifications — send a notification */
     if (req.method === "POST" && seg.length === 1 && seg[0] === "notifications") {
       // Max 10 sends per admin per minute.
