@@ -8,7 +8,7 @@ platforms: [linux, macos]
 metadata:
   hermes:
     tags: [search, searxng, meta-search, self-hosted, free, fallback]
-    related_skills: [duckduckgo-search, domain-intel]
+    related_skills: [duckduckgo-search, serpapi-search, domain-intel]
     fallback_for_toolsets: [web]
 ---
 
