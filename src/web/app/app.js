@@ -668,6 +668,7 @@ var lastPillRefresh = 0;
 
 async function refreshServerPill(force) {
   var pill = document.getElementById("server-pill");
+  if (!pill) return; // header pill removed: nothing to update
   try {
     var now = Date.now();
     var UI = window.NeutronUI;

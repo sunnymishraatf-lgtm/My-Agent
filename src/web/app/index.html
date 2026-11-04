@@ -44,23 +44,6 @@
 <link rel="stylesheet" href="/src/web/app/styles.css" />
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <div class="logo"><svg class="logo-mark" viewBox="0 0 36 36" aria-hidden="true"><defs><radialGradient id="ntn-nuc" cx="35%" cy="30%" r="80%"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/><stop offset="45%" stop-color="var(--primary)"/><stop offset="100%" stop-color="var(--primary)" stop-opacity="0.75"/></radialGradient><linearGradient id="ntn-orb" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="var(--primary)"/><stop offset="100%" stop-color="var(--primary)" stop-opacity="0.35"/></linearGradient></defs><ellipse cx="18" cy="18" rx="15" ry="6.5" fill="none" stroke="url(#ntn-orb)" stroke-width="2" transform="rotate(32 18 18)"/><ellipse cx="18" cy="18" rx="15" ry="6.5" fill="none" stroke="url(#ntn-orb)" stroke-width="2" transform="rotate(-32 18 18)"/><ellipse cx="18" cy="18" rx="15" ry="6.5" fill="none" stroke="url(#ntn-orb)" stroke-width="1.4" opacity="0.55"/><circle cx="18" cy="18" r="5.5" fill="url(#ntn-nuc)"/></svg>NEUTRON</div>
-    <div class="subtitle">Maintenance App</div>
-  </div>
-  <div class="topbar-right">
-    <button id="pal-open-btn" class="btn ghost pal-open-btn" type="button"
-      aria-label="Search or run a command (Ctrl+K)" title="Search or command (Ctrl+K)">&#x2315;</button>
-    <div class="notif-wrap">
-      <a id="notif-bell" class="btn ghost" href="#/notifications"
-        aria-label="Notifications" title="Notifications">&#x1F514;<span id="notif-badge" class="notif-badge hidden"></span></a>
-    </div>
-    <span id="server-pill" class="pill">checking…</span>
-    <a class="btn ghost" href="/demo">Guided demo</a>
-  </div>
-</header>
-
 <div id="error-bar" class="error-bar hidden" role="alert"><span id="error-text"></span><button id="error-dismiss" class="error-x" aria-label="Dismiss error" title="Dismiss">×</button></div>
 <div id="offline-bar" class="offline-bar hidden" role="alert">You appear to be offline — NEUTRON will work again when the connection returns.</div>
 
@@ -89,6 +72,14 @@
     <a href="#/notifications" data-route="notifications">Notifications</a>
     <a href="#/usage" data-route="usage">Usage</a>
     <a href="#/settings" data-route="settings">Settings</a>
+    <div class="nav-tools">
+      <button id="pal-open-btn" class="btn ghost pal-open-btn" type="button"
+        aria-label="Search or run a command (Ctrl+K)" title="Search or command (Ctrl+K)">&#x2315;</button>
+      <div class="notif-wrap">
+        <a id="notif-bell" class="btn ghost" href="#/notifications"
+          aria-label="Notifications" title="Notifications">&#x1F514;<span id="notif-badge" class="notif-badge hidden"></span></a>
+      </div>
+    </div>
     <div class="side-note">The guided hackathon demo lives at <a href="/demo">/demo</a>.</div>
   </nav>
   <main id="view" class="view" aria-live="polite"></main>
